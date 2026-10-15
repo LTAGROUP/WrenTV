@@ -6,9 +6,12 @@ require (
 	github.com/MicahParks/keyfunc/v3 v3.8.2
 	github.com/anacrolix/log v0.17.1-0.20251118025802-918f1157b7bb
 	github.com/anacrolix/torrent v1.61.0
+	github.com/anacrolix/upnp v0.1.4
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/jackpal/gateway v1.2.0
+	github.com/jackpal/go-nat-pmp v1.0.2
 	github.com/kardianos/service v1.3.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sync v0.24.0
@@ -34,7 +37,6 @@ require (
 	github.com/anacrolix/multiless v0.4.0 // indirect
 	github.com/anacrolix/stm v0.5.0 // indirect
 	github.com/anacrolix/sync v0.5.5-0.20251119100342-d78dd1f686f1 // indirect
-	github.com/anacrolix/upnp v0.1.4 // indirect
 	github.com/anacrolix/utp v0.1.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/benbjohnson/immutable v0.4.1-0.20221220213129-8932b999621d // indirect

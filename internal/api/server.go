@@ -19,6 +19,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/auth"
 	"github.com/LTAGROUP/wrentv/internal/config"
 	"github.com/LTAGROUP/wrentv/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/direct"
 	"github.com/LTAGROUP/wrentv/internal/images"
 	"github.com/LTAGROUP/wrentv/internal/library"
 	"github.com/LTAGROUP/wrentv/internal/markers"
@@ -44,6 +45,7 @@ type Server struct {
 	Hub      *library.Hub
 	Hooks    *webhook.Sender
 	Images   *images.Cache
+	Direct   *direct.Manager // automatic HTTPS addresses (supabase mode)
 
 	Auth  auth.Provider
 	Local *auth.Local    // set in local mode
@@ -210,6 +212,11 @@ func cors(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS, HEAD")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges")
 		if r.Method == http.MethodOptions {
+			// Private Network Access: lets public HTTPS pages (watch.wrentv.com)
+			// reach this server at its LAN address.
+			if r.Header.Get("Access-Control-Request-Private-Network") == "true" {
+				w.Header().Set("Access-Control-Allow-Private-Network", "true")
+			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -256,6 +263,15 @@ func queryInt(r *http.Request, key string, def int) int {
 		return v
 	}
 	return def
+}
+
+// advertisedLocalURLs is LocalURLs plus the automatic https LAN addresses.
+func (s *Server) advertisedLocalURLs() []string {
+	urls := LocalURLs(s.Cfg)
+	if s.Direct != nil {
+		urls = append(append([]string{}, urls...), s.Direct.Status().LocalURLs...)
+	}
+	return urls
 }
 
 // LocalURLs lists LAN addresses clients can use to reach this server.

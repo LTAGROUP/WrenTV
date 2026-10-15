@@ -300,6 +300,25 @@ export async function viewTorrents() {
 
 // ---------------------------------------------------------------- settings
 
+// Automatic HTTPS addresses under wrentv.net (servers using Wren TV accounts).
+function remoteAccessPanel(ra) {
+  const st = ra.status || {};
+  let line;
+  if (!ra.enabled) line = '<span class="muted">Off</span>';
+  else if (st.remoteUrl) line = `<span class="ok">Reachable from the internet</span> <span class="small muted mono">${esc(st.remoteUrl)}</span>`;
+  else if ((st.localUrls || []).length) line = '<span class="ok">Secure at home</span> <span class="small muted">· not reachable from outside yet</span>';
+  else line = '<span class="muted">Setting up…</span>';
+  return `<div class="panel"><h2>Remote access</h2>
+    <p class="small muted">Gives this server secure (HTTPS) addresses so it plays in the web player at watch.wrentv.com and in the apps away from home. Video goes straight from this server to the viewer.</p>
+    <p>${line}</p>
+    ${st.problem ? `<p class="small muted">${esc(st.problem)}</p>` : ''}
+    <label class="check"><input type="checkbox" name="remoteEnabled" ${ra.enabled ? 'checked' : ''}> Enable remote access</label>
+    <label class="check"><input type="checkbox" name="remoteUpnp" ${ra.upnp ? 'checked' : ''}> Forward a port automatically (UPnP / NAT-PMP)</label>
+    <div class="form-grid" style="margin-top:10px">
+      <div class="field"><label>Manually forwarded port</label><input name="remotePort" type="number" min="0" max="65535" value="${ra.publicPort || ''}" placeholder="Automatic"></div>
+    </div></div>`;
+}
+
 export async function viewSettings() {
   setTitle('Settings');
   const s = await api('/api/admin/settings');
@@ -310,6 +329,7 @@ export async function viewSettings() {
       <div class="field"><label>Server name</label><input name="serverName" value="${esc(s.serverName)}"></div>
       <div class="field"><label>Public URL</label><input name="publicUrl" value="${esc(s.publicUrl)}" placeholder="https://wrentv.example.com"></div>
     </div></div>
+    ${s.remoteAccess ? remoteAccessPanel(s.remoteAccess) : ''}
     <div class="panel"><h2>Metadata &amp; transcoding</h2><div class="form-grid">
       <div class="field"><label>TMDB API key ${s.tmdbKeySet ? '<span class="ok">(set)</span>' : ''}</label><input name="tmdbApiKey" type="password" placeholder="${s.tmdbKeySet ? 'Leave blank to keep' : 'Required for posters and info'}" autocomplete="off"></div>
       <div class="field"><label>OMDb API key ${s.omdbKeySet ? '<span class="ok">(set)</span>' : ''}</label><input name="omdbApiKey" type="password" placeholder="${s.omdbKeySet ? 'Leave blank to keep' : 'Optional: IMDb, Rotten Tomatoes, Metacritic'}" autocomplete="off">
@@ -352,6 +372,9 @@ export async function viewSettings() {
         events: $('[data-k=events]', r).value.split(',').map((x) => x.trim()).filter(Boolean),
       })).filter((h) => h.url),
     };
+    if (s.remoteAccess) {
+      body.remoteAccess = { enabled: !!v.remoteEnabled, upnp: !!v.remoteUpnp, publicPort: Number(v.remotePort) || 0 };
+    }
     if (v.tmdbApiKey) body.tmdbApiKey = v.tmdbApiKey;
     if (v.omdbApiKey) body.omdbApiKey = v.omdbApiKey;
     if (v.debridApiKey) body.debridApiKey = v.debridApiKey;

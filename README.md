@@ -74,6 +74,10 @@ integration_key: wtv_…         # generated; for backend services (X-WrenTV-Key
 auth:
   mode: local                  # local | supabase
   supabase: { url: "", publishable_key: "" }
+remote_access:                 # automatic HTTPS addresses (supabase mode only)
+  enabled: true
+  upnp: true                   # forward a port with UPnP / NAT-PMP
+  public_port: 0               # a port you forwarded by hand (replaces UPnP)
 metadata:
   tmdb_api_key: ""
   language: en-US
@@ -106,7 +110,8 @@ scanner:
 
 Environment overrides: `WRENTV_DATA_DIR`, `WRENTV_LISTEN`, `WRENTV_SERVER_NAME`, `WRENTV_PUBLIC_URL`,
 `WRENTV_AUTH_MODE`, `WRENTV_SUPABASE_URL`, `WRENTV_SUPABASE_PUBLISHABLE_KEY`, `WRENTV_TMDB_API_KEY`,
-`WRENTV_FFMPEG`, `WRENTV_FFPROBE`, `WRENTV_HWACCEL`, `WRENTV_SCAN_POLL_SEC`, `WRENTV_TORRENT_PROVIDERS`, `WRENTV_DEBRID_API_KEY`.
+`WRENTV_FFMPEG`, `WRENTV_FFPROBE`, `WRENTV_HWACCEL`, `WRENTV_SCAN_POLL_SEC`, `WRENTV_TORRENT_PROVIDERS`, `WRENTV_DEBRID_API_KEY`,
+`WRENTV_REMOTE_ACCESS`, `WRENTV_PUBLIC_PORT`, `WRENTV_ACME_DIRECTORY`, `WRENTV_DIRECT_API`.
 
 ## Upgrading from Haven
 
@@ -189,3 +194,22 @@ Authenticate with `Authorization: Bearer <token>` (from `/api/auth/login`).
 `supabase/migrations/` contains the account backend: profiles, server claiming, and sharing and invites.
 Apply the migrations to your Supabase project, then set `auth.mode: supabase` with your project URL and publishable
 key. Open the web app, sign in, and claim the server with the claim code printed in the server log.
+
+### Remote access (automatic HTTPS)
+
+A claimed server gets secure addresses without a domain or reverse proxy, like Plex's plex.direct:
+
+- `https://192-168-1-20.<id>.wrentv.net:32500` for each LAN address, and
+- `https://203-0-113-7.<id>.wrentv.net:<port>` for its public address, when it's reachable from the internet.
+
+The server forwards a port on the router (UPnP or NAT-PMP, or `remote_access.public_port` for a manual forward),
+asks the address service (`api.wrentv.net`, a Cloudflare Worker in the website repo) to publish the DNS records,
+and gets a wildcard Let's Encrypt certificate for `*.<id>.wrentv.net` with a DNS-01 challenge. The certificate is
+stored in `<data>/certs/direct/` and renewed automatically. HTTP and HTTPS share the listen port. The addresses are
+published in the heartbeat (`local_urls` and `remote_url`), so the web player at watch.wrentv.com and the apps can
+use them. Video always goes straight from the server to the viewer.
+
+Behind CGNAT (an internet provider sharing one public IP between customers) the server is only reachable at home;
+the settings page says so. Some routers block DNS answers that point to LAN addresses ("DNS rebinding protection"):
+allow `wrentv.net` there, or viewers at home fall back to the public address.
+

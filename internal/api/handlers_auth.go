@@ -27,7 +27,7 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 		"authMode":      s.Auth.Mode(),
 		"setupRequired": setup,
 		"torrents":      s.Torrents.Enabled(),
-		"localUrls":     LocalURLs(s.Cfg),
+		"localUrls":     s.advertisedLocalURLs(),
 	}
 	if s.Supa != nil {
 		info["supabase"] = map[string]string{"url": s.Cfg.Auth.Supabase.URL, "publishableKey": s.Cfg.Auth.Supabase.PublishableKey}
@@ -130,6 +130,9 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.DB.UpdateUserProfile(r.Context(), u.ID, u.DisplayName, u.Email, true)
 	go s.heartbeat()
+	if s.Direct != nil {
+		s.Direct.Refresh()
+	}
 	writeJSON(w, 200, map[string]any{"serverId": s.Cfg.Auth.Supabase.ServerID})
 }
 

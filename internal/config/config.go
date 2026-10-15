@@ -33,13 +33,14 @@ type Config struct {
 	// manager) calling the integration API. Generated on first run.
 	IntegrationKey string `yaml:"integration_key"`
 
-	Auth      AuthConfig      `yaml:"auth"`
-	Metadata  MetadataConfig  `yaml:"metadata"`
-	Transcode TranscodeConfig `yaml:"transcode"`
-	Torrents  TorrentConfig   `yaml:"torrents"`
-	Webhooks  []WebhookConfig `yaml:"webhooks"`
-	Scanner   ScannerConfig   `yaml:"scanner"`
-	Markers   MarkersConfig   `yaml:"markers"`
+	Auth         AuthConfig         `yaml:"auth"`
+	RemoteAccess RemoteAccessConfig `yaml:"remote_access"`
+	Metadata     MetadataConfig     `yaml:"metadata"`
+	Transcode    TranscodeConfig    `yaml:"transcode"`
+	Torrents     TorrentConfig      `yaml:"torrents"`
+	Webhooks     []WebhookConfig    `yaml:"webhooks"`
+	Scanner      ScannerConfig      `yaml:"scanner"`
+	Markers      MarkersConfig      `yaml:"markers"`
 }
 
 // MarkersConfig controls intro/credits detection. Chapter names are always
@@ -67,6 +68,22 @@ type SupabaseConfig struct {
 	// ClaimCode must be entered to claim an unclaimed server (printed in the
 	// log at startup), so whoever reaches it first over the internet can't.
 	ClaimCode string `yaml:"claim_code,omitempty"`
+}
+
+// RemoteAccessConfig controls the automatic HTTPS addresses under wrentv.net
+// (servers using Wren TV accounts only): https names for each LAN address,
+// plus a public one when the server is reachable from the internet.
+type RemoteAccessConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// UPnP asks the router to forward a port (UPnP IGD or NAT-PMP).
+	UPnP bool `yaml:"upnp"`
+	// PublicPort is a port the owner forwarded by hand to this server's
+	// listen port. Set, it replaces automatic port mapping.
+	PublicPort int `yaml:"public_port,omitempty"`
+	// API and ACMEDirectory override the address service and the certificate
+	// authority (for testing, e.g. Let's Encrypt staging).
+	API           string `yaml:"api,omitempty"`
+	ACMEDirectory string `yaml:"acme_directory,omitempty"`
 }
 
 type MetadataConfig struct {
@@ -143,11 +160,12 @@ type ScannerConfig struct {
 func defaults() Config {
 	host, _ := os.Hostname()
 	return Config{
-		ServerName: host,
-		Listen:     ":32500",
-		Auth:       AuthConfig{Mode: "local"},
-		Metadata:   MetadataConfig{Language: "en-US", Workers: 8},
-		Transcode:  TranscodeConfig{FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HWAccel: "auto", VAAPIDevice: "/dev/dri/renderD128"},
+		ServerName:   host,
+		Listen:       ":32500",
+		Auth:         AuthConfig{Mode: "local"},
+		RemoteAccess: RemoteAccessConfig{Enabled: true, UPnP: true},
+		Metadata:     MetadataConfig{Language: "en-US", Workers: 8},
+		Transcode:    TranscodeConfig{FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HWAccel: "auto", VAAPIDevice: "/dev/dri/renderD128"},
 		Torrents: TorrentConfig{
 			Enabled:    true,
 			Providers:  []string{"builtin"},
@@ -252,6 +270,14 @@ func (c *Config) applyEnv() {
 	set("HWACCEL", &c.Transcode.HWAccel)
 	set("DEBRID_API_KEY", &c.Torrents.Debrid.APIKey)
 	set("PUBLIC_URL", &c.PublicURL)
+	set("DIRECT_API", &c.RemoteAccess.API)
+	set("ACME_DIRECTORY", &c.RemoteAccess.ACMEDirectory)
+	if v, err := strconv.ParseBool(Getenv("REMOTE_ACCESS")); err == nil {
+		c.RemoteAccess.Enabled = v
+	}
+	if v, err := strconv.Atoi(Getenv("PUBLIC_PORT")); err == nil {
+		c.RemoteAccess.PublicPort = v
+	}
 	if v, err := strconv.Atoi(Getenv("SCAN_POLL_SEC")); err == nil {
 		c.Scanner.PollSec = v
 	}

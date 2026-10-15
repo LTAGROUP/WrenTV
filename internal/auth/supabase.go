@@ -260,7 +260,7 @@ func (s *Supabase) Claim(ctx context.Context, userToken string) error {
 
 // Heartbeat publishes reachability and the library list (so owners can
 // manage sharing from any device).
-func (s *Supabase) Heartbeat(ctx context.Context, urls []string, version string, libs []*db.Library) error {
+func (s *Supabase) Heartbeat(ctx context.Context, urls []string, remoteURL, version string, libs []*db.Library) error {
 	if !s.Claimed() {
 		return nil
 	}
@@ -276,6 +276,7 @@ func (s *Supabase) Heartbeat(ctx context.Context, urls []string, version string,
 	return s.rpc(ctx, "", "server_heartbeat", map[string]any{
 		"p_server_id": s.cfg.Auth.Supabase.ServerID, "p_secret": s.cfg.Auth.Supabase.ServerSecret,
 		"p_name": s.cfg.ServerName, "p_local_urls": urls, "p_public_url": s.cfg.PublicURL, "p_version": version, "p_libraries": ls,
+		"p_remote_url": remoteURL,
 	}, nil)
 }
 

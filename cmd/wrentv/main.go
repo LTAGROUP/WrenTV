@@ -29,6 +29,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/auth"
 	"github.com/LTAGROUP/wrentv/internal/config"
 	"github.com/LTAGROUP/wrentv/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/direct"
 	"github.com/LTAGROUP/wrentv/internal/images"
 	"github.com/LTAGROUP/wrentv/internal/library"
 	"github.com/LTAGROUP/wrentv/internal/markers"
@@ -268,6 +269,8 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 			slog.Warn("server is not claimed yet: open the web app, sign in and enter this claim code",
 				"claim_code", cfg.Auth.Supabase.ClaimCode)
 		}
+		srv.Direct = direct.New(cfg, func() []string { return api.LocalURLs(cfg) }, func() { go srv.HeartbeatNow() })
+		go srv.Direct.Run(ctx)
 		go srv.RunHeartbeat(ctx)
 	default:
 		srv.Local = auth.NewLocal(d, cfg.Auth.SigningKey)
@@ -298,7 +301,15 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	for _, u := range api.LocalURLs(cfg) {
 		slog.Info("listening", "url", u)
 	}
-	errc := make(chan error, 1)
+	errc := make(chan error, 2)
+	if srv.Direct != nil {
+		// HTTP and HTTPS share the port; HTTPS starts working once the
+		// wrentv.net certificate arrives.
+		plain, secure := direct.Split(ln)
+		httpSrv.TLSConfig = srv.Direct.TLSConfig()
+		go func() { errc <- httpSrv.ServeTLS(secure, "", "") }()
+		ln = plain
+	}
 	go func() { errc <- httpSrv.Serve(ln) }()
 	select {
 	case <-ctx.Done():

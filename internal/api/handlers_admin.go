@@ -12,6 +12,7 @@ import (
 
 	"github.com/LTAGROUP/wrentv/internal/config"
 	"github.com/LTAGROUP/wrentv/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/direct"
 	"github.com/LTAGROUP/wrentv/internal/torrent"
 )
 
@@ -165,7 +166,15 @@ type settingsView struct {
 	DebridKeySet    bool                   `json:"debridKeySet"`
 	Webhooks        []config.WebhookConfig `json:"webhooks"`
 	IntegrationKey  string                 `json:"integrationKey"`
+	RemoteAccess    *remoteAccessView      `json:"remoteAccess,omitempty"`
 	RestartRequired bool                   `json:"restartRequired,omitempty"`
+}
+
+type remoteAccessView struct {
+	Enabled    bool          `json:"enabled"`
+	UPnP       bool          `json:"upnp"`
+	PublicPort int           `json:"publicPort"`
+	Status     direct.Status `json:"status"`
 }
 
 func (s *Server) settings() settingsView {
@@ -182,7 +191,16 @@ func (s *Server) settings() settingsView {
 		OMDbKeySet: c.Metadata.OMDbAPIKey != "", Fingerprint: c.Markers.Fingerprint,
 		TorrentsEnabled: c.Torrents.Enabled, Providers: c.Torrents.Providers, DebridService: c.Torrents.Debrid.Service,
 		DebridKeySet: c.Torrents.Debrid.APIKey != "", Webhooks: hooks, IntegrationKey: c.IntegrationKey,
+		RemoteAccess: s.remoteAccess(),
 	}
+}
+
+func (s *Server) remoteAccess() *remoteAccessView {
+	if s.Direct == nil {
+		return nil
+	}
+	rc := s.Cfg.RemoteAccess
+	return &remoteAccessView{Enabled: rc.Enabled, UPnP: rc.UPnP, PublicPort: rc.PublicPort, Status: s.Direct.Status()}
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -202,6 +220,11 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		DebridService   *string                 `json:"debridService"`
 		DebridAPIKey    *string                 `json:"debridApiKey"`
 		Webhooks        *[]config.WebhookConfig `json:"webhooks"`
+		RemoteAccess    *struct {
+			Enabled    *bool `json:"enabled"`
+			UPnP       *bool `json:"upnp"`
+			PublicPort *int  `json:"publicPort"`
+		} `json:"remoteAccess"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, 400, err.Error())
@@ -262,6 +285,24 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		c.Webhooks = hooks
 	}
+	if ra := req.RemoteAccess; ra != nil {
+		if ra.Enabled != nil {
+			c.RemoteAccess.Enabled = *ra.Enabled
+		}
+		if ra.UPnP != nil {
+			c.RemoteAccess.UPnP = *ra.UPnP
+		}
+		if ra.PublicPort != nil {
+			if *ra.PublicPort < 0 || *ra.PublicPort > 65535 {
+				writeErr(w, 400, "public port must be between 1 and 65535 (0 for automatic)")
+				return
+			}
+			c.RemoteAccess.PublicPort = *ra.PublicPort
+		}
+		if s.Direct != nil {
+			s.Direct.Refresh()
+		}
+	}
 	if err := c.Save(); err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -285,10 +326,17 @@ func (s *Server) heartbeat() {
 	if libs == nil {
 		libs = []*db.Library{}
 	}
-	if err := s.Supa.Heartbeat(ctx, LocalURLs(s.Cfg), s.Version, libs); err != nil {
+	remote := ""
+	if s.Direct != nil {
+		remote = s.Direct.Status().RemoteURL
+	}
+	if err := s.Supa.Heartbeat(ctx, s.advertisedLocalURLs(), remote, s.Version, libs); err != nil {
 		slog.Warn("heartbeat failed", "err", err)
 	}
 }
+
+// HeartbeatNow publishes immediately (e.g. when the server's addresses change).
+func (s *Server) HeartbeatNow() { s.heartbeat() }
 
 // RunHeartbeat keeps the account service informed while the server runs.
 func (s *Server) RunHeartbeat(ctx context.Context) {
