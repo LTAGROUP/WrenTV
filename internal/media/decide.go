@@ -22,6 +22,10 @@ type ClientCaps struct {
 	ForceEngine string `json:"forceEngine"`
 	// ForceTranscode is for testing / poor connections.
 	ForceTranscode bool `json:"forceTranscode"`
+	// AudioFallback is the codec unsupported audio is converted to during a
+	// remux: "alac" (Apple, default), "flac" (browsers) or "aac". Lossless
+	// codecs have no encoder priming, so per-segment encodes join seamlessly.
+	AudioFallback string `json:"audioFallback"`
 }
 
 type Method string
@@ -101,8 +105,8 @@ func Decide(info *Info, caps ClientCaps, audioIdx int) Decision {
 		if video != nil && video.HDR != "" || !tryMpv {
 			d.Method = MethodRemux
 			d.AudioCopy = false
-			d.AudioCodec = "alac"
-			d.Reasons = append(d.Reasons, fmt.Sprintf("keep %s video native; %s audio converted to lossless ALAC", hdrLabel(video), audio.Codec))
+			d.AudioCodec = caps.audioFallback()
+			d.Reasons = append(d.Reasons, fmt.Sprintf("keep %s video native; %s audio converted to %s", hdrLabel(video), audio.Codec, strings.ToUpper(d.AudioCodec)))
 			return d
 		}
 	}
@@ -131,6 +135,14 @@ func Decide(info *Info, caps ClientCaps, audioIdx int) Decision {
 	}
 	d.Reasons = append(d.Reasons, "no engine can play the original video: "+videoWhy)
 	return d
+}
+
+func (c ClientCaps) audioFallback() string {
+	switch c.AudioFallback {
+	case "flac", "aac":
+		return c.AudioFallback
+	}
+	return "alac"
 }
 
 func nativeVideo(v *Stream, caps ClientCaps) (bool, string) {

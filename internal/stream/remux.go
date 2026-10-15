@@ -273,8 +273,16 @@ func (r *remuxer) produce(track string, n int) error {
 			// Drop packets before the start; the previous segment owns them.
 			args = append(args, "-c:a", "copy", "-copypriorss", "0")
 		} else {
-			// Apple Lossless: bit-exact, and no encoder priming so segments join seamlessly.
-			args = append(args, "-c:a", "alac")
+			switch s.Decision.AudioCodec {
+			case "flac":
+				// Lossless with no encoder priming (browsers); 24-bit max in FLAC.
+				args = append(args, "-c:a", "flac", "-strict", "-2")
+			case "aac":
+				args = append(args, "-c:a", "aac", "-b:a", "384k")
+			default:
+				// Apple Lossless: bit-exact, and no encoder priming so segments join seamlessly.
+				args = append(args, "-c:a", "alac")
+			}
 		}
 		if !last {
 			args = append(args, "-to", fmtTS(seg.end))

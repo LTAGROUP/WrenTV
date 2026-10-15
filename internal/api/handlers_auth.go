@@ -114,6 +114,15 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, "server is already claimed by another account")
 			return
 		}
+	} else {
+		var req struct {
+			ClaimCode string `json:"claimCode"`
+		}
+		_ = decode(r, &req)
+		if !s.Supa.ClaimCodeOK(req.ClaimCode) {
+			writeErr(w, http.StatusForbidden, "wrong claim code (it's printed in the server log: docker logs haven)")
+			return
+		}
 	}
 	if err := s.Supa.Claim(r.Context(), tok); err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())

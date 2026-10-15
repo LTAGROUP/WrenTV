@@ -24,6 +24,7 @@ import (
 	"github.com/LTAGROUP/haven/internal/metadata/tmdb"
 	"github.com/LTAGROUP/haven/internal/stream"
 	"github.com/LTAGROUP/haven/internal/torrent"
+	"github.com/LTAGROUP/haven/internal/web"
 	"github.com/LTAGROUP/haven/internal/webhook"
 )
 
@@ -56,7 +57,9 @@ func principal(r *http.Request) *auth.Principal {
 
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RealIP, middleware.Recoverer, cors)
+	// No RealIP middleware: client-supplied X-Real-IP must never make a
+	// proxied request look like loopback (/internal is loopback-only).
+	r.Use(middleware.Recoverer, cors)
 	r.Use(requestLog)
 
 	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
@@ -130,9 +133,14 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/api/users/{id}", s.handleDeleteUser)
 			r.Get("/api/admin/status", s.handleAdminStatus)
 			r.Get("/api/admin/settings", s.handleGetSettings)
+			r.Get("/api/admin/browse", s.handleBrowse)
 			r.Patch("/api/admin/settings", s.handlePatchSettings)
 		})
 	})
+
+	// Unknown API paths are JSON 404s; everything else is the web app.
+	r.HandleFunc("/api/*", func(w http.ResponseWriter, r *http.Request) { writeErr(w, 404, "not found") })
+	r.Handle("/*", web.Handler())
 	return r
 }
 

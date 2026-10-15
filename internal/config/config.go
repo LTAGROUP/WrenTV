@@ -52,6 +52,9 @@ type SupabaseConfig struct {
 	// ServerID and ServerSecret are filled in when the server is claimed.
 	ServerID     string `yaml:"server_id"`
 	ServerSecret string `yaml:"server_secret"`
+	// ClaimCode must be entered to claim an unclaimed server (printed in the
+	// log at startup), so whoever reaches it first over the internet can't.
+	ClaimCode string `yaml:"claim_code,omitempty"`
 }
 
 type MetadataConfig struct {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -213,6 +214,30 @@ func (s *Supabase) accessFor(ctx context.Context, userID string) (string, []stri
 	return role, libs, nil
 }
 
+// NewClaimCode returns a short human-friendly one-time code like "K7QX-3MPA".
+func NewClaimCode() string {
+	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	out := make([]byte, 0, 9)
+	for i, c := range b {
+		if i == 4 {
+			out = append(out, '-')
+		}
+		out = append(out, alphabet[int(c)%len(alphabet)])
+	}
+	return string(out)
+}
+
+// ClaimCodeOK compares a user-entered code, ignoring case, spaces and dashes.
+func (s *Supabase) ClaimCodeOK(code string) bool {
+	norm := func(v string) string {
+		return strings.NewReplacer("-", "", " ", "").Replace(strings.ToUpper(strings.TrimSpace(v)))
+	}
+	want := norm(s.cfg.Auth.Supabase.ClaimCode)
+	return want != "" && subtle.ConstantTimeCompare([]byte(norm(code)), []byte(want)) == 1
+}
+
 // Claim registers this server to the signed-in user's account.
 func (s *Supabase) Claim(ctx context.Context, userToken string) error {
 	secret := make([]byte, 32)
@@ -226,6 +251,7 @@ func (s *Supabase) Claim(ctx context.Context, userToken string) error {
 	}
 	s.cfg.Auth.Supabase.ServerID = serverID
 	s.cfg.Auth.Supabase.ServerSecret = sec
+	s.cfg.Auth.Supabase.ClaimCode = ""
 	s.mu.Lock()
 	s.access = map[string]cachedAccess{}
 	s.mu.Unlock()

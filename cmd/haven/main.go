@@ -223,6 +223,14 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 		}
 		srv.Supa = auth.NewSupabase(d, cfg)
 		srv.Auth = srv.Supa
+		if !srv.Supa.Claimed() {
+			if cfg.Auth.Supabase.ClaimCode == "" {
+				cfg.Auth.Supabase.ClaimCode = auth.NewClaimCode()
+				_ = cfg.Save()
+			}
+			slog.Warn("server is not claimed yet: open the web app, sign in and enter this claim code",
+				"claim_code", cfg.Auth.Supabase.ClaimCode)
+		}
 		go srv.RunHeartbeat(ctx)
 	default:
 		srv.Local = auth.NewLocal(d, cfg.Auth.SigningKey)

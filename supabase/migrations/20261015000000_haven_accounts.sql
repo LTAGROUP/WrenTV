@@ -14,6 +14,7 @@ grant usage on schema private to authenticated;
 create table public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   display_name text not null default '',
+  email text not null default '',
   created_at timestamptz not null default now()
 );
 alter table public.profiles enable row level security;
@@ -30,8 +31,8 @@ security definer
 set search_path = ''
 as $$
 begin
-  insert into public.profiles (id, display_name)
-  values (new.id, coalesce(new.raw_user_meta_data ->> 'display_name', split_part(new.email, '@', 1)));
+  insert into public.profiles (id, display_name, email)
+  values (new.id, coalesce(new.raw_user_meta_data ->> 'display_name', split_part(new.email, '@', 1)), lower(coalesce(new.email, '')));
   return new;
 end;
 $$;
@@ -95,8 +96,27 @@ as $$
   select exists (select 1 from public.server_shares sh where sh.server_id = p_server_id and sh.user_id = (select auth.uid()));
 $$;
 
-revoke execute on function private.owns_server(uuid), private.shared_with_me(uuid) from public, anon;
-grant execute on function private.owns_server(uuid), private.shared_with_me(uuid) to authenticated;
+-- True when p_user_id has access to a server the caller owns.
+create function private.is_member_of_my_server(p_user_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.server_shares sh
+    join public.servers s on s.id = sh.server_id
+    where sh.user_id = p_user_id and s.owner_id = (select auth.uid())
+  );
+$$;
+
+revoke execute on function private.owns_server(uuid), private.shared_with_me(uuid), private.is_member_of_my_server(uuid) from public, anon;
+grant execute on function private.owns_server(uuid), private.shared_with_me(uuid), private.is_member_of_my_server(uuid) to authenticated;
+
+-- Owners see who they share with (names and emails on the Users page).
+create policy "profiles: owners read members" on public.profiles
+  for select to authenticated using ((select private.is_member_of_my_server(id)));
 
 create policy "servers: owner or shared can read" on public.servers
   for select to authenticated
