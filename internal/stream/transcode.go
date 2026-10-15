@@ -134,7 +134,7 @@ func (t *transcoder) launch(n int) {
 	hw := s.m.cfg.HW
 	_ = os.MkdirAll(t.dir(), 0o755)
 	startTS := s.plan[n].start
-	segLen := 6.0
+	segLen := s.segLen
 	v := s.Info.PrimaryVideo()
 
 	args := []string{"-nostdin", "-hide_banner", "-v", "error", "-y"}
@@ -151,8 +151,16 @@ func (t *transcoder) launch(n int) {
 		args = append(args, "-vf", hw.VideoFilter(v.Width, v.Height, v.BitDepth, s.MaxWidth, hdr))
 		args = append(args, hw.EncodeArgs(s.KbpsTarget)...)
 		// Keyframes exactly on segment boundaries so the playlist is deterministic.
-		args = append(args, "-force_key_frames", fmt.Sprintf("expr:gte(t,%s+n_forced*%s)", fmtTS(startTS), fmtTS(segLen)),
-			"-sc_threshold", "0")
+		if s.gop > 0 {
+			g := strconv.Itoa(s.gop)
+			args = append(args, "-g", g, "-keyint_min", g, "-sc_threshold", "0")
+			if hw.Kind == "qsv" {
+				args = append(args, "-idr_interval", "0")
+			}
+		} else {
+			args = append(args, "-force_key_frames", fmt.Sprintf("expr:gte(t,%s+n_forced*%s)", fmtTS(startTS), fmtTS(segLen)),
+				"-sc_threshold", "0")
+		}
 	}
 	if s.Decision.AudioIndex >= 0 {
 		if s.Decision.AudioCopy {

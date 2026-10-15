@@ -104,6 +104,9 @@ func (s *Scanner) parallel(ctx context.Context, items []*db.Item, fn func(*db.It
 
 func (s *Scanner) matchMovie(ctx context.Context, it *db.Item) error {
 	id := it.TMDBID
+	if id == 0 && it.IMDBID != "" {
+		id, _, _ = s.tmdb.FindIMDB(ctx, it.IMDBID)
+	}
 	if id == 0 {
 		res, err := s.tmdb.SearchMovie(ctx, it.Title, it.Year)
 		if err != nil {
@@ -146,6 +149,9 @@ func (s *Scanner) matchMovie(ctx context.Context, it *db.Item) error {
 
 func (s *Scanner) matchShow(ctx context.Context, it *db.Item) error {
 	id := it.TMDBID
+	if id == 0 && it.IMDBID != "" {
+		_, id, _ = s.tmdb.FindIMDB(ctx, it.IMDBID)
+	}
 	if id == 0 {
 		res, err := s.tmdb.SearchTV(ctx, it.Title, it.Year)
 		if err != nil {
@@ -255,6 +261,12 @@ func (s *Scanner) Rematch(ctx context.Context, it *db.Item, tmdbID int) error {
 // ---------- probing ----------
 
 func (s *Scanner) probeLoop(ctx context.Context) {
+	if s.probeWorkers < 0 {
+		return // background probing disabled; files are probed on first play
+	}
+	if s.probeWorkers == 0 {
+		s.probeWorkers = 4
+	}
 	t := time.NewTicker(5 * time.Minute)
 	defer t.Stop()
 	for {

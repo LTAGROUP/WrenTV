@@ -53,7 +53,7 @@ type Options struct {
 func NewScanner(d *db.DB, t *tmdb.Client, hub *Hub, o Options) *Scanner {
 	return &Scanner{
 		db: d, tmdb: t, hub: hub, ffprobe: o.FFprobe,
-		matchWorkers: max(o.MatchWorkers, 1), probeWorkers: max(o.ProbeWorkers, 1),
+		matchWorkers: max(o.MatchWorkers, 1), probeWorkers: o.ProbeWorkers,
 		scanning:  map[string]bool{},
 		matchKick: make(chan struct{}, 1),
 		probeKick: make(chan struct{}, 1),
@@ -84,6 +84,29 @@ type fileStat struct {
 type ScanResult struct {
 	Added, Updated, Removed, Unchanged int
 	Duration                           time.Duration
+}
+
+// Periodic rescans every library on an interval as a safety net for changes
+// the watcher missed (for example on mounts without usable notifications).
+func (s *Scanner) Periodic(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			libs, err := s.db.ListLibraries(ctx)
+			if err != nil {
+				continue
+			}
+			for _, l := range libs {
+				if r, err := s.ScanLibrary(ctx, l); err == nil && (r.Added > 0 || r.Removed > 0) {
+					slog.Info("periodic scan found changes", "library", l.Name, "added", r.Added, "removed", r.Removed)
+				}
+			}
+		}
+	}
 }
 
 // ScanLibrary does a full incremental scan of every path in the library.
@@ -247,8 +270,10 @@ func (s *Scanner) IngestAs(ctx context.Context, lib *db.Library, root, parsePath
 		key := MatchKey(mi.Title, mi.Year)
 		if mi.TMDBID > 0 {
 			key = fmt.Sprintf("tmdb:%d", mi.TMDBID)
+		} else if mi.IMDBID != "" {
+			key = "imdb:" + mi.IMDBID
 		}
-		it, created, err := s.db.UpsertTopLevel(ctx, &db.Item{LibraryID: lib.ID, Kind: "movie", MatchKey: key, Title: mi.Title, Year: mi.Year, TMDBID: mi.TMDBID,
+		it, created, err := s.db.UpsertTopLevel(ctx, &db.Item{LibraryID: lib.ID, Kind: "movie", MatchKey: key, Title: mi.Title, Year: mi.Year, TMDBID: mi.TMDBID, IMDBID: mi.IMDBID,
 			SeasonNumber: -1, EpisodeNumber: -1})
 		if err != nil {
 			return nil, err
@@ -270,11 +295,13 @@ func (s *Scanner) IngestAs(ctx context.Context, lib *db.Library, root, parsePath
 			key := MatchKey(ep.ShowTitle, ep.ShowYear)
 			if ep.ShowTMDB > 0 {
 				key = fmt.Sprintf("tmdb:%d", ep.ShowTMDB)
+			} else if ep.ShowIMDB != "" {
+				key = "imdb:" + ep.ShowIMDB
 			}
 			var created bool
 			var err error
 			show, created, err = s.db.UpsertTopLevel(ctx, &db.Item{LibraryID: lib.ID, Kind: "show", MatchKey: key, Title: ep.ShowTitle, Year: ep.ShowYear,
-				TMDBID: ep.ShowTMDB, SeasonNumber: -1, EpisodeNumber: -1})
+				TMDBID: ep.ShowTMDB, IMDBID: ep.ShowIMDB, SeasonNumber: -1, EpisodeNumber: -1})
 			if err != nil {
 				return nil, err
 			}

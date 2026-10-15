@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -109,10 +110,15 @@ type WebhookConfig struct {
 type ScannerConfig struct {
 	// Watch enables filesystem notifications for instant pickup of new files.
 	Watch bool `yaml:"watch"`
-	// IntervalMin runs an incremental rescan this often (for network shares
-	// where notifications are unreliable). 0 disables.
+	// PollSec is how often the watcher checks folders for changes (0 = 5s on
+	// macOS, 30s elsewhere). Network/FUSE mounts rely on this.
+	PollSec int `yaml:"poll_sec"`
+	// IntervalMin runs a full incremental rescan this often as a safety net
+	// (catches anything the watcher missed). 0 disables.
 	IntervalMin int `yaml:"interval_min"`
-	// ProbeWorkers is the number of concurrent ffprobe runs.
+	// ProbeWorkers is the number of concurrent background ffprobe runs.
+	// -1 disables background probing (files are probed on first play), which
+	// suits debrid/cloud mounts where every probe downloads data.
 	ProbeWorkers int `yaml:"probe_workers"`
 }
 
@@ -226,6 +232,9 @@ func (c *Config) applyEnv() {
 	set("HAVEN_HWACCEL", &c.Transcode.HWAccel)
 	set("HAVEN_DEBRID_API_KEY", &c.Torrents.Debrid.APIKey)
 	set("HAVEN_PUBLIC_URL", &c.PublicURL)
+	if v, err := strconv.Atoi(os.Getenv("HAVEN_SCAN_POLL_SEC")); err == nil {
+		c.Scanner.PollSec = v
+	}
 	if v, ok := os.LookupEnv("HAVEN_TORRENT_PROVIDERS"); ok {
 		c.Torrents.Providers = strings.Split(v, ",")
 	}

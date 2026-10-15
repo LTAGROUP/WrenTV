@@ -93,6 +93,8 @@ func (s *Server) Router() http.Handler {
 		r.Post("/torrents/{id}/replace", s.handleReplaceTorrent)
 		r.Delete("/torrents/{id}", s.handleDeleteTorrent)
 		r.Get("/libraries", s.handleIntegrationLibraries)
+		r.Post("/libraries", s.handleCreateLibrary)
+		r.Post("/libraries/{id}/scan", s.handleScanLibrary)
 	})
 
 	r.Group(func(r chi.Router) {

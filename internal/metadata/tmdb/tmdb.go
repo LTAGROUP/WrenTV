@@ -287,6 +287,22 @@ func (c *Client) SearchTV(ctx context.Context, query string, year int) ([]Search
 	return r.Results, err
 }
 
+// FindIMDB resolves an IMDb ID to TMDB movie and TV IDs (0 when absent).
+func (c *Client) FindIMDB(ctx context.Context, imdbID string) (movieID, tvID int, err error) {
+	var r struct {
+		Movies []SearchResult `json:"movie_results"`
+		TV     []SearchResult `json:"tv_results"`
+	}
+	err = c.get(ctx, "/find/"+url.PathEscape(imdbID), url.Values{"external_source": {"imdb_id"}}, detailTTL, &r)
+	if len(r.Movies) > 0 {
+		movieID = r.Movies[0].ID
+	}
+	if len(r.TV) > 0 {
+		tvID = r.TV[0].ID
+	}
+	return
+}
+
 func (c *Client) Movie(ctx context.Context, id int) (*Movie, error) {
 	var m Movie
 	p := url.Values{"append_to_response": {"release_dates,images"}, "include_image_language": {"en,null"}}

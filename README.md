@@ -99,13 +99,14 @@ webhooks:
     events: [torrent.unplayable, torrent.failed]
 scanner:
   watch: true
-  interval_min: 30
-  probe_workers: 4
+  poll_sec: 0                  # folder poll interval (0 = 5s macOS, 30s elsewhere)
+  interval_min: 30             # full incremental rescan safety net
+  probe_workers: 4             # -1 = probe on first play only (best for debrid/cloud mounts)
 ```
 
 Environment overrides: `HAVEN_DATA_DIR`, `HAVEN_LISTEN`, `HAVEN_SERVER_NAME`, `HAVEN_PUBLIC_URL`,
 `HAVEN_AUTH_MODE`, `HAVEN_SUPABASE_URL`, `HAVEN_SUPABASE_PUBLISHABLE_KEY`, `HAVEN_TMDB_API_KEY`,
-`HAVEN_FFMPEG`, `HAVEN_FFPROBE`, `HAVEN_HWACCEL`, `HAVEN_TORRENT_PROVIDERS`, `HAVEN_DEBRID_API_KEY`.
+`HAVEN_FFMPEG`, `HAVEN_FFPROBE`, `HAVEN_HWACCEL`, `HAVEN_SCAN_POLL_SEC`, `HAVEN_TORRENT_PROVIDERS`, `HAVEN_DEBRID_API_KEY`.
 
 ## Torrent integration (for backend services)
 
@@ -115,6 +116,8 @@ with the integration key: `X-Haven-Key: hvn_…`.
 | Method | Path | Body |
 |--------|------|------|
 | GET    | `/api/integration/libraries` | |
+| POST   | `/api/integration/libraries` | `{"name","type":"movies"|"shows","paths":[…]}` |
+| POST   | `/api/integration/libraries/{id}/scan` | |
 | POST   | `/api/integration/torrents` | `{"libraryId","magnet","externalRef"}` or multipart with `file` |
 | GET    | `/api/integration/torrents/{id}` | |
 | POST   | `/api/integration/torrents/{id}/replace` | `{"magnet"}` or multipart `file` |

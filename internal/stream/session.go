@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -60,6 +61,8 @@ type Session struct {
 	dir        string
 	keyframes  []float64
 	plan       []segment
+	segLen     float64 // transcode segment length (a whole number of frames)
+	gop        int
 	lastAccess time.Time
 	mu         sync.Mutex
 	ctx        context.Context
@@ -104,7 +107,8 @@ func (m *Manager) Create(o NewSessionOpts) (*Session, error) {
 		s.plan = planFromKeyframes(o.Keyframes, o.Info.Duration, 6)
 		s.remux = newRemuxer(s)
 	case media.MethodTranscode:
-		s.plan = planFixed(o.Info.Duration, 6)
+		s.segLen, s.gop = gopFor(o.Info.PrimaryVideo(), 6)
+		s.plan = planFixed(o.Info.Duration, s.segLen)
 		s.tx = newTranscoder(s)
 	}
 	m.mu.Lock()
@@ -298,6 +302,19 @@ func planFromKeyframes(kf []float64, duration, target float64) []segment {
 	}
 	plan = append(plan, segment{start, end})
 	return plan
+}
+
+// gopFor returns a segment length close to target that is a whole number of
+// frames, and that frame count. Encoding with a fixed GOP of that size puts
+// keyframes exactly on segment boundaries with any encoder or ffmpeg version
+// (force_key_frames expressions evaluate t differently across versions).
+// gop is 0 when the frame rate is unknown.
+func gopFor(v *media.Stream, target float64) (segLen float64, gop int) {
+	if v == nil || v.FrameRate <= 0 || v.FrameRate > 240 {
+		return target, 0
+	}
+	gop = int(math.Round(target * v.FrameRate))
+	return float64(gop) / v.FrameRate, gop
 }
 
 func planFixed(duration, target float64) []segment {

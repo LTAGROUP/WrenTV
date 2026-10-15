@@ -52,6 +52,7 @@ var (
 	reSeasonTag = regexp.MustCompile(`(?i)[\s.\[(_-](?:s\d{1,2}(?:[\s._-]*e\d{1,4})?|seasons?[\s._-]?\d{1,2}(?:-\d{1,2})?)(?:[\s.\])_-]|$)`)
 	reBrackets  = regexp.MustCompile(`\[[^\]]*\]|\{[^}]*\}`)
 	reTmdbTag   = regexp.MustCompile(`(?i)[\[{(]tmdb(?:id)?[-=](\d+)[\]})]`)
+	reImdbTag   = regexp.MustCompile(`(?i)[\[{(]imdb(?:id)?[-=](tt\d{5,})[\]})]`)
 )
 
 // MovieInfo is what we can learn about a movie from its path alone.
@@ -59,6 +60,7 @@ type MovieInfo struct {
 	Title  string
 	Year   int
 	TMDBID int
+	IMDBID string // from {imdb-tt…} tags
 }
 
 // EpisodeInfo is what we can learn about an episode from its path alone.
@@ -66,6 +68,7 @@ type EpisodeInfo struct {
 	ShowTitle string
 	ShowYear  int
 	ShowTMDB  int
+	ShowIMDB  string
 	Season    int
 	Episode   int
 	EndEp     int // multi-episode files
@@ -81,10 +84,17 @@ func ParseMovie(libRoot, path string) MovieInfo {
 	fileInfo := parseTitleYear(file)
 	if rel != "." && rel != "" {
 		dirInfo := parseTitleYear(dir)
-		if dirInfo.Year > 0 || dirInfo.TMDBID > 0 || fileInfo.Year == 0 {
+		if dirInfo.Year > 0 || dirInfo.TMDBID > 0 || dirInfo.IMDBID != "" || fileInfo.Year == 0 {
 			if dirInfo.Title != "" {
 				return dirInfo
 			}
+		}
+		// IDs tagged on the folder still apply when the file name wins.
+		if fileInfo.TMDBID == 0 {
+			fileInfo.TMDBID = dirInfo.TMDBID
+		}
+		if fileInfo.IMDBID == "" {
+			fileInfo.IMDBID = dirInfo.IMDBID
 		}
 	}
 	return fileInfo
@@ -150,7 +160,7 @@ func ParseEpisode(libRoot, path string) EpisodeInfo {
 		ep.ShowTitle = parts[0]
 	}
 	ti := parseTitleYear(ep.ShowTitle)
-	ep.ShowTitle, ep.ShowYear, ep.ShowTMDB = ti.Title, ti.Year, ti.TMDBID
+	ep.ShowTitle, ep.ShowYear, ep.ShowTMDB, ep.ShowIMDB = ti.Title, ti.Year, ti.TMDBID, ti.IMDBID
 	if ep.EndEp <= ep.Episode {
 		ep.EndEp = 0
 	}
@@ -162,6 +172,10 @@ func parseTitleYear(s string) MovieInfo {
 	if m := reTmdbTag.FindStringSubmatch(s); m != nil {
 		mi.TMDBID = atoi(m[1])
 		s = reTmdbTag.ReplaceAllString(s, " ")
+	}
+	if m := reImdbTag.FindStringSubmatch(s); m != nil {
+		mi.IMDBID = strings.ToLower(m[1])
+		s = reImdbTag.ReplaceAllString(s, " ")
 	}
 	s = reBrackets.ReplaceAllString(s, " ")
 	// Cut at season markers and release junk.

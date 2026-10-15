@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"hash/fnv"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -24,6 +25,9 @@ import (
 //     parent directory's mtime, so stat-ing directories (not files) finds every
 //     change cheaply. This also covers macOS (where kqueue needs a handle per
 //     file) and network shares (where notifications don't arrive).
+//
+// Some FUSE/WebDAV mounts (rclone, zurg) report a fixed epoch mtime for
+// folders; for those the poller compares a hash of the directory listing.
 type Watcher struct {
 	s        *Scanner
 	db       *db.DB
@@ -37,15 +41,40 @@ type Watcher struct {
 
 type dirState struct {
 	mtime   time.Time
+	sig     uint64 // listing hash, only for dirs with unusable mtimes
 	libID   string
 	libRoot string
+}
+
+// mtimeUnreliable reports folder mtimes that can't signal changes.
+func mtimeUnreliable(t time.Time) bool { return t.Year() < 1980 }
+
+func listingSig(dir string) uint64 {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	h := fnv.New64a()
+	for _, e := range entries {
+		h.Write([]byte(e.Name()))
+		h.Write([]byte{0})
+	}
+	return h.Sum64()
+}
+
+func newDirState(p string, info os.FileInfo, libID, root string) dirState {
+	st := dirState{mtime: info.ModTime(), libID: libID, libRoot: root}
+	if mtimeUnreliable(st.mtime) {
+		st.sig = listingSig(p)
+	}
+	return st
 }
 
 func NewWatcher(s *Scanner, d *db.DB, pollInterval time.Duration) *Watcher {
 	if pollInterval <= 0 {
 		pollInterval = 5 * time.Second
 		if runtime.GOOS != "darwin" {
-			pollInterval = 60 * time.Second
+			pollInterval = 30 * time.Second
 		}
 	}
 	return &Watcher{s: s, db: d, interval: pollInterval, dirs: map[string]dirState{}, pending: map[string]time.Time{}}
@@ -104,7 +133,7 @@ func (w *Watcher) Refresh(ctx context.Context) {
 				if err != nil {
 					return nil
 				}
-				next[p] = dirState{mtime: info.ModTime(), libID: l.ID, libRoot: root}
+				next[p] = newDirState(p, info, l.ID, root)
 				return nil
 			})
 		}
@@ -146,7 +175,13 @@ func (w *Watcher) poll() {
 			}
 			continue
 		}
-		if !info.ModTime().Equal(st.mtime) {
+		changed := !info.ModTime().Equal(st.mtime)
+		if !changed && mtimeUnreliable(info.ModTime()) {
+			sig := listingSig(d)
+			changed = sig != st.sig
+			st.sig = sig
+		}
+		if changed {
 			w.mu.Lock()
 			st.mtime = info.ModTime()
 			w.dirs[d] = st
@@ -226,7 +261,7 @@ func (w *Watcher) flush(ctx context.Context) {
 			_, known := w.dirs[p]
 			if !known {
 				if info, err := de.Info(); err == nil {
-					w.dirs[p] = dirState{mtime: info.ModTime(), libID: lib.ID, libRoot: root}
+					w.dirs[p] = newDirState(p, info, lib.ID, root)
 				}
 			}
 			w.mu.Unlock()

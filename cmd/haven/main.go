@@ -173,13 +173,12 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	})
 	scanner.Start(ctx)
 
-	poll := time.Duration(0)
-	if cfg.Scanner.IntervalMin > 0 && !cfg.Scanner.Watch {
-		poll = time.Duration(cfg.Scanner.IntervalMin) * time.Minute
-	}
-	watcher := library.NewWatcher(scanner, d, poll)
+	watcher := library.NewWatcher(scanner, d, time.Duration(cfg.Scanner.PollSec)*time.Second)
 	if cfg.Scanner.Watch {
 		go watcher.Run(ctx)
+	}
+	if cfg.Scanner.IntervalMin > 0 {
+		go scanner.Periodic(ctx, time.Duration(cfg.Scanner.IntervalMin)*time.Minute)
 	}
 
 	hw := stream.DetectHW(cfg.Transcode.FFmpegPath, cfg.Transcode.HWAccel, cfg.Transcode.VAAPIDevice)

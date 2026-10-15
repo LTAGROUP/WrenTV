@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -187,12 +190,42 @@ func pickFile(files []*db.MediaFile, id string) *db.MediaFile {
 		}
 	}
 	// Prefer a local file over a torrent, then the highest resolution.
+	var best *db.MediaFile
 	for _, f := range files {
-		if f.TorrentID == "" {
-			return f
+		if best == nil || betterFile(f, best) {
+			best = f
 		}
 	}
-	return files[0]
+	return best
+}
+
+var reResTag = regexp.MustCompile(`(?i)\b(2160|1440|1080|720|576|480)p\b|\b(4k|uhd)\b`)
+
+// fileHeight is the probed height, else a resolution tag in the file name.
+func fileHeight(f *db.MediaFile) int {
+	if f.Height > 0 {
+		return f.Height
+	}
+	m := reResTag.FindStringSubmatch(filepath.Base(f.Path))
+	switch {
+	case m == nil:
+		return 0
+	case m[1] != "":
+		n, _ := strconv.Atoi(m[1])
+		return n
+	default:
+		return 2160
+	}
+}
+
+func betterFile(a, b *db.MediaFile) bool {
+	if (a.TorrentID == "") != (b.TorrentID == "") {
+		return a.TorrentID == ""
+	}
+	if ha, hb := fileHeight(a), fileHeight(b); ha != hb {
+		return ha > hb
+	}
+	return a.Size > b.Size
 }
 
 func (s *Server) openSource(ctx context.Context, f *db.MediaFile) (stream.Source, error) {

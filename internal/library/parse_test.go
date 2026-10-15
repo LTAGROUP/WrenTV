@@ -23,6 +23,12 @@ func TestParseMovie(t *testing.T) {
 	if got := ParseMovie("/m", "/m/Blade Runner 2049 (2017) [tmdbid-335984]/x.mkv"); got.TMDBID != 335984 {
 		t.Errorf("tmdb id: got %d", got.TMDBID)
 	}
+	if got := ParseMovie("/m", "/m/2 Fast 2 Furious (2003) {imdb-tt0322259}/2.Fast.2.Furious.2003.1080p.BluRay.mkv"); got.IMDBID != "tt0322259" || got.Title != "2 Fast 2 Furious" || got.Year != 2003 {
+		t.Errorf("imdb tag: got %+v", got)
+	}
+	if got := ParseEpisode("/tv", "/tv/Aladdin (1994) {imdb-tt0105935}/Season 1/Aladdin.S01E02.mkv"); got.ShowIMDB != "tt0105935" || got.ShowTitle != "Aladdin" || got.ShowYear != 1994 {
+		t.Errorf("show imdb tag: got %+v", got)
+	}
 }
 
 func TestParseEpisode(t *testing.T) {

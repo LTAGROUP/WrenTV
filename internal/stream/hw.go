@@ -76,17 +76,35 @@ func DetectHW(ffmpeg, preference, vaapiDevice string) HW {
 	return HW{Kind: "software", H264Encoder: "libx264", HEVCEncoder: "libx265", Tonemap: tonemap}
 }
 
+// testEncoder runs a tiny encode through the same GPU filter path used for
+// real transcodes, so a half-working setup falls back to software.
 func testEncoder(ctx context.Context, ffmpeg string, hw HW) bool {
 	args := []string{"-hide_banner", "-v", "error"}
-	if hw.Kind == "vaapi" {
-		args = append(args, "-vaapi_device", hw.vaapiDevice)
+	var vf string
+	switch hw.Kind {
+	case "qsv", "vaapi":
+		dec := hw.DecodeArgs()
+		// Keep only the device setup; the test input is software frames.
+		for i := 0; i+1 < len(dec); i += 2 {
+			if dec[i] == "-init_hw_device" || dec[i] == "-filter_hw_device" {
+				args = append(args, dec[i], dec[i+1])
+			}
+		}
+		vf = "format=nv12,hwupload=extra_hw_frames=16," + hw.VideoFilter(640, 360, 8, 320, false)
 	}
 	args = append(args, "-f", "lavfi", "-i", "color=black:s=640x360:r=24", "-frames:v", "3")
-	if hw.Kind == "vaapi" {
-		args = append(args, "-vf", "format=nv12,hwupload")
+	if vf != "" {
+		args = append(args, "-vf", vf)
 	}
 	args = append(args, "-c:v", hw.H264Encoder, "-f", "null", "-")
 	return exec.CommandContext(ctx, ffmpeg, args...).Run() == nil
+}
+
+func (hw HW) device() string {
+	if hw.vaapiDevice != "" {
+		return hw.vaapiDevice
+	}
+	return "/dev/dri/renderD128"
 }
 
 func runOut(ctx context.Context, name string, args ...string) string {
@@ -106,9 +124,15 @@ func (hw HW) DecodeArgs() []string {
 	case "nvenc":
 		return []string{"-hwaccel", "cuda"}
 	case "qsv":
-		return []string{"-hwaccel", "qsv"}
+		// Frames stay on the GPU; vpp_qsv scales and tone-maps.
+		parent := []string{"-init_hw_device", "vaapi=va:" + hw.device(), "-init_hw_device", "qsv=qs@va"}
+		if runtime.GOOS == "windows" {
+			parent = []string{"-init_hw_device", "d3d11va=dx", "-init_hw_device", "qsv=qs@dx"}
+		}
+		return append(parent, "-filter_hw_device", "qs", "-hwaccel", "qsv", "-hwaccel_output_format", "qsv")
 	case "vaapi":
-		return []string{"-vaapi_device", hw.vaapiDevice, "-hwaccel", "vaapi"}
+		return []string{"-init_hw_device", "vaapi=va:" + hw.device(), "-filter_hw_device", "va",
+			"-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi", "-hwaccel_device", "va"}
 	case "amf":
 		return []string{"-hwaccel", "d3d11va"}
 	}
@@ -134,6 +158,20 @@ func (hw HW) VideoFilter(srcW, srcH, bitDepth, maxWidth int, hdr bool) string {
 		}
 		return f + ",hwdownload,format=" + dl + ",format=nv12"
 	}
+	switch hw.Kind {
+	case "qsv":
+		f := "vpp_qsv=w=" + itoa(w) + ":h=" + itoa(h) + ":format=nv12"
+		if hdr {
+			f += ":tonemap=1"
+		}
+		return f
+	case "vaapi":
+		f := "scale_vaapi=w=" + itoa(w) + ":h=" + itoa(h) + ":format=nv12"
+		if hdr {
+			f = "tonemap_vaapi=format=nv12:t=bt709:m=bt709:p=bt709," + f
+		}
+		return f
+	}
 	var f []string
 	if hdr && hw.Tonemap == "zscale" {
 		f = append(f, "zscale=t=linear:npl=100", "format=gbrpf32le", "zscale=p=bt709", "tonemap=tonemap=hable:desat=0",
@@ -142,12 +180,7 @@ func (hw HW) VideoFilter(srcW, srcH, bitDepth, maxWidth int, hdr bool) string {
 	if w != srcW {
 		f = append(f, "scale="+itoa(w)+":"+itoa(h))
 	}
-	switch hw.Kind {
-	case "vaapi":
-		f = append(f, "format=nv12", "hwupload")
-	default:
-		f = append(f, "format=yuv420p")
-	}
+	f = append(f, "format=yuv420p")
 	return strings.Join(f, ",")
 }
 
@@ -165,7 +198,8 @@ func (hw HW) EncodeArgs(kbps int) []string {
 	case "nvenc":
 		args = append(args, "-preset", "p4", "-profile:v", "high")
 	case "qsv":
-		args = append(args, "-preset", "faster", "-profile:v", "high")
+		// forced_idr makes -force_key_frames produce IDRs (clean HLS segment starts).
+		args = append(args, "-preset", "faster", "-profile:v", "high", "-forced_idr", "1")
 	case "vaapi":
 		args = append(args, "-profile:v", "high")
 	case "amf":
