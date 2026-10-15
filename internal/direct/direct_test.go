@@ -30,14 +30,20 @@ func TestSplitServesHTTPAndHTTPSOnOnePort(t *testing.T) {
 	cert := selfSigned(t, "*.abc.wrentv.net", time.Now().Add(-time.Hour), time.Now().Add(90*24*time.Hour))
 	srv := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			io.WriteString(w, map[bool]string{true: "tls", false: "plain"}[r.TLS != nil])
+			if r.TLS == nil {
+				io.WriteString(w, "plain")
+			} else {
+				io.WriteString(w, "tls "+r.Proto)
+			}
 		}),
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{*cert}},
 	}
 	plain, secure := Split(ln)
+	tlsSrv := &http.Server{Handler: srv.Handler, TLSConfig: srv.TLSConfig}
 	go srv.Serve(plain)
-	go srv.ServeTLS(secure, "", "")
+	go tlsSrv.ServeTLS(secure, "", "")
 	defer srv.Close()
+	defer tlsSrv.Close()
 
 	addr := ln.Addr().String()
 	get := func(c *http.Client, u string) string {
@@ -53,8 +59,8 @@ func TestSplitServesHTTPAndHTTPSOnOnePort(t *testing.T) {
 	if got := get(http.DefaultClient, "http://"+addr+"/"); got != "plain" {
 		t.Fatalf("http: got %q", got)
 	}
-	insecure := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
-	if got := get(insecure, "https://"+addr+"/"); got != "tls" {
+	insecure := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: true}}
+	if got := get(insecure, "https://"+addr+"/"); got != "tls HTTP/2.0" {
 		t.Fatalf("https: got %q", got)
 	}
 }

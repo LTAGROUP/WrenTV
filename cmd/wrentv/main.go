@@ -302,12 +302,14 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 		slog.Info("listening", "url", u)
 	}
 	errc := make(chan error, 2)
+	var tlsSrv *http.Server
 	if srv.Direct != nil {
 		// HTTP and HTTPS share the port; HTTPS starts working once the
-		// wrentv.net certificate arrives.
+		// wrentv.net certificate arrives. HTTPS needs its own http.Server:
+		// one server running both Serve and ServeTLS breaks HTTP/2.
 		plain, secure := direct.Split(ln)
-		httpSrv.TLSConfig = srv.Direct.TLSConfig()
-		go func() { errc <- httpSrv.ServeTLS(secure, "", "") }()
+		tlsSrv = &http.Server{Handler: httpSrv.Handler, ReadHeaderTimeout: httpSrv.ReadHeaderTimeout, TLSConfig: srv.Direct.TLSConfig()}
+		go func() { errc <- tlsSrv.ServeTLS(secure, "", "") }()
 		ln = plain
 	}
 	go func() { errc <- httpSrv.Serve(ln) }()
@@ -315,6 +317,9 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if tlsSrv != nil {
+			go tlsSrv.Shutdown(shutdown)
+		}
 		return httpSrv.Shutdown(shutdown)
 	case err := <-errc:
 		return err
