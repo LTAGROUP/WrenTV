@@ -1,0 +1,10 @@
+/bin/
+/dist/
+# Local config / data (contains secrets like API keys)
+haven.yaml
+*.db
+*.db-wal
+*.db-shm
+.env
+.DS_Store
+supabase/.temp/

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Per-user agent: copy to ~/Library/LaunchAgents and
+     `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.haven.server.plist`.
+     (`haven install` creates an equivalent agent automatically.) -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.haven.server</string>
+  <key>ProgramArguments</key>
+  <array><string>/usr/local/bin/haven</string></array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>/tmp/haven.log</string>
+  <key>StandardErrorPath</key><string>/tmp/haven.log</string>
+</dict>
+</plist>

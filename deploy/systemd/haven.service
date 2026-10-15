@@ -1,0 +1,22 @@
+[Unit]
+Description=Haven Media Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=haven
+Group=haven
+# Membership in "render"/"video" gives access to /dev/dri for VAAPI/QSV.
+SupplementaryGroups=render video
+Environment=HAVEN_DATA_DIR=/var/lib/haven
+ExecStart=/usr/local/bin/haven
+Restart=on-failure
+RestartSec=5
+StateDirectory=haven
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

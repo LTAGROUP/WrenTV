@@ -1,0 +1,33 @@
+services:
+  haven:
+    image: ghcr.io/ltagroup/haven:latest
+    build: ../..
+    container_name: haven
+    restart: unless-stopped
+    ports:
+      - "32500:32500"
+      - "42069:42069"
+      - "42069:42069/udp"
+    environment:
+      - HAVEN_SERVER_NAME=Haven
+      # - HAVEN_TMDB_API_KEY=your-key
+      # - HAVEN_PUBLIC_URL=https://haven.example.com
+      # - HAVEN_HWACCEL=auto   # auto | nvenc | qsv | vaapi | none
+    volumes:
+      - ./config:/config
+      - /path/to/media:/media:ro
+      # Optional: transcode scratch on fast local disk / tmpfs
+      # - /dev/shm/haven:/config/transcode
+
+    # Intel / AMD (QSV / VAAPI): pass the render node through.
+    # devices:
+    #   - /dev/dri:/dev/dri
+
+    # NVIDIA (requires nvidia-container-toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, video, compute, utility]
