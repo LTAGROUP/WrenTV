@@ -18,7 +18,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"github.com/LTAGROUP/haven/internal/media"
+	"github.com/LTAGROUP/wrentv/internal/media"
 )
 
 // ---------- playlists ----------

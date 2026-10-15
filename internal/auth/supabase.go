@@ -19,11 +19,11 @@ import (
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/LTAGROUP/haven/internal/config"
-	"github.com/LTAGROUP/haven/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/config"
+	"github.com/LTAGROUP/wrentv/internal/db"
 )
 
-// Supabase authenticates Haven-account users.
+// Supabase authenticates Wren TV account users.
 type Supabase struct {
 	db   *db.DB
 	cfg  *config.Config

@@ -14,11 +14,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/LTAGROUP/haven/internal/db"
-	"github.com/LTAGROUP/haven/internal/library"
-	"github.com/LTAGROUP/haven/internal/media"
-	"github.com/LTAGROUP/haven/internal/stream"
-	"github.com/LTAGROUP/haven/internal/torrent"
+	"github.com/LTAGROUP/wrentv/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/library"
+	"github.com/LTAGROUP/wrentv/internal/media"
+	"github.com/LTAGROUP/wrentv/internal/stream"
+	"github.com/LTAGROUP/wrentv/internal/torrent"
 )
 
 type playRequest struct {
@@ -51,6 +51,9 @@ type playResponse struct {
 	Info      *media.Info     `json:"info,omitempty"`
 	Subtitles []subtitleTrack `json:"subtitles,omitempty"`
 	FileID    string          `json:"fileId,omitempty"`
+	// Chapters and the skippable intro/credits of the file being played.
+	Chapters []media.Chapter `json:"chapters"`
+	Markers  media.Markers   `json:"markers"`
 }
 
 // handlePlay picks a file, decides how the client should play it and opens a session.
@@ -155,6 +158,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	resp := playResponse{
 		Status: "ready", SessionID: sess.ID, Engine: dec.Engine, Method: dec.Method, Decision: &dec,
 		Duration: info.Duration, Info: info, FileID: f.ID,
+		Chapters: nonNil(info.Chapters), Markers: s.markersFor(ctx, f, info),
 	}
 	base := "/stream/" + sess.ID + "/"
 	if dec.Method == media.MethodDirect {
@@ -173,6 +177,34 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		resp.Subtitles = append(resp.Subtitles, t)
 	}
 	writeJSON(w, 200, resp)
+}
+
+// markersFor combines chapter-named markers with fingerprint results;
+// chapters win where both exist.
+func (s *Server) markersFor(ctx context.Context, f *db.MediaFile, info *media.Info) media.Markers {
+	m := media.MarkersFromChapters(info.Chapters, info.Duration)
+	if m.Intro != nil && m.Credits != nil {
+		return m
+	}
+	fm, err := s.DB.GetFileMarkers(ctx, f.ID)
+	if err != nil || fm.Mtime != f.MTime {
+		return m
+	}
+	used := false
+	if m.Intro == nil && fm.Intro != nil {
+		m.Intro, used = &media.Range{Start: fm.Intro[0], End: fm.Intro[1]}, true
+	}
+	if m.Credits == nil && fm.Credits != nil {
+		m.Credits, used = &media.Range{Start: fm.Credits[0], End: fm.Credits[1]}, true
+	}
+	if used {
+		if m.Source == "" {
+			m.Source = "fingerprint"
+		} else {
+			m.Source += "+fingerprint"
+		}
+	}
+	return m
 }
 
 func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {

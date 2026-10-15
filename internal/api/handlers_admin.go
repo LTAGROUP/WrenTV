@@ -10,9 +10,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/LTAGROUP/haven/internal/config"
-	"github.com/LTAGROUP/haven/internal/db"
-	"github.com/LTAGROUP/haven/internal/torrent"
+	"github.com/LTAGROUP/wrentv/internal/config"
+	"github.com/LTAGROUP/wrentv/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/torrent"
 )
 
 // ---------- torrents ----------
@@ -146,6 +146,7 @@ func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 		"sessions":         sessions,
 		"torrentProviders": s.Torrents.Providers(),
 		"metadata":         s.TMDB.Enabled(),
+		"ratings":          s.OMDb.Enabled(),
 	})
 }
 
@@ -156,6 +157,8 @@ type settingsView struct {
 	PublicURL       string                 `json:"publicUrl"`
 	HWAccel         string                 `json:"hwaccel"`
 	TMDBKeySet      bool                   `json:"tmdbKeySet"`
+	OMDbKeySet      bool                   `json:"omdbKeySet"`
+	Fingerprint     bool                   `json:"markerFingerprinting"`
 	TorrentsEnabled bool                   `json:"torrentsEnabled"`
 	Providers       []string               `json:"torrentProviders"`
 	DebridService   string                 `json:"debridService"`
@@ -176,6 +179,7 @@ func (s *Server) settings() settingsView {
 	}
 	return settingsView{
 		ServerName: c.ServerName, PublicURL: c.PublicURL, HWAccel: c.Transcode.HWAccel, TMDBKeySet: c.Metadata.TMDBAPIKey != "",
+		OMDbKeySet: c.Metadata.OMDbAPIKey != "", Fingerprint: c.Markers.Fingerprint,
 		TorrentsEnabled: c.Torrents.Enabled, Providers: c.Torrents.Providers, DebridService: c.Torrents.Debrid.Service,
 		DebridKeySet: c.Torrents.Debrid.APIKey != "", Webhooks: hooks, IntegrationKey: c.IntegrationKey,
 	}
@@ -191,6 +195,8 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		PublicURL       *string                 `json:"publicUrl"`
 		HWAccel         *string                 `json:"hwaccel"`
 		TMDBAPIKey      *string                 `json:"tmdbApiKey"`
+		OMDbAPIKey      *string                 `json:"omdbApiKey"`
+		Fingerprint     *bool                   `json:"markerFingerprinting"`
 		TorrentsEnabled *bool                   `json:"torrentsEnabled"`
 		Providers       *[]string               `json:"torrentProviders"`
 		DebridService   *string                 `json:"debridService"`
@@ -216,6 +222,15 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	if req.TMDBAPIKey != nil {
 		c.Metadata.TMDBAPIKey = strings.TrimSpace(*req.TMDBAPIKey)
 		restart = true
+	}
+	if req.OMDbAPIKey != nil {
+		c.Metadata.OMDbAPIKey = strings.TrimSpace(*req.OMDbAPIKey) // read per request: no restart
+	}
+	if req.Fingerprint != nil {
+		c.Markers.Fingerprint = *req.Fingerprint
+		if c.Markers.Fingerprint && s.Markers != nil {
+			s.Markers.Kick()
+		}
 	}
 	if req.TorrentsEnabled != nil {
 		c.Torrents.Enabled = *req.TorrentsEnabled
@@ -259,7 +274,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 
 // ---------- background ----------
 
-// heartbeat publishes this server's addresses and libraries to Haven accounts.
+// heartbeat publishes this server's addresses and libraries to Wren TV accounts.
 func (s *Server) heartbeat() {
 	if s.Supa == nil || !s.Supa.Claimed() {
 		return

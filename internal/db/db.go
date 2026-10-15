@@ -16,7 +16,7 @@ type DB struct {
 }
 
 func Open(dataDir string) (*DB, error) {
-	path := filepath.Join(dataDir, "haven.db")
+	path := filepath.Join(dataDir, "wrentv.db")
 	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)", path)
 	sqldb, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -149,6 +149,19 @@ var migrations = []string{
 		key TEXT PRIMARY KEY,
 		body BLOB NOT NULL,
 		fetched_at INTEGER NOT NULL
+	);`,
+	// Intro/credits found by audio fingerprinting (chapter-based markers are
+	// derived from the probe). NULL ranges were looked for and not found;
+	// peers is how many other episodes the file was compared with.
+	`CREATE TABLE file_markers (
+		file_id TEXT PRIMARY KEY REFERENCES media_files(id) ON DELETE CASCADE,
+		mtime INTEGER NOT NULL DEFAULT 0,
+		intro_start REAL,
+		intro_end REAL,
+		credits_start REAL,
+		credits_end REAL,
+		peers INTEGER NOT NULL DEFAULT 0,
+		analyzed_at INTEGER NOT NULL
 	);`,
 }
 

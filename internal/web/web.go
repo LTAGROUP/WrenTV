@@ -5,6 +5,7 @@ package web
 import (
 	"embed"
 	"io/fs"
+	"mime"
 	"net/http"
 	"path"
 	"strings"
@@ -12,6 +13,11 @@ import (
 
 //go:embed static
 var files embed.FS
+
+func init() {
+	// Not in Go's built-in table, and slim images ship no /etc/mime.types.
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
 
 // Handler serves static files, falling back to index.html for app routes so
 // deep links like /item/123 work.

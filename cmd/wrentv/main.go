@@ -1,11 +1,12 @@
-// Command haven runs the Haven media server.
+// Command wrentv runs the Wren TV media server.
 //
-//	haven                 run in the foreground
-//	haven install         install as a system service (systemd / launchd / Windows service)
-//	haven uninstall|start|stop|restart|status
-//	haven version
+//	wrentv                run in the foreground
+//	wrentv install        install as a system service (systemd / launchd / Windows service),
+//	                      replacing a Haven-era "haven" service if one is installed
+//	wrentv uninstall|start|stop|restart|status
+//	wrentv version
 //
-// Flags: -data <dir> (default: platform data dir, or $HAVEN_DATA_DIR), -v (debug logs)
+// Flags: -data <dir> (default: platform data dir, or $WRENTV_DATA_DIR), -v (debug logs)
 package main
 
 import (
@@ -24,16 +25,18 @@ import (
 
 	"github.com/kardianos/service"
 
-	"github.com/LTAGROUP/haven/internal/api"
-	"github.com/LTAGROUP/haven/internal/auth"
-	"github.com/LTAGROUP/haven/internal/config"
-	"github.com/LTAGROUP/haven/internal/db"
-	"github.com/LTAGROUP/haven/internal/images"
-	"github.com/LTAGROUP/haven/internal/library"
-	"github.com/LTAGROUP/haven/internal/metadata/tmdb"
-	"github.com/LTAGROUP/haven/internal/stream"
-	"github.com/LTAGROUP/haven/internal/torrent"
-	"github.com/LTAGROUP/haven/internal/webhook"
+	"github.com/LTAGROUP/wrentv/internal/api"
+	"github.com/LTAGROUP/wrentv/internal/auth"
+	"github.com/LTAGROUP/wrentv/internal/config"
+	"github.com/LTAGROUP/wrentv/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/images"
+	"github.com/LTAGROUP/wrentv/internal/library"
+	"github.com/LTAGROUP/wrentv/internal/markers"
+	"github.com/LTAGROUP/wrentv/internal/metadata/omdb"
+	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
+	"github.com/LTAGROUP/wrentv/internal/stream"
+	"github.com/LTAGROUP/wrentv/internal/torrent"
+	"github.com/LTAGROUP/wrentv/internal/webhook"
 	"path/filepath"
 )
 
@@ -45,7 +48,7 @@ func main() {
 	flag.Parse()
 
 	level := slog.LevelInfo
-	if *verbose || os.Getenv("HAVEN_DEBUG") != "" {
+	if *verbose || config.Getenv("DEBUG") != "" {
 		level = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
@@ -53,9 +56,9 @@ func main() {
 	prg := &program{dataDir: *dataDir}
 	svcArgs := []string{"-data", *dataDir}
 	svc, err := service.New(prg, &service.Config{
-		Name:        "haven",
-		DisplayName: "Haven Media Server",
-		Description: "Haven personal media server",
+		Name:        "wrentv",
+		DisplayName: "Wren TV Media Server",
+		Description: "Wren TV personal media server",
 		Arguments:   svcArgs,
 		Option: service.KeyValue{
 			"UserService": false,
@@ -70,7 +73,7 @@ func main() {
 	if cmd := flag.Arg(0); cmd != "" {
 		switch cmd {
 		case "version":
-			fmt.Println("haven", version)
+			fmt.Println("Wren TV", version)
 			return
 		case "status":
 			st, err := svc.Status()
@@ -81,11 +84,14 @@ func main() {
 			fmt.Println(map[service.Status]string{service.StatusRunning: "running", service.StatusStopped: "stopped"}[st])
 			return
 		case "install", "uninstall", "start", "stop", "restart":
+			if cmd == "install" {
+				removeLegacyService()
+			}
 			if err := service.Control(svc, cmd); err != nil {
 				fmt.Fprintf(os.Stderr, "%s failed: %v\n", cmd, err)
 				os.Exit(1)
 			}
-			fmt.Printf("haven: %s ok\n", cmd)
+			fmt.Printf("wrentv: %s ok\n", cmd)
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
@@ -93,7 +99,7 @@ func main() {
 		}
 	}
 	if err := svc.Run(); err != nil {
-		slog.Error("haven stopped", "err", err)
+		slog.Error("Wren TV stopped", "err", err)
 		os.Exit(1)
 	}
 }
@@ -148,13 +154,40 @@ func (p *program) Stop(s service.Service) error {
 	return nil
 }
 
+// removeLegacyService stops and uninstalls the service Haven installed under
+// the name "haven", so the new one can take over its port. Its data is left
+// for MigrateDataDir to adopt.
+func removeLegacyService() {
+	old, err := service.New(&program{}, &service.Config{Name: "haven"})
+	if err != nil {
+		return
+	}
+	if _, err := old.Status(); errors.Is(err, service.ErrNotInstalled) {
+		return
+	}
+	_ = old.Stop()
+	if err := old.Uninstall(); err != nil {
+		fmt.Fprintf(os.Stderr, "could not uninstall the old haven service: %v\n", err)
+		return
+	}
+	fmt.Println("wrentv: removed the old haven service")
+}
+
 func run(ctx context.Context, dataDir string, ready chan<- error) error {
+	dataDir, notes, err := config.MigrateDataDir(dataDir)
+	for _, n := range notes {
+		slog.Info("migrated from Haven", "change", n)
+	}
+	if err != nil {
+		ready <- err
+		return err
+	}
 	cfg, err := config.Load(dataDir)
 	if err != nil {
 		ready <- err
 		return err
 	}
-	slog.Info("starting haven", "version", version, "data", dataDir, "listen", cfg.Listen, "auth", cfg.Auth.Mode)
+	slog.Info("starting Wren TV", "version", version, "data", dataDir, "listen", cfg.Listen, "auth", cfg.Auth.Mode)
 
 	d, err := db.Open(dataDir)
 	if err != nil {
@@ -171,6 +204,9 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	scanner := library.NewScanner(d, tm, hub, library.Options{
 		FFprobe: cfg.Transcode.FFprobePath, MatchWorkers: cfg.Metadata.Workers, ProbeWorkers: cfg.Scanner.ProbeWorkers,
 	})
+	analyzer := markers.New(d, cfg.Transcode.FFmpegPath, func() bool { return cfg.Markers.Fingerprint })
+	scanner.OnProbed = analyzer.Kick
+	go analyzer.Run(ctx)
 	scanner.Start(ctx)
 
 	watcher := library.NewWatcher(scanner, d, time.Duration(cfg.Scanner.PollSec)*time.Second)
@@ -212,6 +248,7 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 
 	srv := &api.Server{
 		Version: version, Cfg: cfg, DB: d, Scanner: scanner, Watcher: watcher, TMDB: tm, Streams: streams,
+		OMDb: omdb.New(func() string { return cfg.Metadata.OMDbAPIKey }, d), Markers: analyzer,
 		Torrents: torrents, Hub: hub, Hooks: hooks, Images: images.New(filepath.Join(dataDir, "images")),
 	}
 	switch cfg.Auth.Mode {

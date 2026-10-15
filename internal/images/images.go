@@ -25,6 +25,17 @@ func New(dir string) *Cache {
 	return &Cache{dir: dir, client: &http.Client{Timeout: 30 * time.Second}}
 }
 
+// imageBase is TMDB's image CDN; WRENTV_TMDB_IMAGE_URL points it at a proxy
+// or a test server.
+var imageBase = envOr("WRENTV_TMDB_IMAGE_URL", "https://image.tmdb.org/t/p/")
+
+func envOr(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
+
 var (
 	sizes     = []string{"w92", "w154", "w185", "w300", "w342", "w500", "w780", "w1280", "original"}
 	validPath = regexp.MustCompile(`^/[A-Za-z0-9_-]+\.(jpg|png|svg|webp)$`)
@@ -42,7 +53,7 @@ func (c *Cache) ServeTMDB(w http.ResponseWriter, r *http.Request, size, path str
 			if _, err := os.Stat(local); err == nil {
 				return nil, nil
 			}
-			return nil, c.fetch("https://image.tmdb.org/t/p/"+size+path, local)
+			return nil, c.fetch(imageBase+size+path, local)
 		})
 		if err != nil {
 			http.Error(w, "image unavailable", http.StatusBadGateway)

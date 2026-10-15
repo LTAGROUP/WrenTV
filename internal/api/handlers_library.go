@@ -13,8 +13,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/LTAGROUP/haven/internal/db"
-	"github.com/LTAGROUP/haven/internal/media"
+	"github.com/LTAGROUP/wrentv/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/media"
 )
 
 func (s *Server) visibleLibraries(r *http.Request) ([]*db.Library, []string, error) {
@@ -114,6 +114,7 @@ func (s *Server) afterLibraryChange(lib *db.Library) {
 		}
 		s.Watcher.Refresh(ctx)
 		s.heartbeat()
+		s.Markers.Kick()
 	}()
 }
 
@@ -172,6 +173,7 @@ func (s *Server) handleScanLibrary(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.Scanner.ScanLibrary(context.Background(), lib); err != nil {
 			slog.Warn("scan failed", "library", lib.Name, "err", err)
 		}
+		s.Markers.Kick()
 	}()
 	writeJSON(w, 202, map[string]string{"status": "scanning"})
 }
@@ -261,7 +263,8 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 			shelves = append(shelves, shelf{l, items})
 		}
 	}
-	writeJSON(w, 200, map[string]any{"continueWatching": nonNil(cont), "recentlyAdded": shelves})
+	topRated, genres := s.homeRows(ctx, p.User.ID, ids)
+	writeJSON(w, 200, map[string]any{"continueWatching": nonNil(cont), "recentlyAdded": shelves, "topRated": topRated, "genres": genres})
 }
 
 // decorateEpisodes fills show artwork onto episodes lacking stills.

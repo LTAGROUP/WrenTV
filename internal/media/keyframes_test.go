@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// HAVEN_TEST_MKV=/path/to/file.mkv go test ./internal/media -run Cues -v
+// WRENTV_TEST_MKV=/path/to/file.mkv go test ./internal/media -run Cues -v
 func TestMatroskaCues(t *testing.T) {
-	p := os.Getenv("HAVEN_TEST_MKV")
+	p := os.Getenv("WRENTV_TEST_MKV")
 	if p == "" {
-		t.Skip("HAVEN_TEST_MKV not set")
+		t.Skip("WRENTV_TEST_MKV not set")
 	}
 	f, err := os.Open(p)
 	if err != nil {

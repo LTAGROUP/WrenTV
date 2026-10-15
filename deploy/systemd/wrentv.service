@@ -1,19 +1,19 @@
 [Unit]
-Description=Haven Media Server
+Description=Wren TV Media Server
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=haven
-Group=haven
+User=wrentv
+Group=wrentv
 # Membership in "render"/"video" gives access to /dev/dri for VAAPI/QSV.
 SupplementaryGroups=render video
-Environment=HAVEN_DATA_DIR=/var/lib/haven
-ExecStart=/usr/local/bin/haven
+Environment=WRENTV_DATA_DIR=/var/lib/wrentv
+ExecStart=/usr/local/bin/wrentv
 Restart=on-failure
 RestartSec=5
-StateDirectory=haven
+StateDirectory=wrentv
 NoNewPrivileges=true
 ProtectSystem=full
 PrivateTmp=true

@@ -350,6 +350,9 @@ type ItemQuery struct {
 	Limit      int
 	Offset     int
 	UserID     string // join watch state for this user
+	Genre      string // items tagged with this genre
+	TMDBIDs    []int  // items matched to these TMDB IDs
+	MinRating  float64
 }
 
 func (d *DB) QueryItems(ctx context.Context, q ItemQuery) ([]*Item, int, error) {
@@ -383,6 +386,23 @@ func (d *DB) QueryItems(ctx context.Context, q ItemQuery) ([]*Item, int, error) 
 		where = append(where, `i.show_id=?`)
 		args = append(args, q.ShowID)
 	}
+	if q.Genre != "" {
+		where = append(where, `EXISTS (SELECT 1 FROM json_each(i.genres) g WHERE g.value=?)`)
+		args = append(args, q.Genre)
+	}
+	if q.TMDBIDs != nil {
+		if len(q.TMDBIDs) == 0 {
+			return nil, 0, nil
+		}
+		where = append(where, `i.tmdb_id IN (`+placeholders(len(q.TMDBIDs))+`)`)
+		for _, id := range q.TMDBIDs {
+			args = append(args, id)
+		}
+	}
+	if q.MinRating > 0 {
+		where = append(where, `i.rating >= ?`)
+		args = append(args, q.MinRating)
+	}
 	if q.Search != "" {
 		where = append(where, `(i.title LIKE ? OR i.original_title LIKE ?)`)
 		s := "%" + q.Search + "%"
@@ -405,7 +425,9 @@ func (d *DB) QueryItems(ctx context.Context, q ItemQuery) ([]*Item, int, error) 
 	case "year":
 		order = "i.year DESC, i.sort_title"
 	case "rating":
-		order = "i.rating DESC"
+		order = "i.rating DESC, i.sort_title"
+	case "random":
+		order = "RANDOM()"
 	case "episode":
 		order = "i.season_number, i.episode_number"
 	}

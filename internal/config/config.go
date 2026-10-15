@@ -1,5 +1,6 @@
-// Package config loads Haven server configuration from a YAML file in the
-// data directory, with environment-variable overrides (HAVEN_*).
+// Package config loads Wren TV server configuration from a YAML file in the
+// data directory, with environment-variable overrides (WRENTV_*, or the
+// legacy HAVEN_*).
 package config
 
 import (
@@ -38,11 +39,19 @@ type Config struct {
 	Torrents  TorrentConfig   `yaml:"torrents"`
 	Webhooks  []WebhookConfig `yaml:"webhooks"`
 	Scanner   ScannerConfig   `yaml:"scanner"`
+	Markers   MarkersConfig   `yaml:"markers"`
+}
+
+// MarkersConfig controls intro/credits detection. Chapter names are always
+// used; Fingerprint additionally compares the audio of episodes in a season
+// (a background job) to find intros and credits in files without chapters.
+type MarkersConfig struct {
+	Fingerprint bool `yaml:"fingerprint"`
 }
 
 type AuthConfig struct {
 	// Mode is "local" (accounts stored on this server) or "supabase"
-	// (Haven accounts: sign in once, link devices, share servers).
+	// (Wren TV accounts: sign in once, link devices, share servers).
 	Mode string `yaml:"mode"`
 	// SigningKey signs locally issued tokens. Generated on first run.
 	SigningKey string         `yaml:"signing_key"`
@@ -62,6 +71,9 @@ type SupabaseConfig struct {
 
 type MetadataConfig struct {
 	TMDBAPIKey string `yaml:"tmdb_api_key"`
+	// OMDbAPIKey enables IMDb, Rotten Tomatoes and Metacritic ratings
+	// (free key: https://www.omdbapi.com/apikey.aspx).
+	OMDbAPIKey string `yaml:"omdb_api_key"`
 	Language   string `yaml:"language"`
 	// Workers is the number of concurrent metadata lookups.
 	Workers int `yaml:"workers"`
@@ -107,7 +119,7 @@ type TorrentHealthConf struct {
 
 type WebhookConfig struct {
 	URL string `yaml:"url" json:"url"`
-	// Secret signs the payload: X-Haven-Signature: sha256=<hex hmac>.
+	// Secret signs the payload: X-WrenTV-Signature: sha256=<hex hmac>.
 	Secret string `yaml:"secret" json:"secret,omitempty"`
 	// Events to send; empty means all.
 	Events []string `yaml:"events" json:"events"`
@@ -144,12 +156,13 @@ func defaults() Config {
 			Health:     TorrentHealthConf{MetadataTimeoutSec: 60, StallTimeoutSec: 45, MinPeers: 1, ReplaceTimeoutMin: 30},
 		},
 		Scanner: ScannerConfig{Watch: true, IntervalMin: 30, ProbeWorkers: 4},
+		Markers: MarkersConfig{Fingerprint: true},
 	}
 }
 
 // DefaultDataDir returns the platform's conventional location.
 func DefaultDataDir() string {
-	if d := os.Getenv("HAVEN_DATA_DIR"); d != "" {
+	if d := Getenv("DATA_DIR"); d != "" {
 		return d
 	}
 	if _, err := os.Stat("/.dockerenv"); err == nil {
@@ -158,24 +171,24 @@ func DefaultDataDir() string {
 	switch runtime.GOOS {
 	case "darwin":
 		home, _ := os.UserHomeDir()
-		return filepath.Join(home, "Library", "Application Support", "Haven")
+		return filepath.Join(home, "Library", "Application Support", "Wren TV")
 	case "windows":
 		if pd := os.Getenv("ProgramData"); pd != "" {
-			return filepath.Join(pd, "Haven")
+			return filepath.Join(pd, "WrenTV")
 		}
-		return `C:\ProgramData\Haven`
+		return `C:\ProgramData\WrenTV`
 	default:
 		if os.Geteuid() == 0 {
-			return "/var/lib/haven"
+			return "/var/lib/wrentv"
 		}
 		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".local", "share", "haven")
+		return filepath.Join(home, ".local", "share", "wrentv")
 	}
 }
 
-func (c *Config) Path() string { return filepath.Join(c.DataDir, "haven.yaml") }
+func (c *Config) Path() string { return filepath.Join(c.DataDir, configFile) }
 
-// Load reads <dataDir>/haven.yaml, creating it with defaults if missing, and
+// Load reads <dataDir>/wrentv.yaml, creating it with defaults if missing, and
 // applies environment overrides. Generated secrets are persisted.
 func Load(dataDir string) (*Config, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
@@ -199,7 +212,7 @@ func Load(dataDir string) (*Config, error) {
 		dirty = true
 	}
 	if c.IntegrationKey == "" {
-		c.IntegrationKey = "hvn_" + randHex(24)
+		c.IntegrationKey = "wtv_" + randHex(24)
 		dirty = true
 	}
 	if c.Auth.SigningKey == "" {
@@ -223,25 +236,26 @@ func Load(dataDir string) (*Config, error) {
 
 func (c *Config) applyEnv() {
 	set := func(key string, dst *string) {
-		if v, ok := os.LookupEnv(key); ok {
+		if v, ok := LookupEnv(key); ok {
 			*dst = v
 		}
 	}
-	set("HAVEN_LISTEN", &c.Listen)
-	set("HAVEN_SERVER_NAME", &c.ServerName)
-	set("HAVEN_AUTH_MODE", &c.Auth.Mode)
-	set("HAVEN_SUPABASE_URL", &c.Auth.Supabase.URL)
-	set("HAVEN_SUPABASE_PUBLISHABLE_KEY", &c.Auth.Supabase.PublishableKey)
-	set("HAVEN_TMDB_API_KEY", &c.Metadata.TMDBAPIKey)
-	set("HAVEN_FFMPEG", &c.Transcode.FFmpegPath)
-	set("HAVEN_FFPROBE", &c.Transcode.FFprobePath)
-	set("HAVEN_HWACCEL", &c.Transcode.HWAccel)
-	set("HAVEN_DEBRID_API_KEY", &c.Torrents.Debrid.APIKey)
-	set("HAVEN_PUBLIC_URL", &c.PublicURL)
-	if v, err := strconv.Atoi(os.Getenv("HAVEN_SCAN_POLL_SEC")); err == nil {
+	set("LISTEN", &c.Listen)
+	set("SERVER_NAME", &c.ServerName)
+	set("AUTH_MODE", &c.Auth.Mode)
+	set("SUPABASE_URL", &c.Auth.Supabase.URL)
+	set("SUPABASE_PUBLISHABLE_KEY", &c.Auth.Supabase.PublishableKey)
+	set("TMDB_API_KEY", &c.Metadata.TMDBAPIKey)
+	set("OMDB_API_KEY", &c.Metadata.OMDbAPIKey)
+	set("FFMPEG", &c.Transcode.FFmpegPath)
+	set("FFPROBE", &c.Transcode.FFprobePath)
+	set("HWACCEL", &c.Transcode.HWAccel)
+	set("DEBRID_API_KEY", &c.Torrents.Debrid.APIKey)
+	set("PUBLIC_URL", &c.PublicURL)
+	if v, err := strconv.Atoi(Getenv("SCAN_POLL_SEC")); err == nil {
 		c.Scanner.PollSec = v
 	}
-	if v := os.Getenv("HAVEN_LOCAL_URLS"); v != "" {
+	if v := Getenv("LOCAL_URLS"); v != "" {
 		c.LocalURLs = nil
 		for _, u := range strings.Split(v, ",") {
 			if u = strings.TrimSpace(u); u != "" {
@@ -249,7 +263,7 @@ func (c *Config) applyEnv() {
 			}
 		}
 	}
-	if v, ok := os.LookupEnv("HAVEN_TORRENT_PROVIDERS"); ok {
+	if v, ok := LookupEnv("TORRENT_PROVIDERS"); ok {
 		c.Torrents.Providers = strings.Split(v, ",")
 	}
 }

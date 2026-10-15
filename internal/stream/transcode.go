@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LTAGROUP/haven/internal/media"
+	"github.com/LTAGROUP/wrentv/internal/media"
 )
 
 // ---------- transcode: one continuous ffmpeg per playback position ----------

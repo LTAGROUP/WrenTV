@@ -2,7 +2,7 @@
 //
 // Two modes:
 //   - local: accounts live in this server's database (username/password).
-//   - supabase: Haven accounts. Users sign in once (any device), link other
+//   - supabase: Wren TV accounts. Users sign in once (any device), link other
 //     devices with a short code, and server owners share libraries with other
 //     accounts. The server verifies Supabase-issued JWTs and asks Supabase
 //     (with its own server secret) what each user may access.
@@ -18,7 +18,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/LTAGROUP/haven/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/db"
 )
 
 var (
@@ -72,7 +72,10 @@ func BearerToken(r *http.Request) string {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimSpace(h[7:])
 	}
-	if t := r.Header.Get("X-Haven-Token"); t != "" {
+	if t := r.Header.Get("X-WrenTV-Token"); t != "" {
+		return t
+	}
+	if t := r.Header.Get("X-Haven-Token"); t != "" { // legacy clients
 		return t
 	}
 	return r.URL.Query().Get("token")
@@ -91,6 +94,12 @@ func NewLocal(d *db.DB, signingKey string) *Local {
 
 func (l *Local) Mode() string { return "local" }
 
+// Tokens issued before the rename carry the Haven issuer and stay valid.
+const (
+	issuer       = "wrentv-local"
+	legacyIssuer = "haven-local"
+)
+
 type claims struct {
 	jwt.RegisteredClaims
 	Device string `json:"dev,omitempty"`
@@ -101,7 +110,7 @@ func (l *Local) Issue(u *db.User, device string) (string, error) {
 	c := claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   u.ID,
-			Issuer:    "haven-local",
+			Issuer:    issuer,
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(365 * 24 * time.Hour)),
 		},
@@ -113,8 +122,8 @@ func (l *Local) Issue(u *db.User, device string) (string, error) {
 func (l *Local) Authenticate(ctx context.Context, token string) (*Principal, error) {
 	var c claims
 	_, err := jwt.ParseWithClaims(token, &c, func(t *jwt.Token) (any, error) { return l.key, nil },
-		jwt.WithValidMethods([]string{"HS256"}), jwt.WithIssuer("haven-local"))
-	if err != nil {
+		jwt.WithValidMethods([]string{"HS256"}))
+	if err != nil || (c.Issuer != issuer && c.Issuer != legacyIssuer) {
 		return nil, ErrUnauthorized
 	}
 	u, err := l.db.UserByID(ctx, c.Subject)

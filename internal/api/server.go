@@ -1,4 +1,4 @@
-// Package api is Haven's HTTP API.
+// Package api is Wren TV's HTTP API.
 package api
 
 import (
@@ -16,16 +16,18 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/LTAGROUP/haven/internal/auth"
-	"github.com/LTAGROUP/haven/internal/config"
-	"github.com/LTAGROUP/haven/internal/db"
-	"github.com/LTAGROUP/haven/internal/images"
-	"github.com/LTAGROUP/haven/internal/library"
-	"github.com/LTAGROUP/haven/internal/metadata/tmdb"
-	"github.com/LTAGROUP/haven/internal/stream"
-	"github.com/LTAGROUP/haven/internal/torrent"
-	"github.com/LTAGROUP/haven/internal/web"
-	"github.com/LTAGROUP/haven/internal/webhook"
+	"github.com/LTAGROUP/wrentv/internal/auth"
+	"github.com/LTAGROUP/wrentv/internal/config"
+	"github.com/LTAGROUP/wrentv/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/images"
+	"github.com/LTAGROUP/wrentv/internal/library"
+	"github.com/LTAGROUP/wrentv/internal/markers"
+	"github.com/LTAGROUP/wrentv/internal/metadata/omdb"
+	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
+	"github.com/LTAGROUP/wrentv/internal/stream"
+	"github.com/LTAGROUP/wrentv/internal/torrent"
+	"github.com/LTAGROUP/wrentv/internal/web"
+	"github.com/LTAGROUP/wrentv/internal/webhook"
 )
 
 type Server struct {
@@ -35,6 +37,8 @@ type Server struct {
 	Scanner  *library.Scanner
 	Watcher  *library.Watcher
 	TMDB     *tmdb.Client
+	OMDb     *omdb.Client
+	Markers  *markers.Analyzer
 	Streams  *stream.Manager
 	Torrents *torrent.Manager
 	Hub      *library.Hub
@@ -110,6 +114,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/libraries/{id}/items", s.handleLibraryItems)
 		r.Get("/api/items/{id}", s.handleItem)
 		r.Get("/api/items/{id}/children", s.handleChildren)
+		r.Get("/api/items/{id}/extras", s.handleExtras)
+		r.Get("/api/discover/trending", s.handleTrending)
 		r.Post("/api/items/{id}/progress", s.handleProgress)
 		r.Post("/api/items/{id}/watched", s.handleWatched)
 		r.Post("/api/items/{id}/play", s.handlePlay)
@@ -181,7 +187,10 @@ func adminOnly(next http.Handler) http.Handler {
 
 func (s *Server) integrationAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := r.Header.Get("X-Haven-Key")
+		key := r.Header.Get("X-WrenTV-Key")
+		if key == "" {
+			key = r.Header.Get("X-Haven-Key") // legacy integrations
+		}
 		if key == "" {
 			key = auth.BearerToken(r)
 		}
@@ -197,7 +206,7 @@ func (s *Server) integrationAuth(next http.Handler) http.Handler {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Haven-Token, X-Haven-Key, Range")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-WrenTV-Token, X-WrenTV-Key, X-Haven-Token, X-Haven-Key, Range")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS, HEAD")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges")
 		if r.Method == http.MethodOptions {

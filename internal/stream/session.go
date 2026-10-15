@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LTAGROUP/haven/internal/media"
+	"github.com/LTAGROUP/wrentv/internal/media"
 )
 
 type Config struct {

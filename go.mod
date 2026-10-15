@@ -1,4 +1,4 @@
-module github.com/LTAGROUP/haven
+module github.com/LTAGROUP/wrentv
 
 go 1.27.2
 

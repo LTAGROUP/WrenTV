@@ -16,13 +16,14 @@ export async function viewStatus() {
   const hw = st.hardware || {};
   const userName = (id) => users?.find((u) => u.id === id)?.displayName || id.slice(0, 8);
   const node = el(`<div>
-    <div class="page-head"><h1>${esc(srv.name)}</h1><span class="muted">Haven ${esc(st.version)}</span></div>
+    <div class="page-head"><h1>${esc(srv.name)}</h1><span class="muted">Wren TV ${esc(st.version)}</span></div>
     <div class="form-grid">
       <div class="panel"><h2>Server</h2><div class="kv">
-        <span class="muted">Accounts</span><span>${isSupabase() ? 'Haven accounts' : 'Local accounts'}</span>
+        <span class="muted">Accounts</span><span>${isSupabase() ? 'Wren TV accounts' : 'Local accounts'}</span>
         <span class="muted">Machine ID</span><span class="mono">${esc(srv.machineId)}</span>
         <span class="muted">Addresses</span><span class="mono">${(srv.localUrls || []).map(esc).join('<br>') || '—'}</span>
         <span class="muted">Metadata</span><span>${st.metadata ? '<span class="ok">TMDB connected</span>' : '<span class="error">No TMDB key</span>'}</span>
+        <span class="muted">Ratings</span><span>${st.ratings ? '<span class="ok">OMDb connected</span>' : '<span class="muted">No OMDb key (IMDb / Rotten Tomatoes hidden)</span>'}</span>
       </div></div>
       <div class="panel"><h2>Transcoding</h2><div class="kv">
         <span class="muted">Hardware</span><span>${esc((hw.kind || 'software').toUpperCase())}</span>
@@ -58,14 +59,14 @@ export async function viewLibraries() {
         <td class="mono small">${l.paths.map(esc).join('<br>')}</td><td>${l.itemCount}</td><td>${timeAgo(l.lastScanAt)}</td>
         <td style="white-space:nowrap;text-align:right"><button class="btn small" data-scan="${l.id}">Scan</button>
         <button class="btn small" data-edit="${l.id}">Edit</button><button class="btn small danger" data-del="${l.id}">Remove</button></td></tr>`).join('')}</table></div>`
-      : `<div class="empty"><h2>Add your first library</h2><p>Point Haven at a folder of movies or TV shows. On Docker, that's a path inside the container (e.g. /media/Movies).</p></div>`}</div>`);
+      : `<div class="empty"><h2>Add your first library</h2><p>Point Wren TV at a folder of movies or TV shows. On Docker, that's a path inside the container (e.g. /media/Movies).</p></div>`}</div>`);
 
   $('[data-add]', node).onclick = () => editLibrary();
   for (const b of $$('[data-edit]', node)) b.onclick = () => editLibrary(libs.find((l) => l.id === b.dataset.edit));
   for (const b of $$('[data-scan]', node)) b.onclick = async () => { await api(`/api/libraries/${b.dataset.scan}/scan`, { method: 'POST' }); toast('Scan started'); };
   for (const b of $$('[data-del]', node)) b.onclick = async () => {
     const l = libs.find((x) => x.id === b.dataset.del);
-    if (!(await confirmDialog(`Remove ${l.name}?`, 'The library and its watch history are removed from Haven. Your files are not touched.'))) return;
+    if (!(await confirmDialog(`Remove ${l.name}?`, 'The library and its watch history are removed from Wren TV. Your files are not touched.'))) return;
     await api('/api/libraries/' + l.id, { method: 'DELETE' });
     render();
   };
@@ -210,7 +211,7 @@ async function viewSharing() {
   const prof = (id) => profiles.find((p) => p.id === id) || {};
 
   const node = el(`<div><div class="page-head"><h1>Sharing</h1>${owner ? '<button class="btn primary" data-invite>Share server</button>' : ''}</div>
-    <p class="muted" style="margin-top:-8px">People sign in with their own Haven account. Invite them by email; access starts the next time they sign in.</p>
+    <p class="muted" style="margin-top:-8px">People sign in with their own Wren TV account. Invite them by email; access starts the next time they sign in.</p>
     <div class="panel"><h2>People with access</h2><table class="table"><tr><th>Name</th><th>Email</th><th>Libraries</th><th></th></tr>
       <tr><td><b>${esc(state.user.displayName || 'You')}</b></td><td>${esc(state.session?.user?.email || '')}</td><td>Owner · all libraries</td><td></td></tr>
       ${shares.map((s) => `<tr><td>${esc(prof(s.user_id).display_name || '—')}</td><td>${esc(prof(s.user_id).email || '')}</td><td>${access(s.library_ids)}</td>
@@ -231,7 +232,7 @@ async function viewSharing() {
       },
     });
     bindLibraryChecks();
-    if (await p) { toast('Invite saved. They get access when they sign in to Haven.'); render(); }
+    if (await p) { toast('Invite saved. They get access when they sign in to Wren TV.'); render(); }
   });
   for (const b of $$('[data-edit]', node)) b.onclick = async () => {
     const s = shares.find((x) => x.user_id === b.dataset.edit);
@@ -307,12 +308,15 @@ export async function viewSettings() {
     <p class="error" hidden></p>
     <div class="panel"><h2>General</h2><div class="form-grid">
       <div class="field"><label>Server name</label><input name="serverName" value="${esc(s.serverName)}"></div>
-      <div class="field"><label>Public URL</label><input name="publicUrl" value="${esc(s.publicUrl)}" placeholder="https://haven.example.com"></div>
+      <div class="field"><label>Public URL</label><input name="publicUrl" value="${esc(s.publicUrl)}" placeholder="https://wrentv.example.com"></div>
     </div></div>
     <div class="panel"><h2>Metadata &amp; transcoding</h2><div class="form-grid">
       <div class="field"><label>TMDB API key ${s.tmdbKeySet ? '<span class="ok">(set)</span>' : ''}</label><input name="tmdbApiKey" type="password" placeholder="${s.tmdbKeySet ? 'Leave blank to keep' : 'Required for posters and info'}" autocomplete="off"></div>
+      <div class="field"><label>OMDb API key ${s.omdbKeySet ? '<span class="ok">(set)</span>' : ''}</label><input name="omdbApiKey" type="password" placeholder="${s.omdbKeySet ? 'Leave blank to keep' : 'Optional: IMDb, Rotten Tomatoes, Metacritic'}" autocomplete="off">
+        <span class="small muted">Free key at <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener" style="color:var(--accent)">omdbapi.com</a></span></div>
       <div class="field"><label>Hardware acceleration</label><select name="hwaccel">${hw.map((h) => `<option ${h === s.hwaccel ? 'selected' : ''}>${h}</option>`).join('')}</select></div>
-    </div></div>
+    </div>
+      <label class="check"><input type="checkbox" name="markerFingerprinting" ${s.markerFingerprinting ? 'checked' : ''}> Detect intros and credits by comparing episode audio (background job; chapters are always used)</label></div>
     <div class="panel"><h2>Torrents</h2>
       <label class="check"><input type="checkbox" name="torrentsEnabled" ${s.torrentsEnabled ? 'checked' : ''}> Enable torrent streaming (no seeding)</label>
       <div class="form-grid" style="margin-top:10px">
@@ -322,13 +326,13 @@ export async function viewSettings() {
       </div></div>
     <div class="panel"><h2>Webhooks</h2><p class="small muted">Called when a torrent can't be played, so a source manager can find a replacement.</p>
       <div class="hooks"></div><button type="button" class="btn small" data-addhook>Add webhook</button></div>
-    <div class="panel"><h2>Integration key</h2><p class="small muted">Lets services like a source manager add torrents and libraries (header <code>X-Haven-Key</code>).</p>
+    <div class="panel"><h2>Integration key</h2><p class="small muted">Lets services like a source manager add torrents and libraries (header <code>X-WrenTV-Key</code>).</p>
       <div class="mono">${esc(s.integrationKey)}</div></div>
   </form>`);
   const hooks = $('.hooks', node);
   const hookRow = (h = {}) => {
     const r = el(`<div class="form-grid hook" style="align-items:end">
-      <div class="field"><label>URL</label><input data-k="url" value="${esc(h.url || '')}" placeholder="http://riven:8080/haven"></div>
+      <div class="field"><label>URL</label><input data-k="url" value="${esc(h.url || '')}" placeholder="http://riven:8080/wrentv"></div>
       <div class="field"><label>Secret</label><input data-k="secret" value="${esc(h.secret || '')}" autocomplete="off"></div>
       <div class="field"><label>Events</label><div style="display:flex;gap:8px"><input data-k="events" value="${esc((h.events || []).join(', '))}" placeholder="all"><button type="button" class="btn small danger">✕</button></div></div></div>`);
     $('button', r).onclick = () => r.remove();
@@ -341,6 +345,7 @@ export async function viewSettings() {
     const v = Object.fromEntries(new FormData(node));
     const body = {
       serverName: v.serverName, publicUrl: v.publicUrl, hwaccel: v.hwaccel, torrentsEnabled: !!v.torrentsEnabled,
+      markerFingerprinting: !!v.markerFingerprinting,
       torrentProviders: v.torrentProviders.split(',').map((x) => x.trim()).filter(Boolean), debridService: v.debridService,
       webhooks: $$('.hook', node).map((r) => ({
         url: $('[data-k=url]', r).value.trim(), secret: $('[data-k=secret]', r).value,
@@ -348,6 +353,7 @@ export async function viewSettings() {
       })).filter((h) => h.url),
     };
     if (v.tmdbApiKey) body.tmdbApiKey = v.tmdbApiKey;
+    if (v.omdbApiKey) body.omdbApiKey = v.omdbApiKey;
     if (v.debridApiKey) body.debridApiKey = v.debridApiKey;
     const err = $('.error', node);
     err.hidden = true;

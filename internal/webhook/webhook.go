@@ -14,7 +14,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/LTAGROUP/haven/internal/config"
+	"github.com/LTAGROUP/wrentv/internal/config"
 )
 
 type Sender struct {
@@ -77,12 +77,15 @@ func (s *Sender) post(h config.WebhookConfig, event string, body []byte) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Haven-Server")
-	req.Header.Set("X-Haven-Event", event)
+	req.Header.Set("User-Agent", "WrenTV-Server")
+	req.Header.Set("X-WrenTV-Event", event)
+	req.Header.Set("X-Haven-Event", event) // legacy receivers
 	if h.Secret != "" {
 		mac := hmac.New(sha256.New, []byte(h.Secret))
 		mac.Write(body)
-		req.Header.Set("X-Haven-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		req.Header.Set("X-WrenTV-Signature", sig)
+		req.Header.Set("X-Haven-Signature", sig)
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {

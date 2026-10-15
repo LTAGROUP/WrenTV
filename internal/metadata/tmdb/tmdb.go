@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,7 +20,13 @@ import (
 	"golang.org/x/time/rate"
 )
 
-const base = "https://api.themoviedb.org/3"
+// base is the TMDB API; WRENTV_TMDB_URL points it at a proxy or a test server.
+var base = func() string {
+	if v := os.Getenv("WRENTV_TMDB_URL"); v != "" {
+		return strings.TrimSuffix(v, "/")
+	}
+	return "https://api.themoviedb.org/3"
+}()
 
 // Cache persists raw responses (the server's metadata_cache table).
 type Cache interface {

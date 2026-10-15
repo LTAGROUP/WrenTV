@@ -1,23 +1,23 @@
 services:
-  haven:
-    image: ghcr.io/ltagroup/haven:latest
+  wrentv:
+    image: ghcr.io/ltagroup/wrentv:latest
     build: ../..
-    container_name: haven
+    container_name: wrentv
     restart: unless-stopped
     ports:
       - "32500:32500"
       - "42069:42069"
       - "42069:42069/udp"
     environment:
-      - HAVEN_SERVER_NAME=Haven
-      # - HAVEN_TMDB_API_KEY=your-key
-      # - HAVEN_PUBLIC_URL=https://haven.example.com
-      # - HAVEN_HWACCEL=auto   # auto | nvenc | qsv | vaapi | none
+      - WRENTV_SERVER_NAME=Wren TV
+      # - WRENTV_TMDB_API_KEY=your-key
+      # - WRENTV_PUBLIC_URL=https://wrentv.example.com
+      # - WRENTV_HWACCEL=auto   # auto | nvenc | qsv | vaapi | none
     volumes:
       - ./config:/config
       - /path/to/media:/media:ro
       # Optional: transcode scratch on fast local disk / tmpfs
-      # - /dev/shm/haven:/config/transcode
+      # - /dev/shm/wrentv:/config/transcode
 
     # Intel / AMD (QSV / VAAPI): pass the render node through.
     # devices:

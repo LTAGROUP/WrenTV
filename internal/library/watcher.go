@@ -13,7 +13,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"github.com/LTAGROUP/haven/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/db"
 )
 
 // Watcher picks up new/removed files within seconds.

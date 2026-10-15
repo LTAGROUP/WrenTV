@@ -1,6 +1,6 @@
-# Haven
+# Wren TV
 
-A fast, ad-free personal media server. Haven aims for **direct play at full
+A fast, ad-free personal media server. Wren TV aims for **direct play at full
 quality**: Dolby Vision and Dolby Atmos pass through untouched. Transcoding
 happens only when the client truly can't play the file. Torrents are
 first-class media sources.
@@ -38,14 +38,14 @@ jellyfin-ffmpeg; uncomment `/dev/dri` (Intel/AMD) or the NVIDIA block in the com
 ### Native
 
 ```bash
-go build -o bin/haven ./cmd/haven
-./bin/haven                 # run in the foreground
-sudo ./bin/haven install    # install as a system service (systemd / launchd / Windows SCM)
-./bin/haven start|stop|restart|status|uninstall|version
+go build -o bin/wrentv ./cmd/wrentv
+./bin/wrentv                 # run in the foreground
+sudo ./bin/wrentv install    # install as a system service (systemd / launchd / Windows SCM)
+./bin/wrentv start|stop|restart|status|uninstall|version
 ```
 
 Requires `ffmpeg` and `ffprobe` on `PATH` (or set `transcode.ffmpeg_path`). On macOS, `brew install ffmpeg`.
-Unit files: `deploy/systemd/haven.service`, `deploy/launchd/com.haven.server.plist`, `deploy/windows/README.md`.
+Unit files: `deploy/systemd/wrentv.service`, `deploy/launchd/com.wrentv.server.plist`, `deploy/windows/README.md`.
 
 ### First run
 
@@ -57,20 +57,20 @@ curl -X POST localhost:32500/api/libraries -H "Authorization: Bearer $TOKEN" \
 
 ## Configuration
 
-`haven.yaml` lives in the data directory and is created on first start:
+`wrentv.yaml` lives in the data directory and is created on first start:
 
 | Platform | Data directory                         |
 |----------|----------------------------------------|
 | Docker   | `/config`                              |
-| macOS    | `~/Library/Application Support/Haven`  |
-| Linux    | `/var/lib/haven` (root) or `~/.local/share/haven` |
-| Windows  | `C:\ProgramData\Haven`                 |
+| macOS    | `~/Library/Application Support/Wren TV` |
+| Linux    | `/var/lib/wrentv` (root) or `~/.local/share/wrentv` |
+| Windows  | `C:\ProgramData\WrenTV`                |
 
 ```yaml
-server_name: Haven
+server_name: Wren TV
 listen: ":32500"
 public_url: ""                 # externally reachable URL (used in webhook replaceUrl)
-integration_key: hvn_…         # generated; for backend services (X-Haven-Key)
+integration_key: wtv_…         # generated; for backend services (X-WrenTV-Key)
 auth:
   mode: local                  # local | supabase
   supabase: { url: "", publishable_key: "" }
@@ -94,7 +94,7 @@ torrents:
     min_peers: 1
     replace_timeout_min: 30    # no replacement in time → torrent.failed
 webhooks:
-  - url: https://backend.example.com/haven
+  - url: https://backend.example.com/wrentv
     secret: change-me
     events: [torrent.unplayable, torrent.failed]
 scanner:
@@ -104,14 +104,34 @@ scanner:
   probe_workers: 4             # -1 = probe on first play only (best for debrid/cloud mounts)
 ```
 
-Environment overrides: `HAVEN_DATA_DIR`, `HAVEN_LISTEN`, `HAVEN_SERVER_NAME`, `HAVEN_PUBLIC_URL`,
-`HAVEN_AUTH_MODE`, `HAVEN_SUPABASE_URL`, `HAVEN_SUPABASE_PUBLISHABLE_KEY`, `HAVEN_TMDB_API_KEY`,
-`HAVEN_FFMPEG`, `HAVEN_FFPROBE`, `HAVEN_HWACCEL`, `HAVEN_SCAN_POLL_SEC`, `HAVEN_TORRENT_PROVIDERS`, `HAVEN_DEBRID_API_KEY`.
+Environment overrides: `WRENTV_DATA_DIR`, `WRENTV_LISTEN`, `WRENTV_SERVER_NAME`, `WRENTV_PUBLIC_URL`,
+`WRENTV_AUTH_MODE`, `WRENTV_SUPABASE_URL`, `WRENTV_SUPABASE_PUBLISHABLE_KEY`, `WRENTV_TMDB_API_KEY`,
+`WRENTV_FFMPEG`, `WRENTV_FFPROBE`, `WRENTV_HWACCEL`, `WRENTV_SCAN_POLL_SEC`, `WRENTV_TORRENT_PROVIDERS`, `WRENTV_DEBRID_API_KEY`.
+
+## Upgrading from Haven
+
+Wren TV was called Haven. Upgrades keep your data:
+
+- On first start, the old default data directory (`Application Support/Haven`, `/var/lib/haven`,
+  `~/.local/share/haven`, `C:\ProgramData\Haven`) is moved to the new one, with a symlink left at the
+  old path; if it can't be moved it is used in place. `haven.yaml` and `haven.db` are renamed to
+  `wrentv.yaml` and `wrentv.db`.
+- `HAVEN_*` environment variables still work (`WRENTV_*` wins when both are set).
+- `wrentv install` stops and uninstalls an old `haven` service first.
+- Sign-in tokens, `hvn_` integration keys and `X-Haven-*` request headers keep working; webhooks send
+  both `X-WrenTV-*` and `X-Haven-*` headers.
+- Docker: the container and image are now `wrentv`; keep mounting the same `/config` volume.
+- Hand-installed systemd unit (`haven.service`, which runs as user `haven`): the new unit runs as `wrentv`,
+  which can't move the old directory itself. Run `systemctl disable --now haven`, create the `wrentv` user,
+  then `mv /var/lib/haven /var/lib/wrentv && chown -R wrentv:wrentv /var/lib/wrentv` before enabling
+  `wrentv.service`.
+
+Back up the data directory before upgrading.
 
 ## Torrent integration (for backend services)
 
 Torrent providers are configured on the server; users never see them. Backends authenticate
-with the integration key: `X-Haven-Key: hvn_…`.
+with the integration key: `X-WrenTV-Key: wtv_…`.
 
 | Method | Path | Body |
 |--------|------|------|
@@ -124,12 +144,12 @@ with the integration key: `X-Haven-Key: hvn_…`.
 | DELETE | `/api/integration/torrents/{id}` | |
 
 Each torrent's files are added to the library as normal items. If a torrent can't be played (dead, no peers,
-stalled, corrupt, not video), Haven marks it `unplayable` and sends a webhook:
+stalled, corrupt, not video), Wren TV marks it `unplayable` and sends a webhook:
 
 ```http
-POST https://backend.example.com/haven
-X-Haven-Event: torrent.unplayable
-X-Haven-Signature: sha256=<hex HMAC-SHA256 of the body using the webhook secret>
+POST https://backend.example.com/wrentv
+X-WrenTV-Event: torrent.unplayable
+X-WrenTV-Signature: sha256=<hex HMAC-SHA256 of the body using the webhook secret>
 ```
 
 ```json
@@ -137,14 +157,14 @@ X-Haven-Signature: sha256=<hex HMAC-SHA256 of the body using the webhook secret>
   "event": "torrent.unplayable",
   "id": "…",
   "timestamp": 1760000000,
-  "server": { "id": "…", "name": "Haven", "url": "https://haven.example.com" },
+  "server": { "id": "…", "name": "Wren TV", "url": "https://wrentv.example.com" },
   "data": {
     "torrent": { "id": "…", "infoHash": "…", "name": "…", "magnet": "…", "provider": "builtin",
                  "status": "unplayable", "reason": "stalled: no data for 45s", "externalRef": "riven-123",
                  "libraryId": "…" },
     "items": [ { "id": "…", "kind": "episode", "title": "…", "season": 1, "episode": 2,
                  "showTitle": "…", "showTmdbId": 1399, "showImdbId": "tt0944947" } ],
-    "replaceUrl": "https://haven.example.com/api/integration/torrents/…/replace"
+    "replaceUrl": "https://wrentv.example.com/api/integration/torrents/…/replace"
   }
 }
 ```

@@ -7,8 +7,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/LTAGROUP/haven/internal/auth"
-	"github.com/LTAGROUP/haven/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/auth"
+	"github.com/LTAGROUP/wrentv/internal/db"
 )
 
 func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +44,7 @@ type userResponse struct {
 // handleSetupOwner creates the first (admin) account in local mode.
 func (s *Server) handleSetupOwner(w http.ResponseWriter, r *http.Request) {
 	if s.Local == nil {
-		writeErr(w, http.StatusBadRequest, "this server uses Haven accounts; claim it instead")
+		writeErr(w, http.StatusBadRequest, "this server uses Wren TV accounts; claim it instead")
 		return
 	}
 	var req struct {
@@ -96,7 +96,7 @@ func (s *Server) createLocalUser(r *http.Request, username, password, display st
 	return u, nil
 }
 
-// handleClaim links this server to the caller's Haven account (Supabase mode).
+// handleClaim links this server to the caller's Wren TV account (Supabase mode).
 func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	if s.Supa == nil {
 		writeErr(w, http.StatusBadRequest, "this server uses local accounts")
@@ -105,7 +105,7 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	tok := auth.BearerToken(r)
 	u, err := s.Supa.Identify(r.Context(), tok)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "sign in to your Haven account first")
+		writeErr(w, http.StatusUnauthorized, "sign in to your Wren TV account first")
 		return
 	}
 	if s.Supa.Claimed() {
@@ -120,7 +120,7 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = decode(r, &req)
 		if !s.Supa.ClaimCodeOK(req.ClaimCode) {
-			writeErr(w, http.StatusForbidden, "wrong claim code (it's printed in the server log: docker logs haven)")
+			writeErr(w, http.StatusForbidden, "wrong claim code (it's printed in the server log: docker logs wrentv)")
 			return
 		}
 	}
@@ -135,7 +135,7 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if s.Local == nil {
-		writeErr(w, http.StatusBadRequest, "sign in with your Haven account")
+		writeErr(w, http.StatusBadRequest, "sign in with your Wren TV account")
 		return
 	}
 	var req struct {
@@ -194,7 +194,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if s.Local == nil {
-		writeErr(w, http.StatusBadRequest, "in Haven-account mode, share with people by email from the app")
+		writeErr(w, http.StatusBadRequest, "in Wren TV account mode, share with people by email from the app")
 		return
 	}
 	var req struct {

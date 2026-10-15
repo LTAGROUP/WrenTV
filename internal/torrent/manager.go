@@ -7,7 +7,7 @@
 // order. The built-in engine never uploads (no seeding).
 //
 // If a torrent can't be played (no metadata, not cached, stalls during
-// playback) Haven fires a "torrent.unplayable" webhook so a backend service
+// playback) Wren TV fires a "torrent.unplayable" webhook so a backend service
 // can find another release and call the replace endpoint. Clients see a
 // "finding a better source" state instead of an error and resume
 // automatically once the replacement is ready.
@@ -35,11 +35,11 @@ import (
 	atorrent "github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
 
-	"github.com/LTAGROUP/haven/internal/config"
-	"github.com/LTAGROUP/haven/internal/db"
-	"github.com/LTAGROUP/haven/internal/library"
-	"github.com/LTAGROUP/haven/internal/stream"
-	"github.com/LTAGROUP/haven/internal/webhook"
+	"github.com/LTAGROUP/wrentv/internal/config"
+	"github.com/LTAGROUP/wrentv/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/library"
+	"github.com/LTAGROUP/wrentv/internal/stream"
+	"github.com/LTAGROUP/wrentv/internal/webhook"
 )
 
 const (
@@ -103,7 +103,7 @@ func NewManager(d Deps) (*Manager, error) {
 		}
 		cc := atorrent.NewDefaultClientConfig()
 		cc.DataDir = cfg.DownloadDir
-		cc.NoUpload = true // never upload: Haven does not seed
+		cc.NoUpload = true // never upload: Wren TV does not seed
 		cc.Seed = false
 		cc.DisableAggressiveUpload = true
 		cc.ListenPort = cfg.ListenPort

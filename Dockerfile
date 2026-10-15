@@ -6,7 +6,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/haven ./cmd/haven
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/wrentv ./cmd/wrentv
 
 # jellyfin-ffmpeg ships zscale/tonemapping plus NVENC, QSV, VAAPI and AMF
 # support with the needed drivers bundled.
@@ -22,15 +22,15 @@ RUN apt-get update \
  && apt-get purge -y gnupg && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /out/haven /usr/local/bin/haven
+COPY --from=build /out/wrentv /usr/local/bin/wrentv
 
-ENV HAVEN_DATA_DIR=/config \
-    HAVEN_FFMPEG=/usr/lib/jellyfin-ffmpeg/ffmpeg \
-    HAVEN_FFPROBE=/usr/lib/jellyfin-ffmpeg/ffprobe \
+ENV WRENTV_DATA_DIR=/config \
+    WRENTV_FFMPEG=/usr/lib/jellyfin-ffmpeg/ffmpeg \
+    WRENTV_FFPROBE=/usr/lib/jellyfin-ffmpeg/ffprobe \
     NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 
 VOLUME ["/config"]
-# 32500: API/streaming. 42069: torrent peer port (TCP+UDP, inbound only; Haven never seeds).
+# 32500: API/streaming. 42069: torrent peer port (TCP+UDP, inbound only; Wren TV never seeds).
 EXPOSE 32500 42069 42069/udp
 HEALTHCHECK --interval=30s --timeout=5s CMD curl -fsS http://127.0.0.1:32500/api/health || exit 1
-ENTRYPOINT ["/usr/local/bin/haven"]
+ENTRYPOINT ["/usr/local/bin/wrentv"]

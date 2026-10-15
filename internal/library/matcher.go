@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LTAGROUP/haven/internal/db"
-	"github.com/LTAGROUP/haven/internal/media"
-	"github.com/LTAGROUP/haven/internal/metadata/tmdb"
+	"github.com/LTAGROUP/wrentv/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/media"
+	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 )
 
 // Kick wakes the matcher and prober (e.g. after a torrent is added).
@@ -282,11 +282,18 @@ func (s *Scanner) probeLoop(ctx context.Context) {
 }
 
 func (s *Scanner) probePending(ctx context.Context) {
+	probed := false
+	defer func() {
+		if probed && s.OnProbed != nil {
+			s.OnProbed()
+		}
+	}()
 	for ctx.Err() == nil {
 		files, err := s.db.UnprobedFiles(ctx, 64)
 		if err != nil || len(files) == 0 {
 			return
 		}
+		probed = true
 		sem := make(chan struct{}, s.probeWorkers)
 		var wg sync.WaitGroup
 		failed := 0

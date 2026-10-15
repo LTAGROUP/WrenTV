@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LTAGROUP/haven/internal/db"
-	"github.com/LTAGROUP/haven/internal/metadata/tmdb"
+	"github.com/LTAGROUP/wrentv/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 )
 
 type Scanner struct {
@@ -42,6 +42,10 @@ type Scanner struct {
 
 	matchKick chan struct{}
 	probeKick chan struct{}
+
+	// OnProbed, if set, is called after background probing finishes a run
+	// that probed at least one file.
+	OnProbed func()
 }
 
 type Options struct {

@@ -1,4 +1,4 @@
-// Haven server API + account (Supabase) client. No dependencies.
+// Wren TV server API + account (Supabase) client. No dependencies.
 
 const LS = {
   get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
@@ -14,12 +14,14 @@ export const state = {
   user: null,        // /api/me user
   libraryIds: null,
   // local mode: {token}; supabase mode: {access_token, refresh_token, expires_at, user}
-  session: LS.get('haven.session'),
+  // Sessions saved before the rename live under the old haven.* key.
+  session: LS.get('wrentv.session') ?? LS.get('haven.session'),
 };
 
 export function saveSession(s) {
   state.session = s;
-  LS.set('haven.session', s);
+  LS.set('wrentv.session', s);
+  LS.set('haven.session', null);
 }
 
 export const isSupabase = () => state.server?.authMode === 'supabase';
@@ -85,7 +87,7 @@ async function accessToken() {
 }
 export { accessToken };
 
-// ---------- Haven server ----------
+// ---------- Wren TV server ----------
 
 export async function api(path, { method = 'GET', body, form } = {}) {
   const headers = {};

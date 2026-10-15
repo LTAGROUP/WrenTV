@@ -1,5 +1,5 @@
 import { api, account, local, state, saveSession, isSupabase, img, ApiError } from './api.js';
-import { esc, $, $$, el, toast, icons, fmtRuntime } from './ui.js';
+import { esc, $, $$, el, toast, icons, fmtRuntime, fmtDuration } from './ui.js';
 import { openPlayer } from './player.js';
 import * as manage from './manage.js';
 
@@ -42,7 +42,7 @@ async function boot() {
     app.innerHTML = `<div class="center"><div class="auth"><h2>Can't reach the server</h2><p class="muted">${esc(e.message)}</p></div></div>`;
     return;
   }
-  document.title = state.server.name ? `${state.server.name} · Haven` : 'Haven';
+  document.title = state.server.name ? `${state.server.name} · Wren TV` : 'Wren TV';
   // A session from another server or auth mode is useless here.
   const s = state.session;
   if (s && (isSupabase() ? !s.access_token : !s.token)) saveSession(null);
@@ -105,7 +105,7 @@ export function signOut() {
 // ---------------------------------------------------------------- auth screens
 
 function authCard(inner) {
-  app.innerHTML = `<div class="center"><div class="auth"><div class="brand"><div class="logo"></div>Haven</div>${inner}</div></div>`;
+  app.innerHTML = `<div class="center"><div class="auth"><div class="brand"><img class="lockup" src="/brand/wren-tv-horizontal-on-dark.svg" alt="Wren TV"></div>${inner}</div></div>`;
 }
 
 function bindForm(onSubmit) {
@@ -138,12 +138,12 @@ function viewSignIn(mode = 'in') {
     return bindForm(async (v) => { await local.login(v.username, v.password); render(); });
   }
   const up = mode === 'up';
-  authCard(`<p class="muted">${up ? 'Create your Haven account.' : `Sign in with your Haven account to use <b>${esc(srv.name)}</b>.`}</p>
+  authCard(`<p class="muted">${up ? 'Create your Wren TV account.' : `Sign in with your Wren TV account to use <b>${esc(srv.name)}</b>.`}</p>
     <form>${up ? '<div class="field"><label>Name</label><input name="name" autocomplete="name" required></div>' : ''}
     <div class="field"><label>Email</label><input name="email" type="email" autocomplete="email" required></div>
     <div class="field"><label>Password</label><input name="password" type="password" minlength="8" autocomplete="${up ? 'new-password' : 'current-password'}" required></div>
     <p class="error" hidden></p><button class="btn primary lg" style="width:100%">${up ? 'Create account' : 'Sign in'}</button></form>
-    <p class="switch muted">${up ? 'Already have an account? <a data-sw>Sign in</a>' : 'New to Haven? <a data-sw>Create an account</a>'}</p>`);
+    <p class="switch muted">${up ? 'Already have an account? <a data-sw>Sign in</a>' : 'New to Wren TV? <a data-sw>Create an account</a>'}</p>`);
   $('[data-sw]', app).onclick = () => viewSignIn(up ? 'in' : 'up');
   bindForm(async (v) => {
     if (up) {
@@ -179,7 +179,7 @@ function viewClaim() {
   const email = state.session?.user?.email || '';
   authCard(`<h2 style="margin-bottom:6px">Claim ${esc(state.server.name)}</h2>
     <p class="muted">This server isn't linked to an account yet. Enter the claim code from the server log to make <b>${esc(email)}</b> its owner.</p>
-    <pre class="mono" style="background:#0d0d0d;padding:10px;border-radius:6px;margin:12px 0">docker logs haven 2>&1 | grep claim_code</pre>
+    <pre class="mono" style="background:#0e0c11;padding:10px;border-radius:6px;margin:12px 0">docker logs wrentv 2>&1 | grep claim_code</pre>
     <form><div class="field"><label>Claim code</label><input name="code" class="code-input" placeholder="XXXX-XXXX" autocomplete="off" required></div>
     <p class="error" hidden></p><button class="btn primary lg" style="width:100%">Claim server</button></form>
     <p class="switch muted">Not you? <a data-out>Sign out</a></p>`);
@@ -187,7 +187,7 @@ function viewClaim() {
   bindForm(async (v) => {
     await api('/api/setup/claim', { method: 'POST', body: { claimCode: v.code.trim() } });
     state.server = await api('/api/server');
-    toast('Server claimed. Welcome to Haven!');
+    toast('Server claimed. Welcome to Wren TV!');
     go('/manage/libraries');
   });
 }
@@ -214,7 +214,7 @@ async function shell(view, seq) {
     const admin = isAdmin();
     app.innerHTML = `<div class="shell">
       <aside class="sidebar">
-        <a class="brand" href="/"><div class="logo"></div>${esc(state.server.name || 'Haven')}</a>
+        <a class="brand" href="/"><img class="logo" src="/brand/wren-symbol-small-on-dark.svg" alt="">${esc(state.server.name || 'Wren TV')}</a>
         <a class="nav" href="/" data-path="/">${icons.home}<span>Home</span></a>
         <div class="nav-title">Libraries</div>
         <div id="lib-nav">${libNav()}</div>
@@ -276,27 +276,84 @@ function progressBar(it) {
   return `<div class="bar"><i style="width:${Math.min(100, (p.position / p.duration) * 100).toFixed(1)}%"></i></div>`;
 }
 
-function posterCard(it) {
+// Images fade in once loaded instead of popping.
+const lazyImg = (src, alt = '') => `<img loading="lazy" class="loading" onload="this.classList.remove('loading')" onerror="this.remove()" src="${src}" alt="${esc(alt)}">`;
+
+function posterCard(it, extra = '') {
   const title = it.kind === 'season' ? (it.seasonNumber === 0 ? 'Specials' : `Season ${it.seasonNumber}`) : it.title;
-  const sub = it.kind === 'show' ? (it.childCount ? `${it.childCount} season${it.childCount > 1 ? 's' : ''}` : it.year || '')
+  const sub = it.kind === 'show' ? (it.childCount ? `${it.childCount} episode${it.childCount > 1 ? 's' : ''}` : it.year || '')
     : it.kind === 'season' ? (it.childCount ? `${it.childCount} episodes` : '') : it.year || '';
   const corner = it.kind === 'show' || it.kind === 'season'
     ? (it.unwatchedCount ? `<div class="badge">${it.unwatchedCount}</div>` : it.childCount ? '<div class="watched"></div>' : '')
     : it.progress?.watched ? '<div class="watched"></div>' : '';
-  return `<a class="card" href="/item/${it.id}"><div class="poster">${it.posterPath ? `<img loading="lazy" src="${img(it.posterPath)}" alt="">` : `<div class="ph">${esc(title)}</div>`}${corner}${progressBar(it)}</div>
+  return `<a class="card" href="/item/${it.id}"><div class="poster">${it.posterPath ? lazyImg(img(it.posterPath), title) : `<div class="ph">${esc(title)}</div>`}${corner}${extra}${progressBar(it)}</div>
     <div class="t" title="${esc(title)}">${esc(title)}</div><div class="s">${esc(sub)}</div></a>`;
+}
+
+// titleCard shows a TMDB title: the library item when the server has it,
+// otherwise a dimmed poster linking to TMDB.
+function titleCard(v, rank) {
+  const r = rank ? `<span class="rank">${rank}</span>` : '';
+  if (v.item) return posterCard(v.item, r);
+  const href = `https://www.themoviedb.org/${v.mediaType === 'show' ? 'tv' : 'movie'}/${v.tmdbId}`;
+  return `<a class="card ext" href="${href}" target="_blank" rel="noopener" title="Not in your library — open on TMDB">
+    <div class="poster">${v.posterPath ? lazyImg(img(v.posterPath), v.title) : `<div class="ph">${esc(v.title)}</div>`}${r}<span class="tag">Not in library</span></div>
+    <div class="t">${esc(v.title)}</div><div class="s">${esc(v.year || '')}</div></a>`;
 }
 
 function wideCard(it) {
   const pic = it.stillPath || it.backdropPath;
   const title = it.kind === 'episode' ? it.showTitle || it.title : it.title;
   const sub = it.kind === 'episode' ? `S${it.seasonNumber} · E${it.episodeNumber} — ${it.title}` : it.year || '';
-  return `<a class="card wide" href="/item/${it.id}" data-play="${it.id}"><div class="thumb">${pic ? `<img loading="lazy" src="${img(pic, 'w500')}" alt="">` : ''}
+  return `<a class="card wide" href="/item/${it.id}" data-play="${it.id}"><div class="thumb">${pic ? lazyImg(img(pic, 'w500')) : ''}
     <div class="play-ov"><span></span></div>${progressBar(it)}</div>
     <div class="t">${esc(title)}</div><div class="s">${esc(sub)}</div></a>`;
 }
 
+const arrows = '<div class="arrows"><button type="button" data-dir="-1" aria-label="Scroll left">‹</button><button type="button" data-dir="1" aria-label="Scroll right">›</button></div>';
+
+function shelf(title, cards, { see, sub, id } = {}) {
+  return `<section class="shelf"${id ? ` id="${id}"` : ''}><div class="shelf-head"><h2>${esc(title)}${sub ? ` <span class="sub">${esc(sub)}</span>` : ''}</h2>
+    ${see ? `<a class="see" href="${see}">See all</a>` : ''}${arrows}</div><div class="row">${cards}</div></section>`;
+}
+
+function skeletonShelf(title, n = 8, id) {
+  const cards = Array.from({ length: n }, () => '<div class="card"><div class="poster sk"></div><div class="sk sk-line" style="width:80%"></div><div class="sk sk-line" style="width:40%"></div></div>').join('');
+  return shelf(title, cards, { id });
+}
+
+function bindShelves(root) {
+  for (const b of $$('.arrows button', root)) {
+    b.onclick = () => {
+      const row = $('.row', b.closest('.shelf'));
+      row.scrollBy({ left: Number(b.dataset.dir) * row.clientWidth * 0.85 });
+    };
+  }
+}
+
 // ---------------------------------------------------------------- views
+
+function featureHero(it) {
+  const playable = it.kind === 'movie';
+  const meta = [it.year, it.kind === 'show' ? 'Series' : fmtRuntime(it.runtimeMin), it.contentRating && `<span class="pill">${esc(it.contentRating)}</span>`,
+    it.rating && `★ ${it.rating.toFixed(1)}`].filter(Boolean);
+  return `<section class="feature"><div class="bg" style="background-image:url('${img(it.backdropPath, 'w1280')}')"></div>
+    <div class="content"><div class="eyebrow">Featured from your library</div>
+    ${it.logoPath ? `<img class="logo-img" src="${img(it.logoPath, 'w500')}" alt="${esc(it.title)}">` : `<h1>${esc(it.title)}</h1>`}
+    <div class="meta">${meta.join('<span class="muted">·</span>')}</div>
+    ${it.genres?.length ? `<div class="genres">${it.genres.slice(0, 4).map((g) => `<span>${esc(g)}</span>`).join('')}</div>` : ''}
+    <p class="overview">${esc(it.overview || '')}</p>
+    <div class="actions">${playable ? `<button class="btn primary lg" data-feature-play="${it.id}">▶ Play</button>` : ''}
+      <a class="btn lg" href="/item/${it.id}">More info</a></div></div></section>`;
+}
+
+function pickFeatured(home) {
+  const pool = [...(home.topRated || []), ...home.recentlyAdded.flatMap((s) => s.items)]
+    .filter((it) => it.backdropPath && it.overview && !it.progress?.watched);
+  if (!pool.length) return null;
+  // Same pick for an hour, so the page doesn't shuffle on every visit.
+  return pool[Math.floor(Date.now() / 3.6e6) % pool.length];
+}
 
 async function viewHome() {
   setTitle('Home');
@@ -305,18 +362,33 @@ async function viewHome() {
     return `<div class="empty"><h2>No libraries yet</h2><p>${isAdmin() ? 'Add a folder with your movies or shows to get started.' : 'The server owner hasn\'t shared any libraries with you yet.'}</p>
       ${isAdmin() ? '<a class="btn primary" href="/manage/libraries">Add a library</a>' : ''}</div>`;
   }
-  let html = '';
-  if (home.continueWatching.length) {
-    html += `<section class="shelf"><h2>Continue Watching</h2><div class="row">${home.continueWatching.map(wideCard).join('')}</div></section>`;
-  }
+  const featured = pickFeatured(home);
+  let html = featured ? featureHero(featured) : '';
+  if (home.continueWatching.length) html += shelf('Continue Watching', home.continueWatching.map(wideCard).join(''));
+  html += skeletonShelf('Trending this week', 8, 'trending');
   for (const s of home.recentlyAdded) {
-    if (!s.items.length) continue;
-    html += `<section class="shelf"><h2>Recently Added in ${esc(s.library.name)} <a class="small muted" href="/library/${s.library.id}">See all</a></h2>
-      <div class="row">${s.items.map(posterCard).join('')}</div></section>`;
+    if (s.items.length) html += shelf(`Recently Added in ${s.library.name}`, s.items.map((it) => posterCard(it)).join(''), { see: `/library/${s.library.id}?sort=added` });
   }
+  if (home.topRated?.length) html += shelf('Top Rated in Your Library', home.topRated.map((it) => posterCard(it)).join(''));
+  for (const g of home.genres || []) html += shelf(g.genre, g.items.map((it) => posterCard(it)).join(''));
   const node = el(`<div>${html || '<div class="empty"><h2>Nothing here yet</h2><p>Your libraries are still being scanned.</p></div>'}</div>`);
   bindPlayLinks(node);
+  bindShelves(node);
+  $('[data-feature-play]', node)?.addEventListener('click', (e) => openPlayer(e.currentTarget.dataset.featurePlay, { resume: true, onClose: () => render() }));
+  loadTrending(node);
   return node;
+}
+
+async function loadTrending(node) {
+  const sec = $('#trending', node);
+  let res;
+  try { res = await api('/api/discover/trending'); } catch { res = null; }
+  if (!res?.enabled || !res.items.length) return sec.remove();
+  const have = res.items.filter((v) => v.item).length;
+  const next = el(shelf('Trending this week', res.items.slice(0, 20).map((v, i) => titleCard(v, i + 1)).join(''),
+    { id: 'trending', sub: have ? `${have} in your library` : 'none in your library yet' }));
+  sec.replaceWith(next);
+  bindShelves(next);
 }
 
 function bindPlayLinks(root) {
@@ -338,7 +410,7 @@ async function viewLibrary(id) {
   const res = await api(`/api/libraries/${id}/items?sort=${encodeURIComponent(sort)}&limit=5000`);
   const node = el(`<div><div class="page-head"><h1>${esc(lib?.name || '')} <span class="muted small">${res.total} ${lib?.type === 'shows' ? 'shows' : 'movies'}</span></h1>
     <select id="sort" style="width:auto">${sorts.map(([k, v]) => `<option value="${k}" ${k === sort ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
-    ${res.items.length ? `<div class="grid">${res.items.map(posterCard).join('')}</div>` : '<div class="empty"><h2>This library is empty</h2><p>Items appear here as they are scanned.</p></div>'}</div>`);
+    ${res.items.length ? `<div class="grid">${res.items.map((it) => posterCard(it)).join('')}</div>` : '<div class="empty"><h2>This library is empty</h2><p>Items appear here as they are scanned.</p></div>'}</div>`);
   $('#sort', node).onchange = (e) => go(`/library/${id}?sort=${e.target.value}`, true);
   return node;
 }
@@ -350,18 +422,54 @@ async function viewSearch() {
   if (input) input.value = q;
   const items = q ? await api('/api/search?q=' + encodeURIComponent(q)) : [];
   return `<div class="page-head"><h1>Results for “${esc(q)}”</h1></div>
-    ${items.length ? `<div class="grid">${items.map(posterCard).join('')}</div>` : '<div class="empty"><h2>No matches</h2></div>'}`;
+    ${items.length ? `<div class="grid">${items.map((it) => posterCard(it)).join('')}</div>` : '<div class="empty"><h2>No matches</h2></div>'}`;
 }
 
+// Quality badges for a file: resolution, HDR format, audio.
 function badgesFor(f) {
   const b = [];
-  if (f.width >= 3200) b.push('4K'); else if (f.width >= 1800) b.push('1080p'); else if (f.width >= 1200) b.push('720p');
+  const w = f.width || 0;
+  if (w >= 3200) b.push('4K'); else if (w >= 1800) b.push('1080p'); else if (w >= 1200) b.push('720p'); else if (w) b.push('SD');
   if (f.hdr === 'DV' || f.hdr === 'DV+HDR10') b.push('Dolby Vision'); else if (f.hdr) b.push(f.hdr);
   const a = f.info?.audio?.find((x) => x.default) || f.info?.audio?.[0];
-  if (a?.profile?.includes('Atmos')) b.push('Atmos');
-  else if (a?.channels >= 6) b.push(a.channels === 8 ? '7.1' : '5.1');
+  if (a?.atmos || a?.profile?.includes('Atmos')) b.push('Atmos');
+  if (a?.channels >= 6) b.push(a.channels === 8 ? '7.1' : '5.1');
   if (f.torrentId) b.push('Torrent');
   return b;
+}
+
+const tomato = (fresh) => fresh
+  ? '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="11" r="7.5" fill="#E04A2A"/><path d="M7 3.5c1.2.4 2.2 1.2 3 2.3.8-1.1 1.8-1.9 3-2.3-.4 1.4-1.4 2.4-3 2.8-1.6-.4-2.6-1.4-3-2.8z" fill="#4cc38a"/></svg>'
+  : '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2l2 4 4-1-1 4 4 2-4 2 1 4-4-1-2 4-2-4-4 1 1-4-4-2 4-2-1-4 4 1z" fill="#4cc38a"/></svg>';
+
+function fmtVotes(n) {
+  if (!n) return '';
+  return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'K' : String(n);
+}
+
+function ratingsHtml(r) {
+  const out = [];
+  if (r.rottenTomatoes) out.push(`<span class="rating" title="Rotten Tomatoes (critics)">${tomato(r.rottenTomatoes >= 60)}${r.rottenTomatoes}%</span>`);
+  if (r.imdb) out.push(`<span class="rating" title="IMDb"><span class="src imdb">IMDb</span>${r.imdb.toFixed(1)}${r.imdbVotes ? ` <span class="votes">${fmtVotes(r.imdbVotes)}</span>` : ''}</span>`);
+  if (r.metacritic) out.push(`<span class="rating" title="Metacritic"><span class="src mc">MC</span>${r.metacritic}</span>`);
+  if (r.tmdb) out.push(`<span class="rating" title="TMDB users"><span class="src tmdb">TMDB</span>${Math.round(r.tmdb * 10)}%</span>`);
+  return out.join('');
+}
+
+function personCard(c) {
+  const initials = c.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('');
+  return `<div class="person"><div class="face">${c.profilePath ? lazyImg(img(c.profilePath, 'w185'), c.name) : esc(initials)}</div>
+    <div class="n">${esc(c.name)}</div>${c.character ? `<div class="c">${esc(c.character)}</div>` : ''}</div>`;
+}
+
+function openTrailer(t) {
+  const bg = el(`<div class="modal-bg"><div class="trailer"><iframe allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen
+    src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(t.youtubeKey)}?autoplay=1&rel=0" title="${esc(t.name)}"></iframe></div></div>`);
+  const close = () => { bg.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => e.key === 'Escape' && close();
+  bg.addEventListener('mousedown', (e) => e.target === bg && close());
+  document.addEventListener('keydown', onKey);
+  document.body.append(bg);
 }
 
 async function viewItem(id) {
@@ -377,23 +485,26 @@ async function viewItem(id) {
   if (it.kind === 'episode') meta.push(`S${it.seasonNumber} · E${it.episodeNumber}`);
   if (it.year) meta.push(it.year);
   if (it.runtimeMin) meta.push(fmtRuntime(it.runtimeMin));
+  if (it.kind === 'show' && d.children?.length) meta.push(`${d.children.length} season${d.children.length > 1 ? 's' : ''}`);
   if (it.contentRating) meta.push(`<span class="pill">${esc(it.contentRating)}</span>`);
-  if (it.rating) meta.push(`★ ${it.rating.toFixed(1)}`);
   const file = d.files?.[0];
-  if (file) for (const b of badgesFor(file)) meta.push(`<span class="pill">${esc(b)}</span>`);
+  const badges = file ? badgesFor(file).filter((b) => b !== 'Torrent') : [];
+  if (badges.length) meta.push(badges.map((b, i) => `<span class="qbadge${i ? ' dim' : ''}">${esc(b)}</span>`).join(' '));
+  const genres = it.genres?.length ? it.genres : show?.genres || [];
 
   const playable = it.kind === 'movie' || it.kind === 'episode';
   const resumeAt = playable && it.progress && !it.progress.watched && it.progress.position > 30 ? it.progress.position : 0;
   let actions = '';
   if (playable) {
     actions += resumeAt
-      ? `<button class="btn primary lg" data-act="resume">▶ Resume</button><button class="btn lg" data-act="start">Play from start</button>`
+      ? `<button class="btn primary lg" data-act="resume">▶ Resume ${fmtDuration(resumeAt)}</button><button class="btn lg" data-act="start">Play from start</button>`
       : `<button class="btn primary lg" data-act="start">▶ Play</button>`;
-    actions += `<button class="btn lg" data-act="watched">${it.progress?.watched ? 'Mark unwatched' : 'Mark watched'}</button>`;
   } else if (d.nextEpisode) {
     const n = d.nextEpisode;
     actions += `<button class="btn primary lg" data-act="next">▶ ${n.progress?.position > 30 ? 'Resume' : 'Play'} S${n.seasonNumber} · E${n.episodeNumber}</button>`;
   }
+  actions += `<button class="btn lg" data-act="trailer" hidden>Trailer</button>`;
+  if (playable) actions += `<button class="btn lg ghost" data-act="watched">${it.progress?.watched ? 'Mark unwatched' : 'Mark watched'}</button>`;
   if (isAdmin() && (it.kind === 'movie' || it.kind === 'show')) actions += `<button class="btn lg ghost" data-act="match">Fix match</button>`;
 
   const crumbs = it.kind === 'season' || it.kind === 'episode'
@@ -401,20 +512,23 @@ async function viewItem(id) {
     : '';
 
   let below = '';
-  if (it.kind === 'show' && d.children?.length) {
-    below = `<section class="shelf"><h2>Seasons</h2><div class="row">${d.children.map(posterCard).join('')}</div></section>`;
-  }
+  if (it.kind === 'show' && d.children?.length) below += shelf('Seasons', d.children.map((c) => posterCard(c)).join(''));
   if (it.kind === 'season') {
-    below = `<div class="episodes">${(d.children || []).map((e) => `<a class="episode" href="/item/${e.id}" data-play="${e.id}">
-      <div class="thumb">${e.stillPath ? `<img loading="lazy" src="${img(e.stillPath, 'w300')}" alt="">` : ''}<div class="play-ov"><span></span></div>${progressBar(e)}${e.progress?.watched ? '<div class="watched"></div>' : ''}</div>
+    below += `<div class="episodes">${(d.children || []).map((e) => `<a class="episode" href="/item/${e.id}" data-play="${e.id}">
+      <div class="thumb">${e.stillPath ? lazyImg(img(e.stillPath, 'w300')) : ''}<div class="play-ov"><span></span></div>${progressBar(e)}${e.progress?.watched ? '<div class="watched"></div>' : ''}</div>
       <div><div style="font-weight:600">${e.episodeNumber}. ${esc(e.title)}</div>
       <div class="small muted">${[e.airDate, fmtRuntime(e.runtimeMin)].filter(Boolean).map(esc).join(' · ')}</div>
       <p class="small muted" style="margin:6px 0 0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${esc(e.overview || '')}</p></div></a>`).join('')}</div>`;
   }
+  // Cast and "more like this" arrive with the extras; show placeholders.
+  below += `<section class="shelf" id="cast-shelf"><div class="shelf-head"><h2>Cast</h2>${arrows}</div><div class="cast">${Array.from({ length: 8 }, () =>
+    '<div class="person"><div class="face sk"></div><div class="sk sk-line" style="width:70%;margin:0 auto"></div></div>').join('')}</div></section>`;
+  below += skeletonShelf('More Like This', 8, 'more');
   if (d.files?.length) {
     below += `<div class="files"><h2 style="font-size:16px">Files</h2>${d.files.map((f) => `<div class="file">
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><b>${badgesFor(f).map(esc).join(' · ') || esc(f.container)}</b>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${badgesFor(f).map((b) => `<span class="qbadge dim">${esc(b)}</span>`).join('') || `<b>${esc(f.container)}</b>`}
       ${f.torrentStatus ? `<span class="status s-${esc(f.torrentStatus)}">${esc(f.torrentStatus)}</span>` : ''}
+      ${f.info?.chapters?.length ? `<span class="small muted">${f.info.chapters.length} chapters</span>` : ''}
       ${d.files.length > 1 ? `<button class="btn small" data-file="${f.id}" style="margin-left:auto">Play this version</button>` : ''}</div>
       <code class="muted">${esc(f.fileName)}</code>
       ${f.info ? `<div class="small muted" style="margin-top:4px">${[f.videoCodec?.toUpperCase(), f.width && `${f.width}×${f.height}`, ...(f.info.audio || []).slice(0, 3).map((a) => [a.codec?.toUpperCase(), a.language].filter(Boolean).join(' '))].filter(Boolean).map(esc).join(' · ')}</div>` : ''}</div>`).join('')}</div>`;
@@ -425,7 +539,8 @@ async function viewItem(id) {
     <div>${crumbs}${logo ? `<img class="logo-img" src="${img(logo, 'w500')}" alt="${esc(heading)}">` : `<h1>${esc(heading)}</h1>`}
     ${it.tagline ? `<div class="muted" style="font-style:italic">${esc(it.tagline)}</div>` : ''}
     <div class="meta">${meta.join('<span class="muted">·</span>')}</div>
-    ${it.genres?.length ? `<div class="small muted" style="margin-bottom:8px">${it.genres.map(esc).join(', ')}</div>` : ''}
+    <div class="ratings" id="ratings">${ratingsHtml({ tmdb: it.rating || show?.rating })}</div>
+    ${genres.length ? `<div class="genres">${genres.map((g) => `<span>${esc(g)}</span>`).join('')}</div>` : ''}
     <p class="overview">${esc(it.overview || '')}</p><div class="actions">${actions}</div></div></div></div>${below}</div>`);
 
   const act = (name, fn) => $(`[data-act=${name}]`, node)?.addEventListener('click', fn);
@@ -439,7 +554,34 @@ async function viewItem(id) {
   act('match', () => manage.fixMatch(it));
   for (const b of $$('[data-file]', node)) b.onclick = () => openPlayer(it.id, { start: resumeAt, fileId: b.dataset.file, onClose: () => render() });
   bindPlayLinks(node);
+  bindShelves(node);
+  loadExtras(it, node);
   return node;
+}
+
+async function loadExtras(it, node) {
+  let x;
+  try { x = await api(`/api/items/${it.id}/extras`); } catch { x = null; }
+  const cast = $('#cast-shelf', node);
+  const more = $('#more', node);
+  if (!x) { cast.remove(); more.remove(); return; }
+  const r = $('#ratings', node);
+  r.innerHTML = ratingsHtml(x.ratings);
+  if (!x.omdb && isAdmin()) r.insertAdjacentHTML('beforeend', '<span class="hint">Add an OMDb key in <a href="/manage/settings">Settings</a> for IMDb and Rotten Tomatoes scores.</span>');
+  if (x.trailer) {
+    const b = $('[data-act=trailer]', node);
+    b.hidden = false;
+    b.onclick = () => openTrailer(x.trailer);
+  }
+  if (x.cast.length) $('.cast', cast).innerHTML = x.cast.map(personCard).join('');
+  else cast.remove();
+  if (x.moreLikeThis.length) {
+    const next = el(shelf('More Like This', x.moreLikeThis.map((v) => titleCard(v)).join(''), { id: 'more' }));
+    more.replaceWith(next);
+    bindShelves(next);
+  } else more.remove();
+  // Cast scrolls with the shelf arrows too.
+  for (const b of $$('#cast-shelf .arrows button', node)) b.onclick = () => { const c = $('.cast', node); c.scrollBy({ left: Number(b.dataset.dir) * c.clientWidth * 0.85 }); };
 }
 
 boot();
