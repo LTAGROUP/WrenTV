@@ -99,11 +99,11 @@ type TorrentHealthConf struct {
 }
 
 type WebhookConfig struct {
-	URL string `yaml:"url"`
+	URL string `yaml:"url" json:"url"`
 	// Secret signs the payload: X-Haven-Signature: sha256=<hex hmac>.
-	Secret string `yaml:"secret"`
+	Secret string `yaml:"secret" json:"secret,omitempty"`
 	// Events to send; empty means all.
-	Events []string `yaml:"events"`
+	Events []string `yaml:"events" json:"events"`
 }
 
 type ScannerConfig struct {
