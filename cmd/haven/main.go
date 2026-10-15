@@ -191,7 +191,7 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	serverInfo := func() webhook.Server {
 		url := cfg.PublicURL
 		if url == "" {
-			if urls := api.LocalURLs(cfg.Listen); len(urls) > 0 {
+			if urls := api.LocalURLs(cfg); len(urls) > 0 {
 				url = urls[0]
 			}
 		}
@@ -258,7 +258,7 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 		return err
 	}
 	ready <- nil
-	for _, u := range api.LocalURLs(cfg.Listen) {
+	for _, u := range api.LocalURLs(cfg) {
 		slog.Info("listening", "url", u)
 	}
 	errc := make(chan error, 1)

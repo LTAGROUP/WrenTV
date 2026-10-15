@@ -250,8 +250,11 @@ func queryInt(r *http.Request, key string, def int) int {
 }
 
 // LocalURLs lists LAN addresses clients can use to reach this server.
-func LocalURLs(listen string) []string {
-	_, port, err := net.SplitHostPort(listen)
+func LocalURLs(c *config.Config) []string {
+	if len(c.LocalURLs) > 0 {
+		return c.LocalURLs
+	}
+	_, port, err := net.SplitHostPort(c.Listen)
 	if err != nil {
 		port = "32500"
 	}

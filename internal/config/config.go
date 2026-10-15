@@ -25,6 +25,9 @@ type Config struct {
 	Listen    string `yaml:"listen"`
 	// PublicURL is how external services (webhook receivers) reach this server.
 	PublicURL string `yaml:"public_url"`
+	// LocalURLs overrides the LAN addresses advertised to apps (detected from
+	// network interfaces by default, which inside Docker are container IPs).
+	LocalURLs []string `yaml:"local_urls,omitempty"`
 	// IntegrationKey authenticates backend services (e.g. a Riven-like source
 	// manager) calling the integration API. Generated on first run.
 	IntegrationKey string `yaml:"integration_key"`
@@ -237,6 +240,14 @@ func (c *Config) applyEnv() {
 	set("HAVEN_PUBLIC_URL", &c.PublicURL)
 	if v, err := strconv.Atoi(os.Getenv("HAVEN_SCAN_POLL_SEC")); err == nil {
 		c.Scanner.PollSec = v
+	}
+	if v := os.Getenv("HAVEN_LOCAL_URLS"); v != "" {
+		c.LocalURLs = nil
+		for _, u := range strings.Split(v, ",") {
+			if u = strings.TrimSpace(u); u != "" {
+				c.LocalURLs = append(c.LocalURLs, u)
+			}
+		}
 	}
 	if v, ok := os.LookupEnv("HAVEN_TORRENT_PROVIDERS"); ok {
 		c.Torrents.Providers = strings.Split(v, ",")

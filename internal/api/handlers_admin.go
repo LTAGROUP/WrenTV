@@ -270,7 +270,7 @@ func (s *Server) heartbeat() {
 	if libs == nil {
 		libs = []*db.Library{}
 	}
-	if err := s.Supa.Heartbeat(ctx, LocalURLs(s.Cfg.Listen), s.Version, libs); err != nil {
+	if err := s.Supa.Heartbeat(ctx, LocalURLs(s.Cfg), s.Version, libs); err != nil {
 		slog.Warn("heartbeat failed", "err", err)
 	}
 }
