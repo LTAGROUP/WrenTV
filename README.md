@@ -166,7 +166,6 @@ Authenticate with `Authorization: Bearer <token>` (from `/api/auth/login`).
 
 ## Accounts with Supabase (optional)
 
-`supabase/migrations/` and `supabase/functions/link-device/` contain the account backend:
-profiles, server claiming, sharing and invites, and device linking. Apply them to your Supabase project, deploy the
-edge function, then set `auth.mode: supabase` with your project URL and publishable key and claim the server with
-`POST /api/setup/claim`.
+`supabase/migrations/` contains the account backend: profiles, server claiming, and sharing and invites.
+Apply the migrations to your Supabase project, then set `auth.mode: supabase` with your project URL and publishable
+key. Open the web app, sign in, and claim the server with the claim code printed in the server log.

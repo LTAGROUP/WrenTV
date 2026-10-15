@@ -1,4 +1,4 @@
-// Server management: dashboard, libraries, users/sharing, torrents, settings, device linking.
+// Server management: dashboard, libraries, users/sharing, torrents, settings.
 import { api, account, state, isSupabase } from './api.js';
 import { esc, $, $$, el, toast, modal, confirmDialog, fmtSize, timeAgo } from './ui.js';
 import { setTitle, refreshLibraries, render, isAdmin } from './app.js';
@@ -358,37 +358,6 @@ export async function viewSettings() {
     } catch (ex) {
       err.textContent = ex.message;
       err.hidden = false;
-    }
-  };
-  return node;
-}
-
-// ---------------------------------------------------------------- device linking
-
-export async function viewLink() {
-  setTitle('Link a device');
-  const code = new URLSearchParams(location.search).get('code') || '';
-  const node = el(`<div style="max-width:520px">
-    <div class="page-head"><h1>Link a device</h1></div>
-    <div class="panel"><p class="muted">Open Haven on your TV, phone or computer and choose <b>Sign in with a code</b>. Enter the code it shows to sign it in as <b>${esc(state.session?.user?.email || '')}</b>.</p>
-      <form><div class="field"><label>Code</label><input name="code" class="code-input" maxlength="6" value="${esc(code)}" placeholder="ABC123" autocomplete="off" required></div>
-      <p class="error" hidden></p><p class="ok" hidden></p><button class="btn primary lg">Link device</button></form></div></div>`);
-  const f = $('form', node);
-  f.onsubmit = async (e) => {
-    e.preventDefault();
-    const err = $('.error', f), ok = $('.ok', f), btn = $('button', f);
-    err.hidden = ok.hidden = true;
-    btn.disabled = true;
-    try {
-      const r = await account.linkDevice(String(new FormData(f).get('code')).trim().toUpperCase());
-      ok.textContent = `Linked ${r.deviceName || 'your device'}${r.platform ? ` (${r.platform})` : ''}. It will sign in within a few seconds.`;
-      ok.hidden = false;
-      f.reset();
-    } catch (ex) {
-      err.textContent = ex.message;
-      err.hidden = false;
-    } finally {
-      btn.disabled = false;
     }
   };
   return node;

@@ -26,7 +26,6 @@ const routes = [
   [/^\/library\/([^/]+)$/, viewLibrary],
   [/^\/item\/([^/]+)$/, viewItem],
   [/^\/search$/, viewSearch],
-  [/^\/link$/, manage.viewLink],
   [/^\/manage\/?$/, manage.viewStatus, true],
   [/^\/manage\/libraries$/, manage.viewLibraries, true],
   [/^\/manage\/users$/, manage.viewUsers, true],
@@ -61,11 +60,6 @@ async function render() {
     return viewSignIn();
   }
   if (isSupabase() && srv.setupRequired) return viewClaim();
-  if (location.pathname === '/link' && isSupabase()) {
-    // Linking a device needs only an account, not access to this server.
-    if (!state.user) await loadMe().catch(() => {});
-    return shell(() => manage.viewLink(), seq);
-  }
   if (!state.user) {
     try {
       await loadMe();
@@ -202,7 +196,7 @@ function viewNoAccess() {
   const email = state.session?.user?.email || '';
   authCard(`<h2 style="margin-bottom:8px">No access</h2>
     <p class="muted"><b>${esc(email)}</b> doesn't have access to ${esc(state.server.name)}. Ask the owner to share it with this email address.</p>
-    <div class="actions"><button class="btn" id="retry">Check again</button><a class="btn" href="/link">Link a device</a><button class="btn ghost" id="out">Sign out</button></div>`);
+    <div class="actions"><button class="btn" id="retry">Check again</button><button class="btn ghost" id="out">Sign out</button></div>`);
   $('#retry').onclick = async () => { await account.rpc('accept_invites').catch(() => {}); render(); };
   $('#out').onclick = signOut;
 }
@@ -230,7 +224,6 @@ async function shell(view, seq) {
           <a class="nav" href="/manage/users" data-path="/manage/users">${icons.users}<span>${isSupabase() ? 'Sharing' : 'Users'}</span></a>
           ${state.server.torrents ? `<a class="nav" href="/manage/torrents" data-path="/manage/torrents">${icons.torrent}<span>Torrents</span></a>` : ''}
           <a class="nav" href="/manage/settings" data-path="/manage/settings">${icons.settings}<span>Settings</span></a>` : ''}
-        ${isSupabase() ? `<div class="nav-title">Account</div><a class="nav" href="/link" data-path="/link">${icons.device}<span>Link a device</span></a>` : ''}
         <div class="spacer"></div>
         <div class="account"><div class="avatar">${esc((name[0] || '?').toUpperCase())}</div>
           <div style="min-width:0;flex:1"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</div>

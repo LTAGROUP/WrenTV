@@ -68,7 +68,6 @@ export const account = {
   insert(table, row) { return supaFetch(`/rest/v1/${table}`, { method: 'POST', body: row, headers: { Prefer: 'return=representation' } }); },
   update(table, query, patch) { return supaFetch(`/rest/v1/${table}?${query}`, { method: 'PATCH', body: patch, headers: { Prefer: 'return=representation' } }); },
   remove(table, query) { return supaFetch(`/rest/v1/${table}?${query}`, { method: 'DELETE' }); },
-  linkDevice(code) { return supaFetch('/functions/v1/link-device', { method: 'POST', body: { code } }); },
 };
 
 let refreshing = null;
