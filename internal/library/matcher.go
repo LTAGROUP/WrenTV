@@ -261,6 +261,7 @@ func (s *Scanner) Rematch(ctx context.Context, it *db.Item, tmdbID int) error {
 // ---------- probing ----------
 
 func (s *Scanner) probeLoop(ctx context.Context) {
+	s.guessUnprobed(ctx)
 	if s.probeWorkers < 0 {
 		return // background probing disabled; files are probed on first play
 	}

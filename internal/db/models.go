@@ -682,9 +682,38 @@ func (d *DB) InsertFile(ctx context.Context, f *MediaFile) error {
 	if f.ID == "" {
 		f.ID = NewID()
 	}
-	_, err := d.ExecContext(ctx, `INSERT INTO media_files (id, item_id, library_id, path, size, mtime, torrent_id, torrent_file_index)
-		VALUES (?,?,?,?,?,?,?,?)`, f.ID, f.ItemID, f.LibraryID, f.Path, f.Size, f.MTime, nullStr(f.TorrentID), f.TorrentFileIndex)
+	_, err := d.ExecContext(ctx, `INSERT INTO media_files (id, item_id, library_id, path, size, mtime, torrent_id, torrent_file_index,
+		container, video_codec, width, height, hdr) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, f.ID, f.ItemID, f.LibraryID, f.Path, f.Size, f.MTime,
+		nullStr(f.TorrentID), f.TorrentFileIndex, f.Container, f.VideoCodec, f.Width, f.Height, f.HDR)
 	return err
+}
+
+// UnguessedFiles lists unprobed files with no media info at all.
+func (d *DB) UnguessedFiles(ctx context.Context) ([]*MediaFile, error) {
+	return d.queryFiles(ctx, `SELECT `+fileCols+` FROM media_files WHERE probed_at=0 AND width=0 AND container='' AND video_codec='' AND hdr=''`)
+}
+
+// UpdateFileGuesses saves name-based media info without marking files probed.
+func (d *DB) UpdateFileGuesses(ctx context.Context, files []*MediaFile) error {
+	if len(files) == 0 {
+		return nil
+	}
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	st, err := tx.PrepareContext(ctx, `UPDATE media_files SET container=?, video_codec=?, width=?, height=?, hdr=? WHERE id=? AND probed_at=0`)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	for _, f := range files {
+		if _, err := st.ExecContext(ctx, f.Container, f.VideoCodec, f.Width, f.Height, f.HDR, f.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // UpdateFileStat records a changed size/mtime and invalidates the probe.

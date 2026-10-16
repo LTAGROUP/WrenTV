@@ -352,6 +352,7 @@ func (s *Scanner) IngestAs(ctx context.Context, lib *db.Library, root, parsePath
 	}
 
 	f := &db.MediaFile{ItemID: target.ID, LibraryID: lib.ID, Path: storePath, Size: size, MTime: mtime, TorrentID: torrentID, TorrentFileIndex: fileIdx}
+	GuessFromName(f)
 	if err := s.db.InsertFile(ctx, f); err != nil {
 		return nil, err
 	}

@@ -624,7 +624,7 @@ func (d *DB) LibraryStats(ctx context.Context) (*LibraryStats, error) {
 	}
 	s.Resolutions = counts(`SELECT CASE WHEN width >= 3200 THEN '4K' WHEN width >= 1800 THEN '1080p' WHEN width >= 1200 THEN '720p'
 		WHEN width > 0 THEN 'SD' ELSE 'Not analyzed' END r, COUNT(*) c FROM media_files GROUP BY r ORDER BY c DESC`)
-	s.HDR = counts(`SELECT CASE WHEN hdr IN ('DV','DV+HDR10') THEN 'Dolby Vision' WHEN hdr != '' THEN hdr WHEN width > 0 THEN 'SDR' ELSE 'Not analyzed' END h,
+	s.HDR = counts(`SELECT CASE WHEN hdr IN ('DV','DV+HDR10') THEN 'Dolby Vision' WHEN hdr != '' THEN hdr WHEN width > 0 AND probed_at > 0 THEN 'SDR' ELSE 'Not analyzed' END h,
 		COUNT(*) c FROM media_files GROUP BY h ORDER BY c DESC`)
 	s.VideoCodecs = counts(`SELECT CASE WHEN video_codec != '' THEN UPPER(video_codec) ELSE 'Not analyzed' END v, COUNT(*) c FROM media_files GROUP BY v ORDER BY c DESC`)
 	s.Containers = counts(`SELECT CASE WHEN container != '' THEN UPPER(container) ELSE 'Not analyzed' END v, COUNT(*) c FROM media_files GROUP BY v ORDER BY c DESC`)
