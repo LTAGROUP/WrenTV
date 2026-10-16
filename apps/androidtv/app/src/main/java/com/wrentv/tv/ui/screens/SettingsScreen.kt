@@ -127,6 +127,10 @@ fun SettingsScreen() {
                     }
                 }
                 FormSection("About", "Wren TV for Android TV $appVersion") {
+                    if (state.account != null) {
+                        ListRow("Switch Server", { state.switchServer() }, Modifier.rememberFocus("set:switch"),
+                            detail = "Your other servers, or ones shared with you")
+                    }
                     ListRow("Sign Out", { panel = SettingsPanel.SignOut }, Modifier.rememberFocus("set:signout"),
                         detail = "Downloads stay on this TV")
                 }

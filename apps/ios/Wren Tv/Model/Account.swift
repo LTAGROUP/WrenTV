@@ -166,6 +166,26 @@ struct AccountClient: Sendable {
         return try JSONDecoder().decode([AccountServer].self, from: data)
     }
 
+    struct LinkedDevice: Decodable { var deviceName: String }
+
+    /// Looks up (check) or approves a sign-in code a TV shows before it knows
+    /// any server; approving signs the TV in to this account.
+    func linkDevice(code: String, check: Bool, accessToken: String) async throws -> LinkedDevice {
+        var req = URLRequest(url: URL(string: "/functions/v1/link-device", relativeTo: url)!)
+        req.httpMethod = "POST"
+        req.setValue(publishableKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["code": code, "check": check])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if status >= 400 {
+            let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+            throw WrenTVError(message: msg ?? HTTPURLResponse.localizedString(forStatusCode: status), status: status)
+        }
+        return try JSONDecoder().decode(LinkedDevice.self, from: data)
+    }
+
     /// Turns pending share invites for this email into access.
     func acceptInvites(_ s: AccountSession) async {
         _ = try? await request("/rest/v1/rpc/accept_invites", body: [:], bearer: s.accessToken)

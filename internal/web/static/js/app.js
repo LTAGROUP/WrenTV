@@ -231,8 +231,10 @@ function viewClaim() {
   });
 }
 
-// Signs a TV in as this account. The TV shows a code and a QR code of
-// /link?code=…; whoever approves here is who the TV is signed in as.
+// Signs a TV in as this account. A TV connected by address shows a code and a
+// QR code of /link?code=…; one that doesn't know a server yet shows an account
+// code (watch.wrentv.com/link), which this page also takes when this server
+// uses Wren TV accounts. Whoever approves here is who the TV is signed in as.
 async function viewLink() {
   const params = new URLSearchParams(location.search);
   const code = (params.get('code') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -246,16 +248,28 @@ async function viewLink() {
     return bindForm(async (v) => go('/link?code=' + encodeURIComponent(v.code.trim()), true));
   }
   let info;
+  let viaAccount = false;
+  let accountErr;
+  if (isSupabase()) {
+    try {
+      const d = await account.fn('link-device', { code, check: true });
+      info = { device: d.deviceName || 'Your TV' };
+      viaAccount = true;
+    } catch (e) {
+      accountErr = e;
+    }
+  }
   try {
-    info = await api('/api/pair/' + code);
-  } catch (e) {
+    info ??= await api('/api/pair/' + code);
+  } catch (ex) {
+    const e = accountErr || ex;
     authCard(`<h2 style="margin-bottom:8px">Code expired</h2><p class="muted">${esc(e.message)}</p>
       <div class="actions"><button class="btn" id="other">Enter a code</button><a class="btn ghost" href="/">Open Wren TV</a></div>`);
     $('#other').onclick = () => go('/link', true);
     return;
   }
   authCard(`<h2 style="margin-bottom:6px">Sign in ${esc(info.device)}?</h2>
-    <p class="muted">${esc(info.device)} will be signed in to <b>${esc(state.server.name)}</b> as <b>${esc(who)}</b>. Only approve a code you see on your own TV.</p>
+    <p class="muted">${esc(info.device)} will be signed in ${viaAccount ? `to your Wren TV account (<b>${esc(state.session?.user?.email || who)}</b>) and open your servers` : `to <b>${esc(state.server.name)}</b> as <b>${esc(who)}</b>`}. Only approve a code you see on your own TV.</p>
     <p class="mono" style="font-size:22px;letter-spacing:3px;text-align:center;margin:14px 0">${esc(pretty(code))}</p>
     <p class="error" hidden></p>
     <div class="actions"><button class="btn primary lg" id="approve" style="flex:1">Sign in TV</button><a class="btn ghost lg" href="/">Not now</a></div>
@@ -265,7 +279,8 @@ async function viewLink() {
   $('#approve').onclick = async (e) => {
     e.target.disabled = true;
     try {
-      await api('/api/pair/' + code + '/approve', { method: 'POST' });
+      if (viaAccount) await account.fn('link-device', { code });
+      else await api('/api/pair/' + code + '/approve', { method: 'POST' });
       authCard(`<h2 style="margin-bottom:8px">You're all set</h2><p class="muted">${esc(info.device)} is signed in as <b>${esc(who)}</b>. You can close this page.</p>
         <div class="actions"><a class="btn primary lg" href="/" style="flex:1">Open Wren TV</a></div>`);
     } catch (ex) {

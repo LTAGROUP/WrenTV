@@ -45,6 +45,15 @@ class AppState(context: Context) {
     var accountEmail by mutableStateOf<String?>(null)
         private set
 
+    /** Signed in to a Wren TV account but no server picked yet: the TV lists the account's servers. */
+    var account by mutableStateOf<AccountSession?>(null)
+        private set
+    var accountServers by mutableStateOf<List<AccountServer>?>(null)
+        private set
+    var accountServersError by mutableStateOf<String?>(null)
+        private set
+    private val accounts = AccountClient(WrenAccounts)
+
     /** Movies and episodes saved on this TV for offline viewing. */
     val downloads = DownloadManager(context, scope)
 
@@ -63,7 +72,7 @@ class AppState(context: Context) {
 
     private suspend fun restore() {
         try {
-            val url = store.serverUrl?.toHttpUrlOrNull() ?: return
+            val url = store.serverUrl?.toHttpUrlOrNull() ?: return restoreAccount()
             serverUrl = url
             // The typed address may only work at home: also try every address the server published last time.
             var base = url
@@ -75,7 +84,8 @@ class AppState(context: Context) {
                     info = runCatching { WrenTVApi(found).serverInfo() }.getOrNull()
                 }
             }
-            val i = info ?: return // Server offline: show the connect screen with the address filled in.
+            // Server offline: list the account's servers, or show the connect screen.
+            val i = info ?: return restoreAccount()
             server = i
             // A TV linked from a phone keeps its device token, whatever the auth mode.
             store.token(key(url))?.let { return finishSignIn(base, TokenSource(it), null) }
@@ -88,6 +98,108 @@ class AppState(context: Context) {
         } finally {
             restoring = false
         }
+    }
+
+    // Wren TV account
+
+    /** Picks up a saved account sign-in and lists its servers. */
+    private suspend fun restoreAccount() {
+        val session = store.session(accounts.storeKey) ?: return
+        account = session
+        accountEmail = session.email
+        loadAccountServers(open = true)
+    }
+
+    /** Signs in to a Wren TV account without a server address. Returns false when a new account must confirm its email first. */
+    suspend fun signInToAccount(email: String, password: String, name: String?): Boolean {
+        val session = if (name != null) accounts.signUp(email, password, name) ?: return false else accounts.signIn(email, password)
+        accountSignedIn(session)
+        return true
+    }
+
+    /** A code for this TV, approved from a phone or browser signed in to the account. */
+    suspend fun startAccountLink(): DeviceLink = accounts.startLink(deviceName())
+
+    /** True once approved, and the TV is then signed in; false while waiting. Throws (404) when the code expired. */
+    suspend fun pollAccountLink(link: DeviceLink): Boolean {
+        val session = accounts.pollLink(link) ?: return false
+        accountSignedIn(session)
+        return true
+    }
+
+    private suspend fun accountSignedIn(session: AccountSession) {
+        store.setSession(accounts.storeKey, session)
+        account = session
+        accountEmail = session.email
+        loadAccountServers(open = true)
+    }
+
+    /**
+     * Lists the servers the account owns or has been shared, accepting any waiting invites first.
+     * With [open], goes straight to the server when there's only one, or only one online.
+     */
+    suspend fun loadAccountServers(open: Boolean = false) {
+        var session = account ?: return
+        if (session.expiresAt - 60 < System.currentTimeMillis() / 1000.0) {
+            val fresh = runCatching { accounts.refresh(session) }.getOrNull()
+            if (fresh == null) {
+                // The sign-in expired for good: sign in again.
+                store.setSession(accounts.storeKey, null)
+                account = null
+                return
+            }
+            session = fresh
+            account = fresh
+            store.setSession(accounts.storeKey, fresh)
+        }
+        accounts.acceptInvites(session)
+        val servers = try {
+            accounts.servers(session).also { accountServersError = null }
+        } catch (e: Exception) {
+            accountServersError = e.message
+            return
+        }
+        accountServers = servers
+        if (!open) return
+        val pick = servers.singleOrNull() ?: servers.filter { it.online }.singleOrNull() ?: return
+        runCatching { open(pick) }.onFailure { accountServersError = it.message }
+    }
+
+    /** Connects to one of the account's servers at whichever published address answers (home network first, then remote). */
+    suspend fun open(s: AccountServer) {
+        val session = account ?: return
+        val url = AddressPicker.best(s.candidates, s.id)
+            ?: throw WrenTVException("Couldn't reach ${s.name}. Make sure it's running, and connected to the internet if you're away from home.")
+        val info = WrenTVApi(url).serverInfo()
+        serverUrl = url
+        server = info
+        accessIssue = null
+        store.serverUrl = url.toString()
+        store.serverId = s.id
+        store.serverAddresses = s.candidates.map { it.toString() }
+        val client = AccountClient(info.supabase ?: WrenAccounts)
+        if (client.storeKey != accounts.storeKey) store.setSession(client.storeKey, session)
+        finishSignIn(url, TokenSource(client, session, store), session.email)
+    }
+
+    /** Leaves this server but stays signed in to the account. */
+    fun switchServer() {
+        leaveServer()
+        serverUrl?.let { store.setToken(key(it), null) }
+        serverUrl = null
+        server = null
+        accessIssue = null
+        store.serverUrl = null
+        scope.launch { loadAccountServers() }
+    }
+
+    private fun leaveServer() {
+        eventsJob?.cancel()
+        api = null
+        user = null
+        limits = null
+        libraries = emptyList()
+        downloads.disconnect()
     }
 
     suspend fun connect(raw: String): ServerInfo {
@@ -199,6 +311,10 @@ class AppState(context: Context) {
 
     private fun clearCredentials() {
         serverUrl?.let { store.setToken(key(it), null) }
+        account?.let { s -> scope.launch { accounts.signOut(s) } }
+        store.setSession(accounts.storeKey, null)
+        account = null
+        accountServers = null
         server?.supabase?.let { supa ->
             val client = AccountClient(supa)
             store.session(client.storeKey)?.let { s -> scope.launch { client.signOut(s) } }
@@ -262,13 +378,15 @@ class AppState(context: Context) {
     }
 
     fun signOut() {
+        // Account servers are found again through the account, so forget the address too.
+        val viaAccount = account != null || server?.usesAccounts == true
         clearCredentials()
-        eventsJob?.cancel()
-        api = null
-        user = null
-        limits = null
-        libraries = emptyList()
-        downloads.disconnect()
+        leaveServer()
+        if (viaAccount) {
+            serverUrl = null
+            server = null
+            store.serverUrl = null
+        }
     }
 
     suspend fun reloadLibraries() {

@@ -66,6 +66,8 @@ export const account = {
     saveSession(null);
   },
   rpc(fn, args = {}) { return supaFetch('/rest/v1/rpc/' + fn, { method: 'POST', body: args }); },
+  // Edge functions (link-device approves a TV's account sign-in code).
+  fn(name, body = {}) { return supaFetch('/functions/v1/' + name, { method: 'POST', body }); },
   select(table, query) { return supaFetch(`/rest/v1/${table}?${query}`); },
   insert(table, row) { return supaFetch(`/rest/v1/${table}`, { method: 'POST', body: row, headers: { Prefer: 'return=representation' } }); },
   update(table, query, patch) { return supaFetch(`/rest/v1/${table}?${query}`, { method: 'PATCH', body: patch, headers: { Prefer: 'return=representation' } }); },

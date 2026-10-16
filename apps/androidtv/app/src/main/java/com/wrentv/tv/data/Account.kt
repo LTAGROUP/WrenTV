@@ -9,8 +9,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -18,7 +21,14 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 /** A signed-in Wren TV account (Supabase Auth session). */
 @Serializable
-data class AccountSession(val accessToken: String, val refreshToken: String, val expiresAt: Double, val email: String)
+data class AccountSession(val accessToken: String, val refreshToken: String, val expiresAt: Double, val email: String) {
+    /** The account's user id, from the access token. */
+    val userId: String? get() = runCatching {
+        val part = accessToken.split('.')[1]
+        val body = String(android.util.Base64.decode(part, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP))
+        json.parseToJsonElement(body).jsonObject["sub"]?.jsonPrimitive?.content
+    }.getOrNull()
+}
 
 /** Where sign-ins and server addresses are kept. The app's private storage is only readable by this app. */
 class Store(context: Context) {
@@ -52,6 +62,33 @@ class Store(context: Context) {
     fun int(key: String, def: Int): Int = prefs.getInt(key, def)
     fun setInt(key: String, v: Int) = prefs.edit().putInt(key, v).apply()
 }
+
+/** The Wren TV account service. The publishable key is public: every account server hands it to its clients in /api/server. */
+val WrenAccounts = SupabaseInfo("https://buycndonhmcafzzcvmgu.supabase.co", "sb_publishable_vNiXbucy_8L_RQBFPoBPvA_HNZv1i15")
+
+/** A server this account owns or has been shared, as the account service lists it. */
+@Serializable
+data class AccountServer(
+    val id: String,
+    val name: String,
+    val owner_id: String,
+    val local_urls: List<String>? = null,
+    val public_url: String? = null,
+    val remote_url: String? = null,
+    val last_seen_at: String? = null,
+) {
+    /** Every address the server published, best first. */
+    val candidates: List<HttpUrl> get() = AddressPicker.candidates(null, local_urls ?: emptyList(), public_url, remote_url)
+
+    /** Heard from in the last ten minutes. */
+    val online: Boolean get() = runCatching {
+        System.currentTimeMillis() - java.time.OffsetDateTime.parse(last_seen_at).toInstant().toEpochMilli() < 10 * 60_000
+    }.getOrDefault(false)
+}
+
+/** A sign-in code shown on this TV until a signed-in phone or browser approves it. */
+@Serializable
+data class DeviceLink(val code: String, val device_secret: String, val expires_at: String = "")
 
 /** Talks to the Wren TV account service (Supabase Auth over REST). */
 class AccountClient(info: SupabaseInfo) {
@@ -140,6 +177,47 @@ class AccountClient(info: SupabaseInfo) {
             json.decodeFromString<List<ServerAddresses>>(withContext(Dispatchers.IO) { r.body!!.string() }).firstOrNull()
         }
     }.getOrNull()
+
+    private suspend fun get(path: String, bearer: String): String {
+        val req = Request.Builder().url("$url$path").header("apikey", key).header("Authorization", "Bearer $bearer").build()
+        return Http.client.newCall(req).await().use { r ->
+            val text = withContext(Dispatchers.IO) { r.body?.string() ?: "" }
+            if (r.code >= 400) throw WrenTVException("Couldn't load your servers", r.code)
+            text
+        }
+    }
+
+    /** The servers this account owns or has been shared, most recently seen first. */
+    suspend fun servers(s: AccountSession): List<AccountServer> =
+        json.decodeFromString(get("/rest/v1/servers?select=id,name,owner_id,local_urls,public_url,remote_url,last_seen_at&order=last_seen_at.desc.nullslast", s.accessToken))
+
+    /** Asks for a code to show on this TV; anyone signed in on a phone or browser can approve it. */
+    suspend fun startLink(deviceName: String): DeviceLink {
+        val text = request("/rest/v1/rpc/create_device_link", buildJsonObject { put("p_device_name", deviceName); put("p_platform", "androidtv") })
+        return json.decodeFromString<List<DeviceLink>>(text).first()
+    }
+
+    @Serializable
+    private data class LinkPoll(val status: String, val token_hash: String? = null)
+
+    /**
+     * The TV's own session once the code is approved; null while waiting.
+     * Throws (404) once the code has expired.
+     */
+    suspend fun pollLink(link: DeviceLink): AccountSession? {
+        val text = request("/rest/v1/rpc/poll_device_link", buildJsonObject { put("p_code", link.code); put("p_device_secret", link.device_secret) })
+        val p = json.decodeFromString<List<LinkPoll>>(text).firstOrNull() ?: return null
+        when (p.status) {
+            "expired" -> throw WrenTVException("This code has expired", 404)
+            "approved" -> {}
+            else -> return null
+        }
+        val hash = p.token_hash ?: return null
+        val s = session(request("/auth/v1/verify", buildJsonObject { put("type", "magiclink"); put("token_hash", hash) }), "")
+            ?: throw WrenTVException("Sign-in failed")
+        acceptInvites(s)
+        return s
+    }
 
     /** Turns pending share invites for this email into access. */
     suspend fun acceptInvites(s: AccountSession) {

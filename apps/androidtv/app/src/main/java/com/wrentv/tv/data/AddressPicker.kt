@@ -25,10 +25,10 @@ object AddressPicker {
     private val probe = Http.client.newBuilder().callTimeout(5, TimeUnit.SECONDS).build()
 
     /** Candidates, best first: secure LAN, plain LAN, the owner's public address, the remote address, then the address typed in. */
-    fun candidates(entered: HttpUrl, localUrls: List<String>, publicUrl: String?, remoteUrl: String?): List<HttpUrl> {
+    fun candidates(entered: HttpUrl?, localUrls: List<String>, publicUrl: String?, remoteUrl: String?): List<HttpUrl> {
         val lan = localUrls.mapNotNull { it.toHttpUrlOrNull() }
         val out = lan.filter { it.isHttps } + lan.filterNot { it.isHttps } +
-            listOfNotNull(publicUrl, remoteUrl).mapNotNull { it.toHttpUrlOrNull() } + entered
+            listOfNotNull(publicUrl, remoteUrl).mapNotNull { it.toHttpUrlOrNull() } + listOfNotNull(entered)
         val seen = HashSet<String>()
         return out.filter { seen.add(key(it)) }
     }
