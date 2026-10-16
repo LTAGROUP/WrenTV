@@ -16,6 +16,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import com.wrentv.tv.data.Chapter
@@ -89,7 +90,21 @@ class PlayerController(
         .setSeekBackIncrementMs(10_000)
         .setSeekForwardIncrementMs(10_000)
         .setHandleAudioBecomingNoisy(true)
+        .setLoadControl(loadControl())
         .build()
+
+    /**
+     * The read-ahead buffer lives in the app's memory. ExoPlayer's default allows
+     * ~140 MB for video, which a 4K remux fills within minutes and runs a TV out
+     * of memory, so cap it at a quarter of what the app may use.
+     */
+    private fun loadControl(): DefaultLoadControl {
+        val cap = (Runtime.getRuntime().maxMemory() / 4).coerceIn(16L shl 20, 96L shl 20).toInt()
+        return DefaultLoadControl.Builder()
+            .setTargetBufferBytes(cap)
+            .setPrioritizeTimeOverSizeThresholds(false)
+            .build()
+    }
 
     private val scope = CoroutineScope(appScope.coroutineContext + Job())
     private var fromStart = target.fromStart
