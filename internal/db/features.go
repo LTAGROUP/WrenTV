@@ -15,6 +15,8 @@ import (
 type Prefs struct {
 	// AudioLanguage is an ISO 639-1 code ("en"); empty keeps the file's default track.
 	AudioLanguage string `json:"audioLanguage"`
+	// SubtitleLanguage turns subtitles on in this language ("fr"); empty is off.
+	SubtitleLanguage string `json:"subtitleLanguage"`
 }
 
 func DefaultPrefs() Prefs { return Prefs{AudioLanguage: "en"} }

@@ -22,7 +22,9 @@ type Config struct {
 	FFmpeg     string
 	FFprobe    string
 	ScratchDir string
-	HW         HW
+	// SubtitleDir caches text subtitles converted to WebVTT, across sessions.
+	SubtitleDir string
+	HW          HW
 }
 
 // Manager owns live playback sessions.
@@ -31,12 +33,13 @@ type Manager struct {
 
 	mu       sync.Mutex
 	sessions map[string]*Session
+	subs     map[string]*subExtraction
 }
 
 func NewManager(cfg Config) *Manager {
 	_ = os.RemoveAll(cfg.ScratchDir) // stale segments from a previous run
 	_ = os.MkdirAll(cfg.ScratchDir, 0o755)
-	m := &Manager{cfg: cfg, sessions: map[string]*Session{}}
+	m := &Manager{cfg: cfg, sessions: map[string]*Session{}, subs: map[string]*subExtraction{}}
 	go m.reap()
 	return m
 }

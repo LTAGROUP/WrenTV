@@ -221,6 +221,7 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	hw := stream.DetectHW(cfg.Transcode.FFmpegPath, cfg.Transcode.HWAccel, cfg.Transcode.VAAPIDevice)
 	streams := stream.NewManager(stream.Config{
 		FFmpeg: cfg.Transcode.FFmpegPath, FFprobe: cfg.Transcode.FFprobePath, ScratchDir: cfg.Transcode.ScratchDir, HW: hw,
+		SubtitleDir: filepath.Join(cfg.DataDir, "cache", "subtitles"),
 	})
 
 	_, portStr, _ := net.SplitHostPort(cfg.Listen)

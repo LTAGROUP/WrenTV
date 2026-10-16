@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,8 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/LTAGROUP/wrentv/internal/media"
 )
 
 // ---------- transcode: one continuous ffmpeg per playback position ----------
@@ -199,31 +196,4 @@ func (t *transcoder) launch(n int) {
 		t.mu.Unlock()
 		close(done)
 	}()
-}
-
-// ---------- subtitles ----------
-
-func (s *Session) serveSubtitle(w http.ResponseWriter, r *http.Request, typeIdx int) {
-	var sub *media.Stream
-	for i := range s.Info.Subtitles {
-		if s.Info.Subtitles[i].TypeIdx == typeIdx {
-			sub = &s.Info.Subtitles[i]
-		}
-	}
-	if sub == nil || !sub.TextBased {
-		http.Error(w, "subtitle not available as text", http.StatusNotFound)
-		return
-	}
-	cache := filepath.Join(s.dir, fmt.Sprintf("sub%d.vtt", typeIdx))
-	if _, err := os.Stat(cache); err != nil {
-		cmd := exec.CommandContext(r.Context(), s.m.cfg.FFmpeg, "-nostdin", "-v", "error", "-y", "-i", s.Src.Input(),
-			"-map", fmt.Sprintf("0:s:%d", typeIdx), "-f", "webvtt", cache+".part")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			http.Error(w, "subtitle extraction failed: "+string(out), http.StatusInternalServerError)
-			return
-		}
-		_ = os.Rename(cache+".part", cache)
-	}
-	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-	http.ServeFile(w, r, cache)
 }

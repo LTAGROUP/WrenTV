@@ -51,7 +51,9 @@ type playResponse struct {
 	Resume    float64         `json:"resumePosition,omitempty"`
 	Info      *media.Info     `json:"info,omitempty"`
 	Subtitles []subtitleTrack `json:"subtitles,omitempty"`
-	FileID    string          `json:"fileId,omitempty"`
+	// SubtitleIndex is the track to show from the viewer's preferences, or -1 for off.
+	SubtitleIndex int    `json:"subtitleIndex"`
+	FileID        string `json:"fileId,omitempty"`
 	// Chapters and the skippable intro/credits of the file being played.
 	Chapters []media.Chapter `json:"chapters"`
 	Markers  media.Markers   `json:"markers"`
@@ -126,11 +128,10 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "could not read media: "+err.Error())
 		return
 	}
-	audioIdx := -1
+	prefs, _ := s.DB.GetPrefs(ctx, principal(r).User.ID)
+	audioIdx := preferredAudio(info, prefs.AudioLanguage)
 	if req.AudioIndex != nil {
 		audioIdx = *req.AudioIndex
-	} else if prefs, err := s.DB.GetPrefs(ctx, principal(r).User.ID); err == nil {
-		audioIdx = preferredAudio(info, prefs.AudioLanguage)
 	}
 	dec := media.Decide(info, req.Caps, audioIdx)
 
@@ -170,6 +171,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		Status: "ready", SessionID: sess.ID, Engine: dec.Engine, Method: dec.Method, Decision: &dec,
 		Duration: info.Duration, Info: info, FileID: f.ID,
 		Chapters: nonNil(info.Chapters), Markers: s.markersFor(ctx, f, info),
+		SubtitleIndex: preferredSubtitle(info, prefs.SubtitleLanguage),
 	}
 	for _, v := range files {
 		resp.Versions = append(resp.Versions, versionView{ID: v.ID, Label: versionLabel(v), Height: fileHeight(v)})
@@ -310,6 +312,40 @@ func preferredAudio(info *media.Info, lang string) int {
 		}
 		if best < 0 {
 			best = a.TypeIdx
+		}
+	}
+	return best
+}
+
+// preferredSubtitle is the subtitle track to show for a language, or -1.
+// Full tracks beat forced ones (which only cover foreign-language parts),
+// text beats pictures (browsers only show text), and default-flagged and
+// plain tracks beat SDH and commentary.
+func preferredSubtitle(info *media.Info, lang string) int {
+	if lang == "" {
+		return -1
+	}
+	best, bestScore := -1, -1
+	for _, st := range info.Subtitles {
+		if db.NormalizeLang(st.Language) != lang {
+			continue
+		}
+		title := strings.ToLower(st.Title)
+		score := 0
+		if !st.Forced {
+			score += 8
+		}
+		if st.TextBased {
+			score += 4
+		}
+		if !strings.Contains(title, "sdh") && !strings.Contains(title, "commentary") {
+			score += 2
+		}
+		if st.Default {
+			score++
+		}
+		if score > bestScore {
+			best, bestScore = st.TypeIdx, score
 		}
 	}
 	return best

@@ -340,14 +340,19 @@ export async function viewAccount() {
     <div class="panel" style="max-width:640px"><h2>Playback</h2>
       <div class="field"><label>Preferred audio language</label>
         <select id="audio">${`<option value="">File's default track</option>` + sorted.map((c) => `<option value="${c}" ${c === prefs.audioLanguage ? 'selected' : ''}>${esc(name(c))}</option>`).join('')}</select></div>
-      <p class="small muted" style="margin:0">Wren TV starts playback with an audio track in this language when the file has one. It's saved to your account, so it applies on every device and browser you sign in with. You can still switch tracks while watching.</p>
+      <p class="small muted">Wren TV starts playback with an audio track in this language when the file has one.</p>
+      <div class="field"><label>Subtitles</label>
+        <select id="subs">${`<option value="">Off</option>` + sorted.map((c) => `<option value="${c}" ${c === prefs.subtitleLanguage ? 'selected' : ''}>${esc(name(c))}</option>`).join('')}</select></div>
+      <p class="small muted" style="margin:0">Subtitles in this language turn on by themselves when the file has them. Both settings are saved to your account, so they apply on every device and browser you sign in with. You can still switch tracks while watching.</p>
     </div></div>`);
-  $('#audio', node).onchange = async (e) => {
+  const save = (key) => async (e) => {
     try {
-      await api('/api/me/prefs', { method: 'PATCH', body: { audioLanguage: e.target.value } });
-      toast('Saved. New playback will use this language.');
+      await api('/api/me/prefs', { method: 'PATCH', body: { [key]: e.target.value } });
+      toast('Saved. New playback will use this setting.');
     } catch (err) { toast(err.message); }
   };
+  $('#audio', node).onchange = save('audioLanguage');
+  $('#subs', node).onchange = save('subtitleLanguage');
   return node;
 }
 

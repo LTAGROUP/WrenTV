@@ -60,3 +60,20 @@ func TestPreferredAudio(t *testing.T) {
 		t.Errorf("fr: got %d, want -1", got)
 	}
 }
+
+func TestPreferredSubtitle(t *testing.T) {
+	// The Minecraft Movie layout: a forced French default, full French and
+	// English text tracks, then the same as pictures.
+	info := &media.Info{Subtitles: []media.Stream{
+		{TypeIdx: 0, Language: "fre", Forced: true, Default: true, TextBased: true},
+		{TypeIdx: 1, Language: "fre", TextBased: true},
+		{TypeIdx: 2, Language: "eng", TextBased: true},
+		{TypeIdx: 3, Language: "eng", Title: "SDH"},
+		{TypeIdx: 4, Language: "spa"},
+	}}
+	for lang, want := range map[string]int{"": -1, "en": 2, "fr": 1, "es": 4, "de": -1} {
+		if got := preferredSubtitle(info, lang); got != want {
+			t.Errorf("%q: got %d, want %d", lang, got, want)
+		}
+	}
+}

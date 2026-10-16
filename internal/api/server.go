@@ -228,7 +228,7 @@ func cors(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-WrenTV-Token, X-WrenTV-Key, X-WrenTV-Client, X-Haven-Token, X-Haven-Key, Range")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS, HEAD")
-		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges, X-Subtitle-Complete")
 		if r.Method == http.MethodOptions {
 			// Private Network Access: lets public HTTPS pages (watch.wrentv.com)
 			// reach this server at its LAN address.

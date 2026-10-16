@@ -36,7 +36,8 @@ func (s *Server) handlePatchPrefs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		AudioLanguage *string `json:"audioLanguage"`
+		AudioLanguage    *string `json:"audioLanguage"`
+		SubtitleLanguage *string `json:"subtitleLanguage"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, 400, err.Error())
@@ -44,6 +45,9 @@ func (s *Server) handlePatchPrefs(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AudioLanguage != nil {
 		p.AudioLanguage = db.NormalizeLang(*req.AudioLanguage)
+	}
+	if req.SubtitleLanguage != nil {
+		p.SubtitleLanguage = db.NormalizeLang(*req.SubtitleLanguage)
 	}
 	if err := s.DB.SetPrefs(r.Context(), uid, p); err != nil {
 		writeErr(w, 500, err.Error())

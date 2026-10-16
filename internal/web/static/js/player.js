@@ -102,9 +102,10 @@ class Player {
       this.fileId = e.target.value;
       this.pinnedFile = true;
       this.audioIndex = undefined; // track numbers differ between files
+      this.subsPicked = false;
       this.reload();
     };
-    $('[data-subs]', r).onchange = (e) => this.selectSubs(e.target.value);
+    $('[data-subs]', r).onchange = (e) => { this.subsPicked = true; this.selectSubs(e.target.value); };
     $('[data-toggle]', r).onclick = () => this.toggle();
     $('[data-back]', r).onclick = () => this.seek(v.currentTime - 10);
     $('[data-fwd]', r).onclick = () => this.seek(v.currentTime + 10);
@@ -223,16 +224,6 @@ class Player {
     } else {
       v.src = url;
       if (startAt) v.addEventListener('loadedmetadata', () => (v.currentTime = startAt), { once: true });
-    }
-    for (const s of this.res.subtitles || []) {
-      if (!s.url) continue;
-      const t = document.createElement('track');
-      t.kind = 'subtitles';
-      t.src = s.url;
-      t.srclang = s.language || 'und';
-      t.label = trackLabel(s);
-      t.dataset.index = s.index;
-      v.append(t);
     }
     v.addEventListener('playing', () => this.setWait(null), { once: true });
     v.addEventListener('canplay', () => this.setWait(null), { once: true });
@@ -403,21 +394,54 @@ class Player {
     a.innerHTML = audio.map((s) => `<option value="${s.typeIndex}">${esc(trackLabel(s))}</option>`).join('');
     a.value = String(this.res.decision?.audioIndex ?? audio[0]?.typeIndex ?? '');
     a.hidden = audio.length < 2;
-    const subs = (this.res.subtitles || []).filter((s) => s.url);
+    const subs = this.res.subtitles || [];
     const sel = $('[data-subs]', this.root);
     const prev = sel.value;
-    sel.innerHTML = `<option value="">Subtitles off</option>` + subs.map((s) => `<option value="${s.index}">${esc(trackLabel(s))}</option>`).join('');
-    const forced = subs.find((s) => s.forced);
-    sel.value = subs.some((s) => String(s.index) === prev) ? prev : forced ? String(forced.index) : '';
+    const text = subs.filter((s) => s.url);
+    sel.innerHTML = `<option value="">Subtitles off</option>` + subs.map((s) => s.url
+      ? `<option value="${s.index}">${esc(trackLabel(s))}</option>`
+      : `<option value="${s.index}" disabled>${esc(trackLabel(s))} (picture, app only)</option>`).join('');
+    // Keep the viewer's choice across reloads (quality changes); otherwise use
+    // the track the server picked from their subtitle language setting.
+    const pick = this.subsPicked ? prev : String(this.res.subtitleIndex ?? -1);
+    sel.value = text.some((s) => String(s.index) === pick) ? pick : '';
     sel.hidden = !subs.length;
   }
 
   selectSubs(index) {
-    for (const t of this.video.textTracks) t.mode = 'disabled';
-    if (index === '') return;
-    const els = [...this.video.querySelectorAll('track')];
-    const i = els.findIndex((t) => t.dataset.index === String(index));
-    if (i >= 0 && this.video.textTracks[i]) this.video.textTracks[i].mode = 'showing';
+    const gen = (this.subsGen = (this.subsGen || 0) + 1);
+    clearTimeout(this.subsTimer);
+    const v = this.video;
+    if (!this.cueTrack) {
+      this.cueTrack = v.addTextTrack('subtitles', 'Subtitles');
+    }
+    const track = this.cueTrack;
+    for (const c of [...(track.cues || [])]) track.removeCue(c);
+    for (const t of v.textTracks) if (t !== track) t.mode = 'disabled';
+    const sub = (this.res?.subtitles || []).find((s) => String(s.index) === String(index) && s.url);
+    track.mode = sub ? 'showing' : 'disabled';
+    if (!sub) return;
+    let added = 0;
+    const load = async () => {
+      let complete = true;
+      try {
+        const r = await fetch(sub.url, { cache: 'no-store' });
+        if (!r.ok) throw new Error(r.status);
+        complete = r.headers.get('X-Subtitle-Complete') !== 'false';
+        const cues = parseVTT(await r.text(), complete);
+        if (gen !== this.subsGen) return;
+        for (; added < cues.length; added++) {
+          const c = cues[added];
+          try { track.addCue(new VTTCue(c.start, c.end, c.text)); } catch {}
+        }
+      } catch {
+        complete = false;
+      }
+      // Large files on network storage take minutes to convert: show what's
+      // ready and keep fetching the rest.
+      if (!complete && gen === this.subsGen) this.subsTimer = setTimeout(load, 5000);
+    };
+    load();
   }
 
   async reload() {
@@ -524,6 +548,8 @@ class Player {
   }
 
   async stopSession() {
+    clearTimeout(this.subsTimer);
+    this.subsGen = (this.subsGen || 0) + 1;
     this.hls?.destroy();
     this.hls = null;
     this.video.removeAttribute('src');
@@ -547,6 +573,28 @@ class Player {
     if (current === this) current = null;
     if (notify) this.opts.onClose?.();
   }
+}
+
+// Cues from a WebVTT file. A file still being written may end mid-cue, so the
+// last block is left for the next fetch unless the file is complete.
+function parseVTT(text, complete) {
+  const blocks = text.replace(/\r/g, '').split(/\n\n+/);
+  if (!complete) blocks.pop();
+  const time = (t) => {
+    const p = t.trim().split(':').map(Number);
+    return p.reduce((acc, x) => acc * 60 + x, 0);
+  };
+  const out = [];
+  for (const b of blocks) {
+    const lines = b.split('\n');
+    const at = lines.findIndex((l) => l.includes('-->'));
+    if (at < 0) continue;
+    const [a, z] = lines[at].split('-->');
+    const start = time(a), end = time(z.trim().split(/\s+/)[0]);
+    const body = lines.slice(at + 1).join('\n').trim();
+    if (body && end > start) out.push({ start, end, text: body });
+  }
+  return out;
 }
 
 function trackLabel(s) {
