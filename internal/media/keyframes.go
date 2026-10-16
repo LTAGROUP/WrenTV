@@ -79,6 +79,46 @@ const (
 
 var errEBML = errors.New("ebml: malformed")
 
+// blockSize covers the EBML header, SeekHead, Info and Tracks of a typical
+// file in one read.
+const blockSize = 256 << 10
+
+// blockReader serves small reads from cached blocks; reads larger than a
+// block (the Cues element) go straight through.
+type blockReader struct {
+	r      io.ReaderAt
+	size   int64
+	blocks map[int64][]byte
+}
+
+func (b *blockReader) ReadAt(p []byte, off int64) (int, error) {
+	if len(p) > blockSize {
+		return b.r.ReadAt(p, off)
+	}
+	n := 0
+	for n < len(p) {
+		pos := off + int64(n)
+		if pos >= b.size {
+			return n, io.EOF
+		}
+		start := pos - pos%blockSize
+		blk, ok := b.blocks[start]
+		if !ok {
+			blk = make([]byte, min(blockSize, b.size-start))
+			m, err := b.r.ReadAt(blk, start)
+			if m < len(blk) {
+				if err == nil {
+					err = io.ErrUnexpectedEOF
+				}
+				return n, err
+			}
+			b.blocks[start] = blk
+		}
+		n += copy(p[n:], blk[pos-start:])
+	}
+	return n, nil
+}
+
 type ebmlReader struct {
 	r    io.ReaderAt
 	size int64
@@ -178,6 +218,10 @@ func (e *ebmlReader) children(start, end int64, fn func(el element) (stop bool, 
 
 // MatroskaCues returns the keyframe times of the first video track from the Cues element.
 func MatroskaCues(r io.ReaderAt, size int64) ([]float64, error) {
+	// Element headers are read a few bytes at a time. Over a remote source
+	// every read is an HTTP request, and a debrid CDN refuses hundreds of
+	// them in a row, so read through whole blocks instead.
+	r = &blockReader{r: r, size: size, blocks: map[int64][]byte{}}
 	e := &ebmlReader{r: r, size: size}
 	hdr, err := e.element(0)
 	if err != nil || hdr.id != idEBML {
