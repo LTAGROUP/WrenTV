@@ -20,6 +20,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.util.EventLogger
 import com.wrentv.tv.data.Chapter
 import com.wrentv.tv.data.DownloadManager
 import com.wrentv.tv.data.Item
@@ -128,6 +129,8 @@ class PlayerController(
     val currentChapter: Chapter? get() = chapters.lastOrNull { it.start <= position + 0.01 }
 
     init {
+        // Debug builds: dropped frames, audio underruns, buffering and loads in logcat (tag EventLogger).
+        if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) player.addAnalyticsListener(EventLogger())
         player.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 buffering = state == Player.STATE_BUFFERING

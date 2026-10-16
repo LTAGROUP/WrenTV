@@ -271,6 +271,14 @@ func (r *remuxer) produce(track string, n int) error {
 		if a == nil {
 			return errors.New("no audio stream")
 		}
+		if !s.Decision.AudioCopy && s.Decision.AudioCodec == "aac" {
+			out := filepath.Join(r.trackDir(track), strconv.Itoa(n)+".tmp.mp4")
+			if err := r.encodeAAC(a, n, out); err != nil {
+				os.Remove(out)
+				return err
+			}
+			return splitFragment(out, filepath.Join(r.trackDir(track), "init.mp4"), filepath.Join(r.trackDir(track), strconv.Itoa(n)+".m4s"))
+		}
 		if seg.start > 0 {
 			args = append(args, "-ss", fmtTS(seg.start))
 		}
@@ -283,8 +291,6 @@ func (r *remuxer) produce(track string, n int) error {
 			case "flac":
 				// Lossless with no encoder priming (browsers); 24-bit max in FLAC.
 				args = append(args, "-c:a", "flac", "-strict", "-2")
-			case "aac":
-				args = append(args, "-c:a", "aac", "-b:a", "384k")
 			default:
 				// Apple Lossless: bit-exact, and no encoder priming so segments join seamlessly.
 				args = append(args, "-c:a", "alac")
@@ -315,6 +321,71 @@ func (r *remuxer) produce(track string, n int) error {
 		return fmt.Errorf("ffmpeg remux %s segment %d: %v: %s", track, n, err, strings.TrimSpace(stderr.String()))
 	}
 	return splitFragment(out, filepath.Join(r.trackDir(track), "init.mp4"), filepath.Join(r.trackDir(track), strconv.Itoa(n)+".m4s"))
+}
+
+// aacFrame is the length of an AAC frame in samples.
+const aacFrame = 1024
+
+// aacPreroll is how many frames are encoded ahead of a segment and thrown
+// away, so its first kept frame carries on from the previous segment's last
+// one the way a single continuous encode would.
+const aacPreroll = 8
+
+// encodeAAC writes segment n's audio as AAC frames on one grid shared by every
+// segment (1024 samples each, counted from the start of the file), so
+// consecutive segments join exactly. Encoding each segment on its own instead
+// starts it with a priming frame and ends it with a padded one: every boundary
+// then overlaps by ~21 ms and the player resyncs its audio clock there, which
+// shows as a small audio and video stutter every segment.
+func (r *remuxer) encodeAAC(a *media.Stream, n int, out string) error {
+	s := r.s
+	rate := a.SampleRate
+	if rate <= 0 || rate > 96000 {
+		rate = 48000
+	}
+	frameAt := func(t float64) int64 { return int64(math.Round(t * float64(rate) / aacFrame)) }
+	timeOf := func(f int64) float64 { return float64(f*aacFrame) / float64(rate) }
+	seg := s.plan[n]
+	first := frameAt(seg.start)
+	end := int64(-1) // through the end of the file
+	if n < len(s.plan)-1 {
+		end = frameAt(seg.end)
+	}
+	from := max(first-aacPreroll, 0)
+
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Minute)
+	defer cancel()
+
+	// Decode from exactly a grid point so the encoder's frames land on the grid,
+	// then keep only this segment's frames: the first packet is the encoder's
+	// priming, then the pre-roll. They're picked by count and restamped, since
+	// ffmpeg shifts the priming packet's negative timestamp in different ways.
+	skip := 1 + first - from
+	drop := fmt.Sprintf("lt(n\\,%d)", skip)
+	if end >= 0 {
+		drop += fmt.Sprintf("+gte(n\\,%d)", skip+end-first)
+	}
+	args := []string{"-nostdin", "-hide_banner", "-v", "error", "-y"}
+	if from > 0 {
+		args = append(args, "-ss", strconv.FormatFloat(timeOf(from), 'f', 6, 64))
+	}
+	args = append(args, "-i", s.Src.Input(), "-map", fmt.Sprintf("0:a:%d", a.TypeIdx), "-vn", "-sn", "-dn")
+	if end >= 0 {
+		// A couple of frames past the end, so the last kept one isn't the padded tail.
+		args = append(args, "-t", strconv.FormatFloat(timeOf(end+2-from), 'f', 6, 64))
+	}
+	args = append(args, "-ar", strconv.Itoa(rate), "-c:a", "aac", "-b:a", "384k",
+		"-bsf:a", fmt.Sprintf("noise=drop=%s,setts=ts=N*%d/%d/TB", drop, aacFrame, rate),
+		"-map_chapters", "-1", "-map_metadata", "-1",
+		"-output_ts_offset", strconv.FormatFloat(timeOf(first)+tsOffset, 'f', 6, 64),
+		"-f", "mp4", "-movflags", "frag_keyframe+delay_moov+default_base_moof+frag_discont", out)
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, s.m.cfg.FFmpeg, args...)
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ffmpeg aac segment %d: %v: %s", n, err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 // splitFragment separates ftyp+moov (init) from the moof/mdat media data.
