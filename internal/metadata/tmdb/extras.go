@@ -167,3 +167,18 @@ func (c *Client) Trending(ctx context.Context) ([]Title, error) {
 	}
 	return out, err
 }
+
+// SearchMulti finds movies and shows matching a query, most relevant first.
+func (c *Client) SearchMulti(ctx context.Context, query string) ([]Title, error) {
+	var r struct {
+		Results []Title `json:"results"`
+	}
+	err := c.get(ctx, "/search/multi", url.Values{"query": {query}, "include_adult": {"false"}}, searchTTL, &r)
+	out := r.Results[:0]
+	for _, t := range r.Results {
+		if t.MediaType == "movie" || t.MediaType == "tv" {
+			out = append(out, t)
+		}
+	}
+	return out, err
+}

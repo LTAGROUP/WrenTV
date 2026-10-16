@@ -26,7 +26,7 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 		"version":       s.Version,
 		"authMode":      s.Auth.Mode(),
 		"setupRequired": setup,
-		"torrents":      s.Torrents.Enabled(),
+		"streaming":     s.Streaming.Active(),
 		"localUrls":     s.advertisedLocalURLs(),
 	}
 	if s.Supa != nil {
@@ -169,7 +169,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
-	writeJSON(w, 200, map[string]any{"user": userResponse{p.User, p.Role}, "libraryIds": p.LibraryIDs})
+	writeJSON(w, 200, map[string]any{"user": userResponse{p.User, p.Role}, "libraryIds": p.LibraryIDs, "limits": s.limitsFor(p.User)})
 }
 
 // ---------- local user management (admin) ----------
@@ -183,6 +183,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	type row struct {
 		*db.User
 		LibraryIDs []string `json:"libraryIds"`
+		Effective  limits   `json:"effective"`
 	}
 	out := []row{}
 	for _, u := range users {
@@ -190,7 +191,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		if libs == nil {
 			libs = []string{}
 		}
-		out = append(out, row{u, libs})
+		out = append(out, row{u, libs, s.limitsFor(u)})
 	}
 	writeJSON(w, 200, out)
 }
@@ -201,11 +202,12 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Username    string   `json:"username"`
-		Password    string   `json:"password"`
-		DisplayName string   `json:"displayName"`
-		IsAdmin     bool     `json:"isAdmin"`
-		LibraryIDs  []string `json:"libraryIds"`
+		Username    string         `json:"username"`
+		Password    string         `json:"password"`
+		DisplayName string         `json:"displayName"`
+		IsAdmin     bool           `json:"isAdmin"`
+		LibraryIDs  []string       `json:"libraryIds"`
+		Limits      *db.UserLimits `json:"limits"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, 400, err.Error())
@@ -215,6 +217,14 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
+	}
+	if req.Limits != nil {
+		if err := validLimits(*req.Limits); err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		u.UserLimits = *req.Limits
+		_ = s.DB.UpdateUserLimits(r.Context(), u.ID, u.UserLimits)
 	}
 	if !req.IsAdmin {
 		_ = s.DB.SetLibraryAccess(r.Context(), u.ID, req.LibraryIDs)
@@ -230,10 +240,11 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		DisplayName *string   `json:"displayName"`
-		IsAdmin     *bool     `json:"isAdmin"`
-		LibraryIDs  *[]string `json:"libraryIds"`
-		Password    *string   `json:"password"`
+		DisplayName *string        `json:"displayName"`
+		IsAdmin     *bool          `json:"isAdmin"`
+		LibraryIDs  *[]string      `json:"libraryIds"`
+		Password    *string        `json:"password"`
+		Limits      *db.UserLimits `json:"limits"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, 400, err.Error())
@@ -252,6 +263,17 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if req.LibraryIDs != nil {
 		_ = s.DB.SetLibraryAccess(r.Context(), u.ID, *req.LibraryIDs)
 	}
+	if req.Limits != nil {
+		if err := validLimits(*req.Limits); err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		u.UserLimits = *req.Limits
+		if err := s.DB.UpdateUserLimits(r.Context(), u.ID, u.UserLimits); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
 	if req.Password != nil {
 		hash, err := auth.HashPassword(*req.Password)
 		if err != nil {
@@ -261,6 +283,14 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		_, _ = s.DB.ExecContext(r.Context(), `UPDATE users SET password_hash=? WHERE id=?`, hash, u.ID)
 	}
 	writeJSON(w, 200, u)
+}
+
+// validLimits checks per-user limits: -1 is the server default, 0 no limit.
+func validLimits(l db.UserLimits) error {
+	if l.AllowDownloads < -1 || l.AllowDownloads > 1 || l.MaxStreams < -1 || l.MaxDownloads < -1 {
+		return errors.New("invalid limits")
+	}
+	return nil
 }
 
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {

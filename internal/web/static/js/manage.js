@@ -1,4 +1,4 @@
-// Server management: dashboard, libraries, users/sharing, torrents, settings.
+// Server management: dashboard, libraries, users/sharing, downloads, settings.
 import { api, account, state, isSupabase } from './api.js';
 import { esc, $, $$, el, toast, modal, confirmDialog, fmtSize, timeAgo } from './ui.js';
 import { setTitle, refreshLibraries, render, isAdmin } from './app.js';
@@ -30,7 +30,11 @@ export async function viewStatus() {
         <span class="muted">H.264 encoder</span><span class="mono">${esc(hw.h264Encoder || '—')}</span>
         <span class="muted">HW decode</span><span>${hw.hwDecode ? 'Yes' : 'No'}</span>
         <span class="muted">HDR tone mapping</span><span>${esc(hw.tonemap || 'none')}</span>
-        <span class="muted">Torrent providers</span><span>${esc((st.torrentProviders || []).join(', ') || 'off')}</span>
+      </div></div>
+      <div class="panel"><h2>Streaming</h2><div class="kv">
+        <span class="muted">Status</span><span>${st.streaming?.active ? '<span class="ok">On</span>' : '<span class="muted">Off</span>'}</span>
+        <span class="muted">Debrid</span><span>${esc((st.streaming?.providers || []).map(debridName).join(', ') || '—')}</span>
+        <span class="muted">Streams playing</span><span>${st.streaming?.activeStreams ?? 0}</span>
       </div></div>
     </div>
     <div class="panel"><h2>Now playing</h2>
@@ -56,9 +60,9 @@ export async function viewLibraries() {
   const node = el(`<div><div class="page-head"><h1>Libraries</h1><button class="btn primary" data-add>Add library</button></div>
     ${libs.length ? `<div class="panel"><table class="table"><tr><th>Name</th><th>Type</th><th>Folders</th><th>Items</th><th>Last scan</th><th></th></tr>
       ${libs.map((l) => `<tr><td><a href="/library/${l.id}"><b>${esc(l.name)}</b></a></td><td>${l.type === 'shows' ? 'TV Shows' : 'Movies'}</td>
-        <td class="mono small">${l.paths.map(esc).join('<br>')}</td><td>${l.itemCount}</td><td>${timeAgo(l.lastScanAt)}</td>
-        <td style="white-space:nowrap;text-align:right"><button class="btn small" data-scan="${l.id}">Scan</button>
-        <button class="btn small" data-edit="${l.id}">Edit</button><button class="btn small danger" data-del="${l.id}">Remove</button></td></tr>`).join('')}</table></div>`
+        <td class="mono small">${l.source === 'stream' ? '<span class="muted" style="font-family:inherit">Streamed through your debrid service</span>' : l.paths.map(esc).join('<br>')}</td><td>${l.itemCount}</td><td>${timeAgo(l.lastScanAt)}</td>
+        <td style="white-space:nowrap;text-align:right">${l.source === 'stream' ? `<button class="btn small" data-edit="${l.id}">Rename</button>` : `<button class="btn small" data-scan="${l.id}">Scan</button>
+        <button class="btn small" data-edit="${l.id}">Edit</button>`}<button class="btn small danger" data-del="${l.id}">Remove</button></td></tr>`).join('')}</table></div>`
       : `<div class="empty"><h2>Add your first library</h2><p>Point Wren TV at a folder of movies or TV shows. On Docker, that's a path inside the container (e.g. /media/Movies).</p></div>`}</div>`);
 
   $('[data-add]', node).onclick = () => editLibrary();
@@ -66,7 +70,9 @@ export async function viewLibraries() {
   for (const b of $$('[data-scan]', node)) b.onclick = async () => { await api(`/api/libraries/${b.dataset.scan}/scan`, { method: 'POST' }); toast('Scan started'); };
   for (const b of $$('[data-del]', node)) b.onclick = async () => {
     const l = libs.find((x) => x.id === b.dataset.del);
-    if (!(await confirmDialog(`Remove ${l.name}?`, 'The library and its watch history are removed from Wren TV. Your files are not touched.'))) return;
+    const text = l.source === 'stream' ? 'Its titles, saved streams and watch history are removed. It comes back empty the next time someone streams.'
+      : 'The library and its watch history are removed from Wren TV. Your files are not touched.';
+    if (!(await confirmDialog(`Remove ${l.name}?`, text))) return;
     await api('/api/libraries/' + l.id, { method: 'DELETE' });
     render();
   };
@@ -74,6 +80,13 @@ export async function viewLibraries() {
 }
 
 async function editLibrary(lib) {
+  if (lib?.source === 'stream') {
+    const ok = await modal('Rename library', `<div class="field"><label>Name</label><input name="name" value="${esc(lib.name)}" required></div>`, {
+      onOk: (f) => api('/api/libraries/' + lib.id, { method: 'PATCH', body: { name: String(new FormData(f).get('name')).trim() } }),
+    });
+    if (ok) render();
+    return;
+  }
   const body = `<div class="field"><label>Name</label><input name="name" value="${esc(lib?.name || '')}" placeholder="Movies" required></div>
     ${lib ? '' : `<div class="field"><label>Type</label><select name="type"><option value="movies">Movies</option><option value="shows">TV Shows</option></select></div>`}
     <div class="field"><label>Folders (one per line)</label><textarea name="paths" required placeholder="/media/Movies">${esc((lib?.paths || []).join('\n'))}</textarea></div>
@@ -127,6 +140,11 @@ export async function fixMatch(it) {
   if (ok) { toast('Match updated'); render(); }
 }
 
+export function confirmForget(it) {
+  const what = it.kind === 'show' ? 'every episode of this show' : it.kind === 'season' ? 'every episode of this season' : 'this title';
+  return confirmDialog('Find new streams?', `The streams saved for ${what} are forgotten. The next play searches the addons again.`, 'Find new streams');
+}
+
 // ---------------------------------------------------------------- users / sharing
 
 export async function viewUsers() {
@@ -152,34 +170,71 @@ function readLibraryChecks(f) {
   return ids;
 }
 
+// Per-user streaming limits. Blank numbers follow the server default; 0 is no limit.
+function limitsFields(l = {}, d = {}) {
+  const num = (v) => (v == null || v < 0 ? '' : v);
+  const dflt = (v) => `Default (${v ? v : 'no limit'})`;
+  const dl = l.allowDownloads ?? -1;
+  return `<fieldset><legend>Streaming &amp; downloads</legend>
+    <label class="check"><input type="checkbox" name="allowStreaming" ${l.allowStreaming !== false ? 'checked' : ''}> Can play titles streamed through debrid</label>
+    <div class="form-grid">
+      <div class="field"><label>Device downloads</label><select name="allowDownloads">
+        <option value="-1" ${dl === -1 ? 'selected' : ''}>Default (${d.deviceDownloads ? 'allowed' : 'off'})</option>
+        <option value="1" ${dl === 1 ? 'selected' : ''}>Allowed</option><option value="0" ${dl === 0 ? 'selected' : ''}>Not allowed</option></select></div>
+      <div class="field"><label>Streams at once</label><input name="maxStreams" type="number" min="0" value="${num(l.maxStreams)}" placeholder="${dflt(d.maxStreams)}"></div>
+      <div class="field"><label>Downloads at once</label><input name="maxDownloads" type="number" min="0" value="${num(l.maxDownloads)}" placeholder="${dflt(d.maxDownloads)}"></div>
+    </div><p class="small muted" style="margin-top:0">Leave a number blank to use the server default; 0 means no limit.</p></fieldset>`;
+}
+
+function readLimits(f) {
+  const v = Object.fromEntries(new FormData(f));
+  const n = (x) => (String(x ?? '').trim() === '' ? -1 : Math.max(0, Math.floor(Number(x)) || 0));
+  return { allowStreaming: !!v.allowStreaming, allowDownloads: Number(v.allowDownloads ?? -1), maxStreams: n(v.maxStreams), maxDownloads: n(v.maxDownloads) };
+}
+
+function limitsSummary(e) {
+  if (!e) return '';
+  const parts = [];
+  if (!e.canStream && state.server.streaming) parts.push('No streaming');
+  parts.push(e.maxStreams ? `${e.maxStreams} stream${e.maxStreams > 1 ? 's' : ''}` : 'Unlimited streams');
+  parts.push(e.canDownload ? (e.maxDownloads ? `${e.maxDownloads} download${e.maxDownloads > 1 ? 's' : ''}` : 'Downloads') : 'No downloads');
+  return `<span class="small muted">${parts.join(' · ')}</span>`;
+}
+
 async function viewLocalUsers() {
   setTitle('Users');
-  const [users, libs] = await Promise.all([api('/api/users'), api('/api/libraries')]);
+  const [users, libs, settings] = await Promise.all([api('/api/users'), api('/api/libraries'), api('/api/admin/settings')]);
+  const fileLibs = libs.filter((l) => l.source !== 'stream');
+  const defaults = settings.userDefaults || {};
   const node = el(`<div><div class="page-head"><h1>Users</h1><button class="btn primary" data-add>Add user</button></div>
-    <div class="panel"><table class="table"><tr><th>Name</th><th>Username</th><th>Access</th><th></th></tr>
+    <div class="panel table-wrap"><table class="table"><tr><th>Name</th><th>Username</th><th>Access</th><th>Limits</th><th></th></tr>
     ${users.map((u) => `<tr><td><b>${esc(u.displayName)}</b></td><td>${esc(u.username)}</td>
       <td>${u.isAdmin ? 'Admin · all libraries' : u.libraryIds.length ? u.libraryIds.map((id) => esc(libs.find((l) => l.id === id)?.name || id)).join(', ') : '<span class="muted">No libraries</span>'}</td>
+      <td>${limitsSummary(u.effective)}</td>
       <td style="text-align:right;white-space:nowrap"><button class="btn small" data-edit="${u.id}">Edit</button>
-      ${u.id !== state.user.id ? `<button class="btn small danger" data-del="${u.id}">Remove</button>` : ''}</td></tr>`).join('')}</table></div></div>`);
+      ${u.id !== state.user.id ? `<button class="btn small danger" data-del="${u.id}">Remove</button>` : ''}</td></tr>`).join('')}</table></div>
+    <p class="small muted">Defaults for everyone are in <a href="/manage/settings#users" style="color:var(--accent)">Settings → Users</a>. Streamed titles are visible to anyone allowed to stream.</p></div>`);
 
   const edit = async (u) => {
     const body = `${u ? '' : '<div class="field"><label>Username</label><input name="username" required></div>'}
       <div class="field"><label>Name</label><input name="displayName" value="${esc(u?.displayName || '')}"></div>
       <div class="field"><label>${u ? 'New password (optional)' : 'Password'}</label><input name="password" type="password" minlength="8" ${u ? '' : 'required'} autocomplete="new-password"></div>
       ${u?.id === state.user.id ? '' : `<label class="check"><input type="checkbox" name="isAdmin" ${u?.isAdmin ? 'checked' : ''}> Admin (manages the server, sees every library)</label>`}
-      <div class="field" style="margin-top:12px"><label>Libraries</label>${libs.map((l) => `<label class="check"><input type="checkbox" name="lib" value="${l.id}" ${u?.libraryIds?.includes(l.id) ? 'checked' : ''}> ${esc(l.name)}</label>`).join('')}</div>`;
+      <div class="field" style="margin-top:12px"><label>Libraries</label>${fileLibs.map((l) => `<label class="check"><input type="checkbox" name="lib" value="${l.id}" ${u?.libraryIds?.includes(l.id) ? 'checked' : ''}> ${esc(l.name)}</label>`).join('') || '<span class="small muted">No libraries yet</span>'}</div>
+      ${limitsFields(u || { allowStreaming: true }, defaults)}`;
     const ok = await modal(u ? `Edit ${u.displayName}` : 'Add user', body, {
       onOk: async (f) => {
         const v = Object.fromEntries(new FormData(f));
         const libraryIds = $$('input[name=lib]:checked', f).map((c) => c.value);
         const isAdminBox = $('input[name=isAdmin]', f);
+        const limits = readLimits(f);
         if (u) {
-          const patch = { displayName: v.displayName, libraryIds };
+          const patch = { displayName: v.displayName, libraryIds, limits };
           if (isAdminBox) patch.isAdmin = isAdminBox.checked;
           if (v.password) patch.password = v.password;
           await api('/api/users/' + u.id, { method: 'PATCH', body: patch });
         } else {
-          await api('/api/users', { method: 'POST', body: { username: v.username, password: v.password, displayName: v.displayName, isAdmin: !!isAdminBox?.checked, libraryIds } });
+          await api('/api/users', { method: 'POST', body: { username: v.username, password: v.password, displayName: v.displayName, isAdmin: !!isAdminBox?.checked, libraryIds, limits } });
         }
       },
     });
@@ -200,7 +255,9 @@ async function viewSharing() {
   setTitle('Sharing');
   const sid = state.server.serverId;
   const owner = state.user.role === 'owner';
-  const libs = await api('/api/libraries');
+  const [allLibs, serverUsers, settings] = await Promise.all([api('/api/libraries'), api('/api/users').catch(() => []), api('/api/admin/settings')]);
+  const libs = allLibs.filter((l) => l.source !== 'stream');
+  const serverUser = (accountId) => serverUsers.find((u) => u.externalId === accountId);
   const libName = (id) => esc(libs.find((l) => l.id === id)?.name || id);
   const access = (ids) => (ids == null ? 'All libraries' : ids.length ? ids.map(libName).join(', ') : '<span class="muted">None</span>');
   const [shares, invites] = await Promise.all([
@@ -212,11 +269,13 @@ async function viewSharing() {
 
   const node = el(`<div><div class="page-head"><h1>Sharing</h1>${owner ? '<button class="btn primary" data-invite>Share server</button>' : ''}</div>
     <p class="muted" style="margin-top:-8px">People sign in with their own Wren TV account. Invite them by email; access starts the next time they sign in.</p>
-    <div class="panel"><h2>People with access</h2><table class="table"><tr><th>Name</th><th>Email</th><th>Libraries</th><th></th></tr>
-      <tr><td><b>${esc(state.user.displayName || 'You')}</b></td><td>${esc(state.session?.user?.email || '')}</td><td>Owner · all libraries</td><td></td></tr>
+    <div class="panel table-wrap"><h2>People with access</h2><table class="table"><tr><th>Name</th><th>Email</th><th>Libraries</th><th>Limits</th><th></th></tr>
+      <tr><td><b>${esc(state.user.displayName || 'You')}</b></td><td>${esc(state.session?.user?.email || '')}</td><td>Owner · all libraries</td><td></td><td></td></tr>
       ${shares.map((s) => `<tr><td>${esc(prof(s.user_id).display_name || '—')}</td><td>${esc(prof(s.user_id).email || '')}</td><td>${access(s.library_ids)}</td>
+        <td>${serverUser(s.user_id) ? limitsSummary(serverUser(s.user_id).effective) : '<span class="small muted">Defaults · not signed in yet</span>'}</td>
         <td style="text-align:right;white-space:nowrap">${owner ? `<button class="btn small" data-edit="${s.user_id}">Edit</button><button class="btn small danger" data-del="${s.user_id}">Remove</button>` : ''}</td></tr>`).join('')}
     </table></div>
+    <p class="small muted">Defaults for everyone are in <a href="/manage/settings#users" style="color:var(--accent)">Settings → Users</a>.</p>
     ${invites.length ? `<div class="panel"><h2>Pending invites</h2><table class="table"><tr><th>Email</th><th>Libraries</th><th>Sent</th><th></th></tr>
       ${invites.map((i) => `<tr><td>${esc(i.email)}</td><td>${access(i.library_ids)}</td><td>${new Date(i.created_at).toLocaleDateString()}</td>
         <td style="text-align:right"><button class="btn small danger" data-cancel="${i.id}">Cancel</button></td></tr>`).join('')}</table></div>` : ''}
@@ -236,8 +295,13 @@ async function viewSharing() {
   });
   for (const b of $$('[data-edit]', node)) b.onclick = async () => {
     const s = shares.find((x) => x.user_id === b.dataset.edit);
-    const p = modal(`Edit ${prof(s.user_id).display_name || 'access'}`, `<div class="field"><label>Libraries</label>${libraryChecks(libs, s.library_ids || [], s.library_ids == null)}</div>`, {
-      onOk: (f) => account.update('server_shares', `server_id=eq.${sid}&user_id=eq.${s.user_id}`, { library_ids: readLibraryChecks(f) }),
+    const su = serverUser(s.user_id);
+    const p = modal(`Edit ${prof(s.user_id).display_name || 'access'}`, `<div class="field"><label>Libraries</label>${libraryChecks(libs, s.library_ids || [], s.library_ids == null)}</div>
+      ${su ? limitsFields(su, settings.userDefaults || {}) : '<p class="small muted">Streaming and download limits can be set once they have signed in.</p>'}`, {
+      onOk: async (f) => {
+        await account.update('server_shares', `server_id=eq.${sid}&user_id=eq.${s.user_id}`, { library_ids: readLibraryChecks(f) });
+        if (su) await api('/api/users/' + su.id, { method: 'PATCH', body: { limits: readLimits(f) } });
+      },
     });
     bindLibraryChecks();
     if (await p) render();
@@ -254,46 +318,36 @@ async function viewSharing() {
   return node;
 }
 
-// ---------------------------------------------------------------- torrents
+// ---------------------------------------------------------------- downloads
 
-let torrentTimer;
-export async function viewTorrents() {
-  setTitle('Torrents');
-  clearTimeout(torrentTimer);
-  const [ts, libs] = await Promise.all([api('/api/torrents'), api('/api/libraries')]);
-  const node = el(`<div><div class="page-head"><h1>Torrents</h1><button class="btn primary" data-add>Add torrent</button></div>
-    <p class="muted" style="margin-top:-8px">Torrents stream on demand and never seed. When one can't be played, your source manager is notified to find a replacement.</p>
-    ${ts.length ? `<div class="panel"><table class="table"><tr><th>Name</th><th>Library</th><th>Status</th><th>Provider</th><th>Added</th><th></th></tr>
-      ${ts.map((t) => `<tr><td style="max-width:420px;word-break:break-word">${esc(t.name || t.infoHash)}${t.error ? `<div class="small error">${esc(t.error)}</div>` : ''}</td>
-        <td>${esc(libs.find((l) => l.id === t.libraryId)?.name || '')}</td><td><span class="status s-${esc(t.status)}">${esc(t.status)}</span></td>
-        <td>${esc(t.provider || '—')}</td><td>${timeAgo(t.createdAt)}</td>
-        <td style="text-align:right;white-space:nowrap"><button class="btn small" data-replace="${t.id}">Replace</button><button class="btn small danger" data-del="${t.id}">Remove</button></td></tr>`).join('')}</table></div>`
-      : '<div class="empty"><h2>No torrents</h2><p>Add a magnet link or .torrent file to stream it into a library.</p></div>'}</div>`);
+const DEBRID = { torbox: 'TorBox', alldebrid: 'AllDebrid', realdebrid: 'Real-Debrid' };
+const debridName = (p) => DEBRID[p] || p;
 
-  const sourceForm = (withLib) => `${withLib ? `<div class="field"><label>Library</label><select name="libraryId">${libs.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></div>` : ''}
-    <div class="field"><label>Magnet link</label><textarea name="magnet" placeholder="magnet:?xt=urn:btih:…"></textarea></div>
-    <div class="field"><label>…or a .torrent file</label><input type="file" name="file" accept=".torrent,application/x-bittorrent"></div>`;
-  const submit = async (f, path, withLib) => {
-    const fd = new FormData(f);
-    if (!fd.get('magnet').trim() && !fd.get('file')?.size) throw new Error('Paste a magnet link or choose a file');
-    if (!fd.get('file')?.size) fd.delete('file');
-    await api(path, { method: 'POST', form: fd });
-  };
-  $('[data-add]', node).onclick = async () => {
-    if (!libs.length) return toast('Add a library first');
-    if (await modal('Add torrent', sourceForm(true), { ok: 'Add', onOk: (f) => submit(f, '/api/torrents', true) })) { toast('Torrent added'); render(); }
-  };
-  for (const b of $$('[data-replace]', node)) b.onclick = async () => {
-    if (await modal('Replace source', sourceForm(false), { ok: 'Replace', onOk: (f) => submit(f, `/api/torrents/${b.dataset.replace}/replace`) })) render();
-  };
-  for (const b of $$('[data-del]', node)) b.onclick = async () => {
-    if (!(await confirmDialog('Remove torrent?', 'Its items disappear from the library.'))) return;
-    await api('/api/torrents/' + b.dataset.del, { method: 'DELETE' });
-    render();
-  };
-  // Keep statuses fresh while something is in flight.
-  if (ts.some((t) => t.status === 'resolving' || t.status === 'replacing')) {
-    torrentTimer = setTimeout(() => location.pathname === '/manage/torrents' && !$('.modal') && render(), 4000);
+const dlStatus = { queued: 's-resolving', downloading: 's-resolving', done: 's-ready', failed: 's-failed', canceled: 's-unplayable' };
+
+let downloadsTimer;
+export async function viewDownloads() {
+  setTitle('Downloads');
+  clearTimeout(downloadsTimer);
+  const list = await api('/api/admin/downloads');
+  const pct = (d) => (d.total ? Math.min(100, (d.bytes / d.total) * 100) : 0);
+  const node = el(`<div><div class="page-head"><h1>Downloads</h1></div>
+    <p class="muted" style="margin-top:-8px">Streamed titles saved to the server as files. Once a download finishes, the file replaces the stream.</p>
+    ${list.length ? `<div class="panel table-wrap"><table class="table"><tr><th>Title</th><th>Quality</th><th>Status</th><th>Progress</th><th>Added</th><th></th></tr>
+      ${list.map((d) => `<tr><td style="max-width:380px">${d.itemId ? `<a href="/item/${d.itemId}"><b>${esc(d.title)}</b></a>` : `<b>${esc(d.title)}</b>`}
+          ${d.error ? `<div class="small error" style="margin:2px 0 0">${esc(d.error)}</div>` : ''}${d.status === 'done' && d.path ? `<div class="small muted mono">${esc(d.path)}</div>` : ''}</td>
+        <td>${esc(d.quality)}</td><td><span class="status ${dlStatus[d.status] || ''}">${esc(d.status)}</span></td>
+        <td style="min-width:160px">${d.status === 'downloading' || (d.status === 'failed' && d.bytes) ? `<div class="meter"><i style="width:${pct(d).toFixed(1)}%"></i></div>
+          <div class="small muted">${fmtSize(d.bytes)}${d.total ? ` of ${fmtSize(d.total)}` : ''}</div>` : d.total ? `<span class="small muted">${fmtSize(d.total)}</span>` : ''}</td>
+        <td>${timeAgo(d.createdAt)}</td>
+        <td style="text-align:right;white-space:nowrap">${d.status === 'failed' || d.status === 'canceled' ? `<button class="btn small" data-retry="${d.id}">Retry</button>` : ''}
+          ${d.status === 'queued' || d.status === 'downloading' ? `<button class="btn small danger" data-cancel="${d.id}">Cancel</button>`
+            : `<button class="btn small ghost" data-cancel="${d.id}" title="Remove from the list">Clear</button>`}</td></tr>`).join('')}</table></div>`
+      : `<div class="empty"><h2>Nothing downloading</h2><p>Open a streamed title and choose <b>Download to server</b>, or turn on download mode in Settings → Streaming.</p></div>`}</div>`);
+  for (const b of $$('[data-cancel]', node)) b.onclick = async () => { await api('/api/admin/downloads/' + b.dataset.cancel, { method: 'DELETE' }); render(); };
+  for (const b of $$('[data-retry]', node)) b.onclick = async () => { await api(`/api/admin/downloads/${b.dataset.retry}/retry`, { method: 'POST' }); render(); };
+  if (list.some((d) => d.status === 'queued' || d.status === 'downloading')) {
+    downloadsTimer = setTimeout(() => location.pathname === '/manage/downloads' && !$('.modal') && render(), 3000);
   }
   return node;
 }
@@ -319,54 +373,287 @@ function remoteAccessPanel(ra) {
     </div></div>`;
 }
 
+const QUALITIES = [['2160p', '4K (2160p)'], ['1080p', '1080p'], ['720p', '720p']];
+
+// A number input whose blank value means 0 ("no limit").
+const numField = (name, label, value, { unit = '', step = 1, hint = 'No limit' } = {}) => `<div class="field"><label>${label}</label>
+  <div class="unit-input"><input name="${name}" type="number" min="0" step="${step}" value="${value || ''}" placeholder="${hint}">${unit ? `<span>${unit}</span>` : ''}</div></div>`;
+
+function streamingStatusLine(st, s) {
+  if (!st.enabled) return '<span class="muted">Off</span>';
+  if (st.active) return '<span class="ok">On</span> <span class="small muted">· everyone allowed to stream can search for and play any movie or show</span>';
+  if (!s.tmdbKeySet) return '<span class="error">Needs a TMDB API key</span> <span class="small muted">(General tab)</span>';
+  if (!st.debrid.some((d) => d.keySet)) return '<span class="error">Needs a debrid API key</span>';
+  if (!st.addons.some((a) => a.enabled)) return '<span class="error">Needs at least one addon</span>';
+  return '<span class="muted">Starting…</span>';
+}
+
+function streamingTab(s, libs) {
+  const st = s.streaming;
+  const L = st.limits || {};
+  const libOpts = (type, sel) => `<option value="">Choose a library…</option>${libs.filter((l) => l.source !== 'stream' && l.type === type)
+    .map((l) => `<option value="${l.id}" ${l.id === sel ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}`;
+  return `<div data-tab="streaming">
+    <div class="panel"><h2>Streaming</h2>
+      <p class="small muted">Turns the server into a shared Stremio-style client. Search shows every movie and show; pressing play finds a cached release through your
+        debrid service and streams it through this server. Only the stream link is saved, never the video, unless download mode is on.</p>
+      <p data-st-status>${streamingStatusLine(st, s)}</p>
+      <label class="check"><input type="checkbox" name="stEnabled" ${st.enabled ? 'checked' : ''}> Enable streaming</label>
+      <label class="check"><input type="checkbox" name="stPrefetch" ${st.prefetch ? 'checked' : ''}> When an episode plays, find streams for the rest of the season in the background</label>
+    </div>
+
+    <div class="panel"><h2>Debrid services</h2>
+      <p class="small muted">Your keys are used for everyone. Services are tried top to bottom; the first that has a release cached plays it.
+        If every key is removed, streamed titles disappear until one is added back.</p>
+      <div class="debrid-list">${st.debrid.map((d) => `<div class="debrid" data-provider="${d.provider}">
+        <div class="order"><button type="button" class="btn small ghost" data-up title="Move up" aria-label="Move up">▲</button><button type="button" class="btn small ghost" data-down title="Move down" aria-label="Move down">▼</button></div>
+        <div class="name"><b>${esc(d.name)}</b><div class="small" data-acct>${d.keySet ? `<span class="muted">Key ending ${esc(d.keyHint || '••••')}</span>` : '<span class="muted">Not connected</span>'}</div></div>
+        <input type="password" data-key placeholder="${d.keySet ? 'Paste a new key to replace' : 'API key'}" autocomplete="off">
+        <div class="acts"><button type="button" class="btn small" data-check>Check</button>${d.keySet ? '<button type="button" class="btn small danger" data-remove>Disconnect</button>' : ''}</div>
+      </div>`).join('')}</div>
+    </div>
+
+    <div class="panel"><h2>Addons</h2>
+      <p class="small muted">Stremio addons that list torrents for a title. Results from every enabled addon are merged.</p>
+      <div class="addon-list"></div>
+      <div class="addon-add"><input type="text" data-addon-url placeholder="https://…/manifest.json" autocomplete="off"><button type="button" class="btn" data-addon-add>Add addon</button></div>
+      <p class="small error" data-addon-err hidden></p>
+    </div>
+
+    <div class="panel"><h2>Quality</h2>
+      <p class="small muted">Streams are saved for each quality picked here. The player chooses between them like versions of a file.</p>
+      <div class="quality-grid">${QUALITIES.map(([q, label]) => `<div class="q"><label class="check"><input type="checkbox" name="stQ" value="${q}" ${st.qualities.includes(q) ? 'checked' : ''}> ${label}</label>
+        <div class="unit-input"><input name="stMax-${q}" type="number" min="0" step="0.5" value="${st.maxSizeGB?.[q] || ''}" placeholder="Any size"><span>GB max</span></div></div>`).join('')}</div>
+      <p class="small muted" style="margin-bottom:0">Size limits apply to the file that plays (one episode of a season pack, not the whole pack).</p>
+    </div>
+
+    <div class="panel"><h2>Saving to the server</h2>
+      <div class="seg" role="radiogroup">
+        <label><input type="radio" name="stMode" value="stream" ${st.mode !== 'download' ? 'checked' : ''}><span><b>Stream only</b><small>Nothing is written to your media folders. Admins can still download single titles.</small></span></label>
+        <label><input type="radio" name="stMode" value="download" ${st.mode === 'download' ? 'checked' : ''}><span><b>Download what's watched</b><small>Each streamed title is also downloaded and becomes a regular file.</small></span></label>
+      </div>
+      <div class="form-grid" style="margin-top:14px">
+        <div class="field"><label>Movies go to</label><select name="stMovieLib">${libOpts('movies', st.movieLibrary)}</select></div>
+        <div class="field"><label>Shows go to</label><select name="stShowLib">${libOpts('shows', st.showLibrary)}</select></div>
+        <div class="field"><label>Download quality</label><select name="stDlQuality">${QUALITIES.map(([q, label]) => `<option value="${q}" ${q === st.downloadQuality ? 'selected' : ''}>${label}</option>`).join('')}</select></div>
+      </div>
+    </div>
+
+    <div class="panel"><h2>Limits</h2>
+      <p class="small muted">Leave a field blank for no limit.</p>
+      <h3 class="sub-h">Bandwidth</h3>
+      <div class="form-grid">
+        ${numField('lBandwidth', 'All debrid traffic', L.bandwidthMbps, { unit: 'Mbps', step: 0.1 })}
+        ${numField('lPerStream', 'Each stream', L.perStreamMbps, { unit: 'Mbps', step: 0.1 })}
+        ${numField('lDownload', 'Server downloads', L.downloadMbps, { unit: 'Mbps', step: 0.1 })}
+      </div>
+      <h3 class="sub-h">Concurrency</h3>
+      <div class="form-grid">
+        ${numField('lStreams', 'Streams at once (all users)', L.maxStreams)}
+        ${numField('lDownloads', 'Server downloads at once', L.maxDownloads)}
+        ${numField('lPrefetch', 'Background lookups at once', L.prefetchWorkers, { hint: '2' })}
+      </div>
+      <h3 class="sub-h">Disk</h3>
+      <div class="form-grid">
+        ${numField('lQuota', 'Total downloaded', L.downloadQuotaGB, { unit: 'GB' })}
+        ${numField('lFree', 'Keep this much free', L.minFreeGB, { unit: 'GB', hint: 'No minimum' })}
+      </div>
+    </div>
+  </div>`;
+}
+
 export async function viewSettings() {
   setTitle('Settings');
-  const s = await api('/api/admin/settings');
+  const [s, libs] = await Promise.all([api('/api/admin/settings'), api('/api/libraries')]);
   const hw = ['auto', 'videotoolbox', 'nvenc', 'qsv', 'vaapi', 'amf', 'none'];
-  const node = el(`<form><div class="page-head"><h1>Settings</h1><button class="btn primary">Save changes</button></div>
-    <p class="error" hidden></p>
-    <div class="panel"><h2>General</h2><div class="form-grid">
-      <div class="field"><label>Server name</label><input name="serverName" value="${esc(s.serverName)}"></div>
-      <div class="field"><label>Public URL</label><input name="publicUrl" value="${esc(s.publicUrl)}" placeholder="https://wrentv.example.com"></div>
-    </div></div>
-    ${s.remoteAccess ? remoteAccessPanel(s.remoteAccess) : ''}
-    <div class="panel"><h2>Metadata &amp; transcoding</h2><div class="form-grid">
-      <div class="field"><label>TMDB API key ${s.tmdbKeySet ? '<span class="ok">(set)</span>' : ''}</label><input name="tmdbApiKey" type="password" placeholder="${s.tmdbKeySet ? 'Leave blank to keep' : 'Required for posters and info'}" autocomplete="off"></div>
-      <div class="field"><label>OMDb API key ${s.omdbKeySet ? '<span class="ok">(set)</span>' : ''}</label><input name="omdbApiKey" type="password" placeholder="${s.omdbKeySet ? 'Leave blank to keep' : 'Optional: IMDb, Rotten Tomatoes, Metacritic'}" autocomplete="off">
-        <span class="small muted">Free key at <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener" style="color:var(--accent)">omdbapi.com</a></span></div>
-      <div class="field"><label>Hardware acceleration</label><select name="hwaccel">${hw.map((h) => `<option ${h === s.hwaccel ? 'selected' : ''}>${h}</option>`).join('')}</select></div>
-    </div>
-      <label class="check"><input type="checkbox" name="markerFingerprinting" ${s.markerFingerprinting ? 'checked' : ''}> Detect intros and credits by comparing episode audio (background job; chapters are always used)</label></div>
-    <div class="panel"><h2>Torrents</h2>
-      <label class="check"><input type="checkbox" name="torrentsEnabled" ${s.torrentsEnabled ? 'checked' : ''}> Enable torrent streaming (no seeding)</label>
-      <div class="form-grid" style="margin-top:10px">
-        <div class="field"><label>Providers (in order)</label><input name="torrentProviders" value="${esc((s.torrentProviders || []).join(', '))}" placeholder="debrid, builtin"></div>
-        <div class="field"><label>Debrid service</label><select name="debridService"><option value="realdebrid">Real-Debrid</option></select></div>
-        <div class="field"><label>Debrid API key ${s.debridKeySet ? '<span class="ok">(set)</span>' : ''}</label><input name="debridApiKey" type="password" placeholder="${s.debridKeySet ? 'Leave blank to keep' : ''}" autocomplete="off"></div>
+  const ud = s.userDefaults || {};
+  const tabs = [['general', 'General'], ['streaming', 'Streaming'], ['users', 'Users'], ['integrations', 'Integrations']];
+  const node = el(`<form class="settings"><div class="page-head"><h1>Settings</h1><button class="btn primary" data-save>Save changes</button></div>
+    <div class="tabs" role="tablist">${tabs.map(([k, label]) => `<button type="button" role="tab" data-tabbtn="${k}">${label}</button>`).join('')}</div>
+    <p class="error" data-err hidden></p>
+
+    <div data-tab="general">
+      <div class="panel"><h2>Server</h2><div class="form-grid">
+        <div class="field"><label>Server name</label><input name="serverName" value="${esc(s.serverName)}"></div>
+        <div class="field"><label>Public URL</label><input name="publicUrl" value="${esc(s.publicUrl)}" placeholder="https://wrentv.example.com"></div>
       </div></div>
-    <div class="panel"><h2>Webhooks</h2><p class="small muted">Called when a torrent can't be played, so a source manager can find a replacement.</p>
-      <div class="hooks"></div><button type="button" class="btn small" data-addhook>Add webhook</button></div>
-    <div class="panel"><h2>Integration key</h2><p class="small muted">Lets services like a source manager add torrents and libraries (header <code>X-WrenTV-Key</code>).</p>
-      <div class="mono">${esc(s.integrationKey)}</div></div>
+      ${s.remoteAccess ? remoteAccessPanel(s.remoteAccess) : ''}
+      <div class="panel"><h2>Metadata</h2><div class="form-grid">
+        <div class="field"><label>TMDB API key ${s.tmdbKeySet ? '<span class="ok">· set</span>' : ''}</label><input name="tmdbApiKey" type="password" placeholder="${s.tmdbKeySet ? 'Leave blank to keep' : 'Required for posters, info and streaming'}" autocomplete="off"></div>
+        <div class="field"><label>OMDb API key ${s.omdbKeySet ? '<span class="ok">· set</span>' : ''}</label><input name="omdbApiKey" type="password" placeholder="${s.omdbKeySet ? 'Leave blank to keep' : 'Optional: IMDb, Rotten Tomatoes, Metacritic'}" autocomplete="off">
+          <span class="small muted">Free key at <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener" style="color:var(--accent)">omdbapi.com</a></span></div>
+      </div></div>
+      <div class="panel"><h2>Playback</h2><div class="form-grid">
+        <div class="field"><label>Hardware acceleration</label><select name="hwaccel">${hw.map((h) => `<option ${h === s.hwaccel ? 'selected' : ''}>${h}</option>`).join('')}</select></div>
+      </div>
+        <label class="check"><input type="checkbox" name="markerFingerprinting" ${s.markerFingerprinting ? 'checked' : ''}> Detect intros and credits by comparing episode audio (background job; chapters are always used)</label></div>
+    </div>
+
+    ${streamingTab(s, libs)}
+
+    <div data-tab="users">
+      <div class="panel"><h2>Defaults for everyone</h2>
+        <p class="small muted">Applies to every user unless their own settings say otherwise (Users → Edit). Blank means no limit.</p>
+        <label class="check"><input type="checkbox" name="udDevice" ${ud.deviceDownloads ? 'checked' : ''}> Let people download movies and episodes to their devices</label>
+        <div class="form-grid" style="margin-top:10px">
+          ${numField('udStreams', 'Streams at once per person', ud.maxStreams)}
+          ${numField('udDownloads', 'Device downloads at once per person', ud.maxDownloads)}
+        </div>
+        <p class="small muted" style="margin-bottom:0">Playing the same title on two screens counts once. A paused stream left idle for two minutes makes room for a new one.</p>
+      </div>
+    </div>
+
+    <div data-tab="integrations">
+      <div class="panel"><h2>Webhooks</h2><p class="small muted">Called on server events: <code>stream.unavailable</code>, <code>download.completed</code>, <code>download.failed</code>, and library changes.</p>
+        <div class="hooks"></div><button type="button" class="btn small" data-addhook>Add webhook</button></div>
+      <div class="panel"><h2>Integration key</h2><p class="small muted">Lets other services manage libraries on this server (header <code>X-WrenTV-Key</code>).</p>
+        <div class="mono">${esc(s.integrationKey)}</div></div>
+    </div>
   </form>`);
+
+  // Tabs, remembered in the URL hash.
+  const show = (k) => {
+    if (!tabs.some(([t]) => t === k)) k = 'general';
+    for (const b of $$('[data-tabbtn]', node)) b.setAttribute('aria-selected', String(b.dataset.tabbtn === k));
+    for (const t of $$('[data-tab]', node)) t.hidden = t.dataset.tab !== k;
+    history.replaceState(null, '', '#' + k);
+  };
+  for (const b of $$('[data-tabbtn]', node)) b.onclick = () => show(b.dataset.tabbtn);
+  show(location.hash.slice(1));
+
+  // Webhooks
   const hooks = $('.hooks', node);
   const hookRow = (h = {}) => {
     const r = el(`<div class="form-grid hook" style="align-items:end">
-      <div class="field"><label>URL</label><input data-k="url" value="${esc(h.url || '')}" placeholder="http://riven:8080/wrentv"></div>
+      <div class="field"><label>URL</label><input data-k="url" value="${esc(h.url || '')}" placeholder="https://example.com/wrentv"></div>
       <div class="field"><label>Secret</label><input data-k="secret" value="${esc(h.secret || '')}" autocomplete="off"></div>
-      <div class="field"><label>Events</label><div style="display:flex;gap:8px"><input data-k="events" value="${esc((h.events || []).join(', '))}" placeholder="all"><button type="button" class="btn small danger">✕</button></div></div></div>`);
+      <div class="field"><label>Events</label><div style="display:flex;gap:8px"><input data-k="events" value="${esc((h.events || []).join(', '))}" placeholder="all"><button type="button" class="btn small danger" aria-label="Remove webhook">✕</button></div></div></div>`);
     $('button', r).onclick = () => r.remove();
     hooks.append(r);
   };
   (s.webhooks || []).forEach(hookRow);
   $('[data-addhook]', node).onclick = () => hookRow();
+
+  // Debrid: order, key checks, disconnect.
+  const keyEdits = {};
+  const list = $('.debrid-list', node);
+  for (const row of $$('.debrid', node)) {
+    const prov = row.dataset.provider;
+    const acct = $('[data-acct]', row);
+    $('[data-up]', row).onclick = () => row.previousElementSibling && list.insertBefore(row, row.previousElementSibling);
+    $('[data-down]', row).onclick = () => row.nextElementSibling && list.insertBefore(row.nextElementSibling, row);
+    $('[data-key]', row).oninput = (e) => { keyEdits[prov] = e.target.value.trim(); };
+    $('[data-check]', row).onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      acct.innerHTML = '<span class="muted">Checking…</span>';
+      try {
+        const a = await api('/api/admin/streaming/check-debrid', { method: 'POST', body: { provider: prov, key: $('[data-key]', row).value.trim() } });
+        if (a.ok) {
+          const exp = a.expires ? ` · until ${new Date(a.expires).toLocaleDateString()}` : '';
+          acct.innerHTML = `<span class="${a.premium ? 'ok' : 'error'}">${a.premium ? 'Premium' : 'Not premium'}</span> <span class="muted">${esc(a.user || '')}${exp}</span>`;
+        } else acct.innerHTML = `<span class="error">${esc(a.error || 'Key rejected')}</span>`;
+      } catch (ex) {
+        acct.innerHTML = `<span class="error">${esc(ex.message)}</span>`;
+      }
+      btn.disabled = false;
+    };
+    const rm = $('[data-remove]', row);
+    if (rm) rm.onclick = async () => {
+      if (!(await confirmDialog(`Disconnect ${debridName(prov)}?`, 'The key is removed when you save. Without any debrid key, streamed titles are hidden.', 'Disconnect'))) return;
+      keyEdits[prov] = '';
+      $('[data-key]', row).value = '';
+      acct.innerHTML = '<span class="muted">Disconnects when you save</span>';
+      rm.remove();
+    };
+  }
+
+  // Addons
+  let addons = (s.streaming.addons || []).map((a) => ({ ...a }));
+  const addonList = $('.addon-list', node);
+  const addonErr = $('[data-addon-err]', node);
+  const drawAddons = () => {
+    addonList.innerHTML = addons.length ? addons.map((a, i) => `<div class="addon" data-i="${i}">
+      <label class="check" style="margin:0"><input type="checkbox" data-on ${a.enabled ? 'checked' : ''} aria-label="Use ${esc(a.name)}"></label>
+      <div class="name"><b>${esc(a.name)}</b><div class="small muted mono">${esc(a.url)}</div><div class="small" data-res></div></div>
+      <div class="acts"><button type="button" class="btn small" data-check>Check</button><button type="button" class="btn small danger" data-del aria-label="Remove ${esc(a.name)}">Remove</button></div></div>`).join('')
+      : '<p class="muted small">No addons. Add one below; streaming needs at least one.</p>';
+    for (const r of $$('.addon', addonList)) {
+      const a = addons[Number(r.dataset.i)];
+      $('[data-on]', r).onchange = (e) => { a.enabled = e.target.checked; };
+      $('[data-del]', r).onclick = () => { addons = addons.filter((x) => x !== a); drawAddons(); };
+      $('[data-check]', r).onclick = async (e) => {
+        const res = $('[data-res]', r);
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        try {
+          const m = await api('/api/admin/streaming/check-addon', { method: 'POST', body: { url: a.url } });
+          res.innerHTML = `<span class="ok">Working</span> <span class="muted">${esc(m.name || '')}</span>`;
+        } catch (ex) { res.innerHTML = `<span class="error">${esc(ex.message)}</span>`; }
+        btn.disabled = false;
+      };
+    }
+  };
+  drawAddons();
+  const addAddon = async () => {
+    const input = $('[data-addon-url]', node);
+    const url = input.value.trim();
+    if (!url) return;
+    addonErr.hidden = true;
+    const btn = $('[data-addon-add]', node);
+    btn.disabled = true;
+    try {
+      const m = await api('/api/admin/streaming/check-addon', { method: 'POST', body: { url } });
+      if (addons.some((a) => a.url === m.url)) throw new Error('That addon is already in the list');
+      addons.push({ name: (m.name || new URL(m.url).host).toLowerCase(), url: m.url, enabled: true });
+      input.value = '';
+      drawAddons();
+    } catch (ex) {
+      addonErr.textContent = ex.message;
+      addonErr.hidden = false;
+    }
+    btn.disabled = false;
+  };
+  $('[data-addon-add]', node).onclick = addAddon;
+  $('[data-addon-url]', node).onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addAddon(); } };
+
+  // Download libraries only matter in download mode (and for admin downloads).
+  const syncMode = () => {
+    const dl = $('input[name=stMode]:checked', node)?.value === 'download';
+    $('select[name=stMovieLib]', node).required = dl;
+    $('select[name=stShowLib]', node).required = dl;
+  };
+  for (const r of $$('input[name=stMode]', node)) r.onchange = syncMode;
+  syncMode();
+
   node.onsubmit = async (e) => {
     e.preventDefault();
     const v = Object.fromEntries(new FormData(node));
+    const num = (x) => Math.max(0, Number(x) || 0);
+    const int = (x) => Math.floor(num(x));
+    const streaming = {
+      enabled: !!v.stEnabled,
+      prefetch: !!v.stPrefetch,
+      providerOrder: $$('.debrid', node).map((r) => r.dataset.provider),
+      addons,
+      qualities: $$('input[name=stQ]:checked', node).map((c) => c.value),
+      maxSizeGB: Object.fromEntries(QUALITIES.map(([q]) => [q, num(v['stMax-' + q])])),
+      mode: v.stMode,
+      movieLibrary: v.stMovieLib,
+      showLibrary: v.stShowLib,
+      downloadQuality: v.stDlQuality,
+      limits: {
+        bandwidthMbps: num(v.lBandwidth), perStreamMbps: num(v.lPerStream), downloadMbps: num(v.lDownload),
+        maxStreams: int(v.lStreams), maxDownloads: int(v.lDownloads), prefetchWorkers: int(v.lPrefetch),
+        downloadQuotaGB: num(v.lQuota), minFreeGB: num(v.lFree),
+      },
+    };
+    for (const [prov, key] of Object.entries(keyEdits)) streaming[prov + 'Key'] = key;
     const body = {
-      serverName: v.serverName, publicUrl: v.publicUrl, hwaccel: v.hwaccel, torrentsEnabled: !!v.torrentsEnabled,
+      serverName: v.serverName, publicUrl: v.publicUrl, hwaccel: v.hwaccel,
       markerFingerprinting: !!v.markerFingerprinting,
-      torrentProviders: v.torrentProviders.split(',').map((x) => x.trim()).filter(Boolean), debridService: v.debridService,
+      streaming,
+      userDefaults: { deviceDownloads: !!v.udDevice, maxStreams: int(v.udStreams), maxDownloads: int(v.udDownloads) },
       webhooks: $$('.hook', node).map((r) => ({
         url: $('[data-k=url]', r).value.trim(), secret: $('[data-k=secret]', r).value,
         events: $('[data-k=events]', r).value.split(',').map((x) => x.trim()).filter(Boolean),
@@ -377,17 +664,22 @@ export async function viewSettings() {
     }
     if (v.tmdbApiKey) body.tmdbApiKey = v.tmdbApiKey;
     if (v.omdbApiKey) body.omdbApiKey = v.omdbApiKey;
-    if (v.debridApiKey) body.debridApiKey = v.debridApiKey;
-    const err = $('.error', node);
+    const err = $('[data-err]', node);
     err.hidden = true;
+    const save = $('[data-save]', node);
+    save.disabled = true;
     try {
       const res = await api('/api/admin/settings', { method: 'PATCH', body });
       state.server.name = res.serverName;
+      state.server.streaming = res.streaming?.active;
       toast(res.restartRequired ? 'Saved. Restart the server to apply all changes.' : 'Saved');
+      render();
     } catch (ex) {
       err.textContent = ex.message;
       err.hidden = false;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
+    save.disabled = false;
   };
   return node;
 }

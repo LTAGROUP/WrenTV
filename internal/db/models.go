@@ -29,13 +29,25 @@ type User struct {
 	PasswordHash string `json:"-"`
 	IsAdmin      bool   `json:"isAdmin"`
 	CreatedAt    int64  `json:"createdAt"`
+	UserLimits
 }
 
-const userCols = `id, COALESCE(external_id,''), COALESCE(username,''), display_name, email, password_hash, is_admin, created_at`
+// UserLimits are per-user permissions. -1 means "use the server default";
+// for the maximums 0 means no limit.
+type UserLimits struct {
+	AllowStreaming bool `json:"allowStreaming"`
+	AllowDownloads int  `json:"allowDownloads"` // -1 default, 0 no, 1 yes
+	MaxStreams     int  `json:"maxStreams"`
+	MaxDownloads   int  `json:"maxDownloads"`
+}
+
+const userCols = `id, COALESCE(external_id,''), COALESCE(username,''), display_name, email, password_hash, is_admin, created_at,
+	allow_streaming, allow_downloads, max_streams, max_downloads`
 
 func scanUser(r interface{ Scan(...any) error }) (*User, error) {
 	u := &User{}
-	err := r.Scan(&u.ID, &u.ExternalID, &u.Username, &u.DisplayName, &u.Email, &u.PasswordHash, &u.IsAdmin, &u.CreatedAt)
+	err := r.Scan(&u.ID, &u.ExternalID, &u.Username, &u.DisplayName, &u.Email, &u.PasswordHash, &u.IsAdmin, &u.CreatedAt,
+		&u.AllowStreaming, &u.AllowDownloads, &u.MaxStreams, &u.MaxDownloads)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -89,13 +101,29 @@ func (d *DB) CreateUser(ctx context.Context, u *User) error {
 	if u.Username != "" {
 		uname = u.Username
 	}
-	_, err := d.ExecContext(ctx, `INSERT INTO users (id, external_id, username, display_name, email, password_hash, is_admin, created_at) VALUES (?,?,?,?,?,?,?,?)`,
-		u.ID, ext, uname, u.DisplayName, u.Email, u.PasswordHash, u.IsAdmin, u.CreatedAt)
+	if u.UserLimits == (UserLimits{}) {
+		u.UserLimits = DefaultUserLimits()
+	}
+	_, err := d.ExecContext(ctx, `INSERT INTO users (id, external_id, username, display_name, email, password_hash, is_admin, created_at,
+		allow_streaming, allow_downloads, max_streams, max_downloads) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		u.ID, ext, uname, u.DisplayName, u.Email, u.PasswordHash, u.IsAdmin, u.CreatedAt,
+		u.AllowStreaming, u.AllowDownloads, u.MaxStreams, u.MaxDownloads)
 	return err
+}
+
+// DefaultUserLimits defers everything to the server defaults.
+func DefaultUserLimits() UserLimits {
+	return UserLimits{AllowStreaming: true, AllowDownloads: -1, MaxStreams: -1, MaxDownloads: -1}
 }
 
 func (d *DB) UpdateUserProfile(ctx context.Context, id, displayName, email string, isAdmin bool) error {
 	_, err := d.ExecContext(ctx, `UPDATE users SET display_name=?, email=?, is_admin=? WHERE id=?`, displayName, email, isAdmin, id)
+	return err
+}
+
+func (d *DB) UpdateUserLimits(ctx context.Context, id string, l UserLimits) error {
+	_, err := d.ExecContext(ctx, `UPDATE users SET allow_streaming=?, allow_downloads=?, max_streams=?, max_downloads=? WHERE id=?`,
+		l.AllowStreaming, l.AllowDownloads, l.MaxStreams, l.MaxDownloads, id)
 	return err
 }
 
@@ -141,17 +169,19 @@ func (d *DB) LibraryAccess(ctx context.Context, userID string) ([]string, error)
 // ---------- libraries ----------
 
 type Library struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Type       string   `json:"type"`
-	Paths      []string `json:"paths"`
-	CreatedAt  int64    `json:"createdAt"`
-	LastScanAt int64    `json:"lastScanAt"`
-	ItemCount  int      `json:"itemCount"`
+	ID    string   `json:"id"`
+	Name  string   `json:"name"`
+	Type  string   `json:"type"`
+	Paths []string `json:"paths"`
+	// Source is "files" (folders on disk) or "stream" (a streaming library).
+	Source     string `json:"source"`
+	CreatedAt  int64  `json:"createdAt"`
+	LastScanAt int64  `json:"lastScanAt"`
+	ItemCount  int    `json:"itemCount"`
 }
 
 func (d *DB) ListLibraries(ctx context.Context) ([]*Library, error) {
-	rows, err := d.QueryContext(ctx, `SELECT l.id, l.name, l.type, l.paths, l.created_at, COALESCE(l.last_scan_at,0),
+	rows, err := d.QueryContext(ctx, `SELECT l.id, l.name, l.type, l.paths, l.source, l.created_at, COALESCE(l.last_scan_at,0),
 		(SELECT COUNT(*) FROM items i WHERE i.library_id=l.id AND i.kind IN ('movie','show'))
 		FROM libraries l ORDER BY l.name`)
 	if err != nil {
@@ -162,7 +192,7 @@ func (d *DB) ListLibraries(ctx context.Context) ([]*Library, error) {
 	for rows.Next() {
 		l := &Library{}
 		var paths string
-		if err := rows.Scan(&l.ID, &l.Name, &l.Type, &paths, &l.CreatedAt, &l.LastScanAt, &l.ItemCount); err != nil {
+		if err := rows.Scan(&l.ID, &l.Name, &l.Type, &paths, &l.Source, &l.CreatedAt, &l.LastScanAt, &l.ItemCount); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(paths), &l.Paths)
@@ -187,8 +217,12 @@ func (d *DB) GetLibrary(ctx context.Context, id string) (*Library, error) {
 func (d *DB) CreateLibrary(ctx context.Context, l *Library) error {
 	l.ID = NewID()
 	l.CreatedAt = Now()
+	if l.Source == "" {
+		l.Source = "files"
+	}
 	p, _ := json.Marshal(l.Paths)
-	_, err := d.ExecContext(ctx, `INSERT INTO libraries (id, name, type, paths, created_at) VALUES (?,?,?,?,?)`, l.ID, l.Name, l.Type, string(p), l.CreatedAt)
+	_, err := d.ExecContext(ctx, `INSERT INTO libraries (id, name, type, paths, source, created_at) VALUES (?,?,?,?,?,?)`,
+		l.ID, l.Name, l.Type, string(p), l.Source, l.CreatedAt)
 	return err
 }
 
@@ -469,8 +503,14 @@ func (d *DB) QueryItems(ctx context.Context, q ItemQuery) ([]*Item, int, error) 
 		where = append(where, `i.id IN (SELECT item_id FROM collection_items WHERE collection_id=?)`)
 		args = append(args, q.CollectionID)
 	}
-	// Hide movies/episodes that have no playable file (e.g. a torrent was removed).
-	where = append(where, `(i.kind IN ('show','season') OR EXISTS (SELECT 1 FROM media_files f WHERE f.item_id=i.id))`)
+	// Hide movies/episodes that have no playable file. Streaming libraries
+	// list titles before their streams are found (they resolve on play), but
+	// a streamed movie gives way once the same movie exists as a real file.
+	where = append(where, `(i.kind IN ('show','season') OR EXISTS (SELECT 1 FROM media_files f WHERE f.item_id=i.id)
+		OR i.library_id IN (SELECT id FROM libraries WHERE source='stream'))`)
+	where = append(where, `NOT (i.kind='movie' AND i.tmdb_id>0 AND i.library_id IN (SELECT id FROM libraries WHERE source='stream')
+		AND EXISTS (SELECT 1 FROM items x JOIN media_files xf ON xf.item_id=x.id JOIN libraries xl ON xl.id=x.library_id
+			WHERE x.kind='movie' AND x.tmdb_id=i.tmdb_id AND xl.source='files'))`)
 	w := ""
 	if len(where) > 0 {
 		w = " WHERE " + strings.Join(where, " AND ")
@@ -605,31 +645,31 @@ func (d *DB) PruneEmpty(ctx context.Context, libraryID string) error {
 // ---------- media files ----------
 
 type MediaFile struct {
-	ID               string  `json:"id"`
-	ItemID           string  `json:"itemId"`
-	LibraryID        string  `json:"libraryId"`
-	Path             string  `json:"-"`
-	Size             int64   `json:"size"`
-	MTime            int64   `json:"-"`
-	TorrentID        string  `json:"torrentId,omitempty"`
-	TorrentFileIndex int     `json:"-"`
-	Container        string  `json:"container"`
-	Duration         float64 `json:"duration"`
-	VideoCodec       string  `json:"videoCodec"`
-	Width            int     `json:"width"`
-	Height           int     `json:"height"`
-	HDR              string  `json:"hdr,omitempty"`
-	DVProfile        int     `json:"dvProfile,omitempty"`
-	Probe            string  `json:"-"`
-	ProbedAt         int64   `json:"-"`
+	ID        string `json:"id"`
+	ItemID    string `json:"itemId"`
+	LibraryID string `json:"libraryId"`
+	Path      string `json:"-"`
+	Size      int64  `json:"size"`
+	MTime     int64  `json:"-"`
+	// StreamID is set for a stored stream (no file on disk).
+	StreamID   string  `json:"streamId,omitempty"`
+	Container  string  `json:"container"`
+	Duration   float64 `json:"duration"`
+	VideoCodec string  `json:"videoCodec"`
+	Width      int     `json:"width"`
+	Height     int     `json:"height"`
+	HDR        string  `json:"hdr,omitempty"`
+	DVProfile  int     `json:"dvProfile,omitempty"`
+	Probe      string  `json:"-"`
+	ProbedAt   int64   `json:"-"`
 }
 
-const fileCols = `id, item_id, library_id, path, size, mtime, COALESCE(torrent_id,''), torrent_file_index, container, duration,
+const fileCols = `id, item_id, library_id, path, size, mtime, COALESCE(stream_id,''), container, duration,
 	video_codec, width, height, hdr, dv_profile, probe, probed_at`
 
 func scanFile(r interface{ Scan(...any) error }) (*MediaFile, error) {
 	f := &MediaFile{}
-	err := r.Scan(&f.ID, &f.ItemID, &f.LibraryID, &f.Path, &f.Size, &f.MTime, &f.TorrentID, &f.TorrentFileIndex, &f.Container,
+	err := r.Scan(&f.ID, &f.ItemID, &f.LibraryID, &f.Path, &f.Size, &f.MTime, &f.StreamID, &f.Container,
 		&f.Duration, &f.VideoCodec, &f.Width, &f.Height, &f.HDR, &f.DVProfile, &f.Probe, &f.ProbedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -650,15 +690,11 @@ func (d *DB) FilesForItem(ctx context.Context, itemID string) ([]*MediaFile, err
 }
 
 func (d *DB) FilesForLibrary(ctx context.Context, libraryID string) ([]*MediaFile, error) {
-	return d.queryFiles(ctx, `SELECT `+fileCols+` FROM media_files WHERE library_id=? AND torrent_id IS NULL`, libraryID)
-}
-
-func (d *DB) FilesForTorrent(ctx context.Context, torrentID string) ([]*MediaFile, error) {
-	return d.queryFiles(ctx, `SELECT `+fileCols+` FROM media_files WHERE torrent_id=?`, torrentID)
+	return d.queryFiles(ctx, `SELECT `+fileCols+` FROM media_files WHERE library_id=? AND stream_id IS NULL`, libraryID)
 }
 
 func (d *DB) UnprobedFiles(ctx context.Context, limit int) ([]*MediaFile, error) {
-	return d.queryFiles(ctx, `SELECT `+fileCols+` FROM media_files WHERE probed_at=0 AND torrent_id IS NULL LIMIT ?`, limit)
+	return d.queryFiles(ctx, `SELECT `+fileCols+` FROM media_files WHERE probed_at=0 AND stream_id IS NULL LIMIT ?`, limit)
 }
 
 func (d *DB) queryFiles(ctx context.Context, q string, args ...any) ([]*MediaFile, error) {
@@ -682,9 +718,9 @@ func (d *DB) InsertFile(ctx context.Context, f *MediaFile) error {
 	if f.ID == "" {
 		f.ID = NewID()
 	}
-	_, err := d.ExecContext(ctx, `INSERT INTO media_files (id, item_id, library_id, path, size, mtime, torrent_id, torrent_file_index,
-		container, video_codec, width, height, hdr) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, f.ID, f.ItemID, f.LibraryID, f.Path, f.Size, f.MTime,
-		nullStr(f.TorrentID), f.TorrentFileIndex, f.Container, f.VideoCodec, f.Width, f.Height, f.HDR)
+	_, err := d.ExecContext(ctx, `INSERT INTO media_files (id, item_id, library_id, path, size, mtime, stream_id,
+		container, video_codec, width, height, hdr) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, f.ID, f.ItemID, f.LibraryID, f.Path, f.Size, f.MTime,
+		nullStr(f.StreamID), f.Container, f.VideoCodec, f.Width, f.Height, f.HDR)
 	return err
 }
 
@@ -822,79 +858,6 @@ func (d *DB) GetWatchState(ctx context.Context, userID, itemID string) (*WatchSt
 		return nil, nil
 	}
 	return ws, err
-}
-
-// ---------- torrents ----------
-
-type Torrent struct {
-	ID          string `json:"id"`
-	LibraryID   string `json:"libraryId"`
-	Magnet      string `json:"magnet"`
-	InfoHash    string `json:"infoHash"`
-	Name        string `json:"name"`
-	Status      string `json:"status"`
-	Provider    string `json:"provider"`
-	ProviderRef string `json:"-"`
-	Error       string `json:"error,omitempty"`
-	ExternalRef string `json:"externalRef,omitempty"`
-	AddedBy     string `json:"addedBy,omitempty"`
-	CreatedAt   int64  `json:"createdAt"`
-	UpdatedAt   int64  `json:"updatedAt"`
-}
-
-const torrentCols = `id, library_id, magnet, info_hash, name, status, provider, provider_ref, error, external_ref, added_by, created_at, updated_at`
-
-func scanTorrent(r interface{ Scan(...any) error }) (*Torrent, error) {
-	t := &Torrent{}
-	err := r.Scan(&t.ID, &t.LibraryID, &t.Magnet, &t.InfoHash, &t.Name, &t.Status, &t.Provider, &t.ProviderRef, &t.Error, &t.ExternalRef,
-		&t.AddedBy, &t.CreatedAt, &t.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	return t, err
-}
-
-func (d *DB) InsertTorrent(ctx context.Context, t *Torrent) error {
-	if t.ID == "" {
-		t.ID = NewID()
-	}
-	t.CreatedAt, t.UpdatedAt = Now(), Now()
-	_, err := d.ExecContext(ctx, `INSERT INTO torrents (`+torrentCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		t.ID, t.LibraryID, t.Magnet, t.InfoHash, t.Name, t.Status, t.Provider, t.ProviderRef, t.Error, t.ExternalRef, t.AddedBy, t.CreatedAt, t.UpdatedAt)
-	return err
-}
-
-func (d *DB) UpdateTorrent(ctx context.Context, t *Torrent) error {
-	t.UpdatedAt = Now()
-	_, err := d.ExecContext(ctx, `UPDATE torrents SET magnet=?, info_hash=?, name=?, status=?, provider=?, provider_ref=?, error=?, external_ref=?, updated_at=? WHERE id=?`,
-		t.Magnet, t.InfoHash, t.Name, t.Status, t.Provider, t.ProviderRef, t.Error, t.ExternalRef, t.UpdatedAt, t.ID)
-	return err
-}
-
-func (d *DB) GetTorrent(ctx context.Context, id string) (*Torrent, error) {
-	return scanTorrent(d.QueryRowContext(ctx, `SELECT `+torrentCols+` FROM torrents WHERE id=?`, id))
-}
-
-func (d *DB) ListTorrents(ctx context.Context) ([]*Torrent, error) {
-	rows, err := d.QueryContext(ctx, `SELECT `+torrentCols+` FROM torrents ORDER BY created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*Torrent
-	for rows.Next() {
-		t, err := scanTorrent(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
-}
-
-func (d *DB) DeleteTorrent(ctx context.Context, id string) error {
-	_, err := d.ExecContext(ctx, `DELETE FROM torrents WHERE id=?`, id)
-	return err
 }
 
 // ---------- metadata cache ----------

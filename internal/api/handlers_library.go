@@ -85,7 +85,7 @@ func (s *Server) handleCreateLibrary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, lib)
 }
 
-// cleanPaths validates folders. A library may also have no paths (torrent-only).
+// cleanPaths validates folders.
 func cleanPaths(in []string, _ bool) ([]string, error) {
 	out := []string{}
 	for _, p := range in {
@@ -134,6 +134,10 @@ func (s *Server) handleUpdateLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name != nil && strings.TrimSpace(*req.Name) != "" {
 		lib.Name = strings.TrimSpace(*req.Name)
+	}
+	if req.Paths != nil && lib.Source == "stream" {
+		writeErr(w, 400, "streaming libraries have no folders")
+		return
 	}
 	if req.Paths != nil {
 		paths, err := cleanPaths(*req.Paths, false)
@@ -197,7 +201,7 @@ func (s *Server) handleLibraryItems(w http.ResponseWriter, r *http.Request) {
 	items, total, err := s.DB.QueryItems(r.Context(), db.ItemQuery{
 		LibraryID: id, Kind: kind, Sort: r.URL.Query().Get("sort"), Search: r.URL.Query().Get("q"), Genre: r.URL.Query().Get("genre"),
 		Unwatched: r.URL.Query().Get("unwatched") == "1",
-		Limit: queryInt(r, "limit", 500), Offset: queryInt(r, "offset", 0), UserID: p.User.ID,
+		Limit:     queryInt(r, "limit", 500), Offset: queryInt(r, "offset", 0), UserID: p.User.ID,
 	})
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -328,10 +332,11 @@ func (s *Server) itemFor(r *http.Request) (*db.Item, bool) {
 // FileView is a media file with its parsed streams for clients.
 type FileView struct {
 	*db.MediaFile
-	Info          *media.Info `json:"info,omitempty"`
-	TorrentStatus string      `json:"torrentStatus,omitempty"`
-	FileName      string      `json:"fileName"`
-	Label         string      `json:"label"`
+	Info     *media.Info `json:"info,omitempty"`
+	FileName string      `json:"fileName"`
+	Label    string      `json:"label"`
+	// Release is the torrent a stream comes from.
+	Release string `json:"release,omitempty"`
 }
 
 func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
@@ -346,8 +351,14 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 		it.Progress = ws
 	}
 	resp := map[string]any{"item": it}
+	streamed := s.isStreamLibrary(ctx, it.LibraryID)
+	resp["streaming"] = streamed
+	resp["canDownload"] = s.limitsFor(p.User).CanDownload
 	switch it.Kind {
 	case "show":
+		if streamed {
+			s.Streaming.MaybeRefresh(it)
+		}
 		seasons, _, _ := s.DB.QueryItems(ctx, db.ItemQuery{ParentID: it.ID, Kind: "season", Sort: "episode", UserID: p.User.ID})
 		resp["children"] = nonNil(seasons)
 		if next, err := s.DB.NextEpisode(ctx, p.User.ID, it.ID); err == nil {
@@ -368,7 +379,7 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 		}
 		fallthrough
 	case "movie":
-		files, _ := s.DB.FilesForItem(ctx, it.ID)
+		files, _ := s.playableFiles(ctx, it)
 		views := []FileView{}
 		for _, f := range files {
 			v := FileView{MediaFile: f, FileName: displayFileName(f.Path), Label: versionLabel(f)}
@@ -378,9 +389,9 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 					v.Info = &info
 				}
 			}
-			if f.TorrentID != "" {
-				if t, err := s.DB.GetTorrent(ctx, f.TorrentID); err == nil {
-					v.TorrentStatus = t.Status
+			if f.StreamID != "" {
+				if st, err := s.DB.GetStream(ctx, f.StreamID); err == nil {
+					v.FileName, v.Release = filepath.Base(st.FileName), st.Release
 				}
 			}
 			views = append(views, v)
@@ -391,12 +402,6 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func displayFileName(p string) string {
-	if strings.HasPrefix(p, "torrent://") {
-		parts := strings.SplitN(strings.TrimPrefix(p, "torrent://"), "/", 3)
-		if len(parts) == 3 {
-			return filepath.Base(parts[2])
-		}
-	}
 	return filepath.Base(p)
 }
 

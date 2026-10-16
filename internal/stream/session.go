@@ -151,7 +151,7 @@ func (m *Manager) Stop(id string) {
 	}
 }
 
-// StopForFile ends every session reading a file (e.g. its torrent was replaced).
+// StopForFile ends every session reading a file (e.g. its stream was replaced).
 func (m *Manager) StopForFile(fileID string) {
 	for _, s := range m.List() {
 		if s.FileID == fileID {
@@ -173,6 +173,13 @@ func (m *Manager) reap() {
 			}
 		}
 	}
+}
+
+// Idle is how long since the client last fetched anything.
+func (s *Session) Idle() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return time.Since(s.lastAccess)
 }
 
 func (s *Session) touch() {

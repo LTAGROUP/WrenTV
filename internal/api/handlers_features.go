@@ -734,24 +734,24 @@ func (s *Server) homeCollections(ctx context.Context, r *http.Request) []map[str
 // ---------- stats ----------
 
 type nowPlaying struct {
-	SessionID  string  `json:"sessionId"`
-	UserID     string  `json:"userId"`
-	UserName   string  `json:"userName"`
-	ItemID     string  `json:"itemId"`
-	Title      string  `json:"title"`
-	Subtitle   string  `json:"subtitle,omitempty"`
-	PosterPath string  `json:"posterPath,omitempty"`
-	Backdrop   string  `json:"backdropPath,omitempty"`
-	Method     string  `json:"method"`
-	Engine     string  `json:"engine"`
-	VideoCopy  bool    `json:"videoCopy"`
-	AudioCodec string  `json:"audioCodec,omitempty"`
+	SessionID  string   `json:"sessionId"`
+	UserID     string   `json:"userId"`
+	UserName   string   `json:"userName"`
+	ItemID     string   `json:"itemId"`
+	Title      string   `json:"title"`
+	Subtitle   string   `json:"subtitle,omitempty"`
+	PosterPath string   `json:"posterPath,omitempty"`
+	Backdrop   string   `json:"backdropPath,omitempty"`
+	Method     string   `json:"method"`
+	Engine     string   `json:"engine"`
+	VideoCopy  bool     `json:"videoCopy"`
+	AudioCodec string   `json:"audioCodec,omitempty"`
 	Reasons    []string `json:"reasons,omitempty"`
-	Quality    string  `json:"quality"`
-	Client     string  `json:"client"`
-	Position   float64 `json:"position"`
-	Duration   float64 `json:"duration"`
-	Started    int64   `json:"started"`
+	Quality    string   `json:"quality"`
+	Client     string   `json:"client"`
+	Position   float64  `json:"position"`
+	Duration   float64  `json:"duration"`
+	Started    int64    `json:"started"`
 }
 
 func (s *Server) nowPlaying(ctx context.Context) []nowPlaying {

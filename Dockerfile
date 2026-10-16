@@ -30,7 +30,7 @@ ENV WRENTV_DATA_DIR=/config \
     NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 
 VOLUME ["/config"]
-# 32500: API/streaming. 42069: torrent peer port (TCP+UDP, inbound only; Wren TV never seeds).
-EXPOSE 32500 42069 42069/udp
+# 32500: API, web app and streaming.
+EXPOSE 32500
 HEALTHCHECK --interval=30s --timeout=5s CMD curl -fsS http://127.0.0.1:32500/api/health || exit 1
 ENTRYPOINT ["/usr/local/bin/wrentv"]

@@ -227,7 +227,99 @@ var migrations = []string{
 	CREATE INDEX play_history_started ON play_history(started_at DESC);
 	CREATE INDEX play_history_user ON play_history(user_id, item_id, last_seen_at DESC);
 	CREATE INDEX play_history_session ON play_history(session_id);`,
+	// Streaming replaces torrents. Torrent-backed files go; media_files is
+	// rebuilt so a file can point at a stored stream instead (runs with
+	// foreign keys off, see fkOff). Streaming libraries are libraries with
+	// source 'stream'. Users get permissions and per-user limits
+	// (-1 = server default, 0 = no limit).
+	`DELETE FROM file_markers WHERE file_id IN (SELECT id FROM media_files WHERE torrent_id IS NOT NULL);
+	DELETE FROM media_files WHERE torrent_id IS NOT NULL;
+	DROP TABLE torrents;
+
+	CREATE TABLE streams (
+		id TEXT PRIMARY KEY,
+		item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+		quality TEXT NOT NULL,
+		info_hash TEXT NOT NULL,
+		file_idx INTEGER NOT NULL DEFAULT -1,
+		file_name TEXT NOT NULL DEFAULT '',
+		size INTEGER NOT NULL DEFAULT 0,
+		release TEXT NOT NULL DEFAULT '',
+		addon TEXT NOT NULL DEFAULT '',
+		provider TEXT NOT NULL DEFAULT '',
+		provider_ref TEXT NOT NULL DEFAULT '',
+		provider_file TEXT NOT NULL DEFAULT '',
+		failures INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+	CREATE UNIQUE INDEX streams_item_quality ON streams(item_id, quality);
+	CREATE INDEX streams_hash ON streams(info_hash);
+	-- When each title was last looked up, so misses aren't retried constantly.
+	CREATE TABLE stream_lookups (
+		item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+		looked_at INTEGER NOT NULL,
+		found INTEGER NOT NULL DEFAULT 0,
+		error TEXT NOT NULL DEFAULT ''
+	);
+	CREATE TABLE stream_downloads (
+		id TEXT PRIMARY KEY,
+		item_id TEXT REFERENCES items(id) ON DELETE SET NULL,
+		stream_id TEXT REFERENCES streams(id) ON DELETE SET NULL,
+		title TEXT NOT NULL DEFAULT '',
+		quality TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL,
+		path TEXT NOT NULL DEFAULT '',
+		bytes INTEGER NOT NULL DEFAULT 0,
+		total INTEGER NOT NULL DEFAULT 0,
+		error TEXT NOT NULL DEFAULT '',
+		requested_by TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+	CREATE INDEX stream_downloads_status ON stream_downloads(status, created_at);
+
+	CREATE TABLE media_files_new (
+		id TEXT PRIMARY KEY,
+		item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+		library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+		path TEXT NOT NULL,
+		size INTEGER NOT NULL DEFAULT 0,
+		mtime INTEGER NOT NULL DEFAULT 0,
+		stream_id TEXT REFERENCES streams(id) ON DELETE CASCADE,
+		container TEXT NOT NULL DEFAULT '',
+		duration REAL NOT NULL DEFAULT 0,
+		video_codec TEXT NOT NULL DEFAULT '',
+		width INTEGER NOT NULL DEFAULT 0,
+		height INTEGER NOT NULL DEFAULT 0,
+		hdr TEXT NOT NULL DEFAULT '',
+		dv_profile INTEGER NOT NULL DEFAULT 0,
+		probe TEXT NOT NULL DEFAULT '',
+		probed_at INTEGER NOT NULL DEFAULT 0,
+		keyframes BLOB
+	);
+	INSERT INTO media_files_new (id, item_id, library_id, path, size, mtime, container, duration, video_codec, width, height, hdr,
+		dv_profile, probe, probed_at, keyframes)
+		SELECT id, item_id, library_id, path, size, mtime, container, duration, video_codec, width, height, hdr,
+		dv_profile, probe, probed_at, keyframes FROM media_files;
+	DROP TABLE media_files;
+	ALTER TABLE media_files_new RENAME TO media_files;
+	CREATE UNIQUE INDEX media_files_path ON media_files(path);
+	CREATE INDEX media_files_item ON media_files(item_id);
+	CREATE INDEX media_files_unprobed ON media_files(probed_at) WHERE probed_at = 0;
+	CREATE INDEX media_files_stream ON media_files(stream_id) WHERE stream_id IS NOT NULL;
+
+	ALTER TABLE libraries ADD COLUMN source TEXT NOT NULL DEFAULT 'files';
+	ALTER TABLE users ADD COLUMN allow_streaming INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE users ADD COLUMN allow_downloads INTEGER NOT NULL DEFAULT -1;
+	ALTER TABLE users ADD COLUMN max_streams INTEGER NOT NULL DEFAULT -1;
+	ALTER TABLE users ADD COLUMN max_downloads INTEGER NOT NULL DEFAULT -1;`,
 }
+
+// fkOff lists migrations (1-based) that rebuild tables. They run with
+// foreign keys off so dropping the old table doesn't cascade, then check
+// the result (https://www.sqlite.org/lang_altertable.html#otheralter).
+var fkOff = map[int]bool{4: true}
 
 func (d *DB) migrate(ctx context.Context) error {
 	if _, err := d.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_version (v INTEGER NOT NULL)`); err != nil {
@@ -238,23 +330,50 @@ func (d *DB) migrate(ctx context.Context) error {
 		return err
 	}
 	for i := v; i < len(migrations); i++ {
-		tx, err := d.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, migrations[i]); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("migration %d: %w", i+1, err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_version (v) VALUES (?)`, i+1); err != nil {
-			tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
+		if err := d.apply(ctx, i+1, migrations[i]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (d *DB) apply(ctx context.Context, version int, stmt string) error {
+	// One connection throughout: PRAGMA foreign_keys is per connection and
+	// can't change inside a transaction.
+	conn, err := d.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if fkOff[version] {
+		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+			return err
+		}
+		defer conn.ExecContext(context.Background(), `PRAGMA foreign_keys=ON`)
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, stmt); err != nil {
+		return fmt.Errorf("migration %d: %w", version, err)
+	}
+	if fkOff[version] {
+		rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+		if err != nil {
+			return err
+		}
+		bad := rows.Next()
+		rows.Close()
+		if bad {
+			return fmt.Errorf("migration %d: foreign key check failed", version)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_version (v) VALUES (?)`, version); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func Now() int64 { return time.Now().Unix() }

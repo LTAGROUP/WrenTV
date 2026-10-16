@@ -72,7 +72,7 @@ func (d *DB) EpisodeFilesForMarkers(ctx context.Context) ([]*EpisodeFile, error)
 	rows, err := d.QueryContext(ctx, `SELECT i.parent_id, i.id, i.episode_number, f.id, f.path, f.duration, f.mtime,
 		m.file_id, m.mtime, m.intro_start, m.intro_end, m.credits_start, m.credits_end, m.peers, m.analyzed_at
 		FROM items i JOIN media_files f ON f.item_id=i.id LEFT JOIN file_markers m ON m.file_id=f.id
-		WHERE i.kind='episode' AND i.parent_id IS NOT NULL AND f.torrent_id IS NULL AND f.duration > 120
+		WHERE i.kind='episode' AND i.parent_id IS NOT NULL AND f.stream_id IS NULL AND f.duration > 120
 		ORDER BY i.parent_id, i.episode_number, f.id`)
 	if err != nil {
 		return nil, err

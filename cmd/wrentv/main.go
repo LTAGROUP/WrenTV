@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -36,9 +37,8 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/metadata/omdb"
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 	"github.com/LTAGROUP/wrentv/internal/stream"
-	"github.com/LTAGROUP/wrentv/internal/torrent"
+	"github.com/LTAGROUP/wrentv/internal/streaming"
 	"github.com/LTAGROUP/wrentv/internal/webhook"
-	"path/filepath"
 )
 
 var version = "0.1.0-dev"
@@ -236,22 +236,16 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 		return webhook.Server{ID: cfg.MachineID, Name: cfg.ServerName, URL: url}
 	}
 	hooks := webhook.New(func() []config.WebhookConfig { return cfg.Webhooks })
-	torrents, err := torrent.NewManager(torrent.Deps{
-		Config: func() config.TorrentConfig { return cfg.Torrents }, DB: d, Scanner: scanner, Hooks: hooks,
-		Sessions: streams, Server: serverInfo, HTTPPort: port,
-	})
-	if err != nil {
-		slog.Error("torrent support disabled", "err", err)
-		torrents, _ = torrent.NewManager(torrent.Deps{Config: func() config.TorrentConfig { return config.TorrentConfig{} },
-			DB: d, Scanner: scanner, Hooks: hooks, Sessions: streams, Server: serverInfo, HTTPPort: port})
+	streamer := streaming.New(streaming.Deps{Cfg: cfg, DB: d, TMDB: tm, Scanner: scanner, Hub: hub, Hooks: hooks, Server: serverInfo, HTTPPort: port})
+	streamer.Start(ctx)
+	if cfg.Streaming.Enabled && !streamer.Active() {
+		slog.Warn("streaming is enabled but needs a debrid API key and a TMDB key to work")
 	}
-	defer torrents.Close()
-	torrents.Start(ctx)
 
 	srv := &api.Server{
 		Version: version, Cfg: cfg, DB: d, Scanner: scanner, Watcher: watcher, TMDB: tm, Streams: streams,
 		OMDb: omdb.New(func() string { return cfg.Metadata.OMDbAPIKey }, d), Markers: analyzer,
-		Torrents: torrents, Hub: hub, Hooks: hooks, Images: images.New(filepath.Join(dataDir, "images")),
+		Streaming: streamer, Hub: hub, Hooks: hooks, Images: images.New(filepath.Join(dataDir, "images")),
 	}
 	switch cfg.Auth.Mode {
 	case "supabase":

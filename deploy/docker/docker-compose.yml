@@ -6,11 +6,10 @@ services:
     restart: unless-stopped
     ports:
       - "32500:32500"
-      - "42069:42069"
-      - "42069:42069/udp"
     environment:
       - WRENTV_SERVER_NAME=Wren TV
       # - WRENTV_TMDB_API_KEY=your-key
+      # - WRENTV_TORBOX_API_KEY=your-key   # or WRENTV_ALLDEBRID_API_KEY / WRENTV_REALDEBRID_API_KEY (streaming)
       # - WRENTV_PUBLIC_URL=https://wrentv.example.com
       # - WRENTV_HWACCEL=auto   # auto | nvenc | qsv | vaapi | none
     volumes:

@@ -14,7 +14,7 @@
 4. Edit `C:\ProgramData\WrenTV\wrentv.yaml` (created on first start) and set
    `transcode.ffmpeg_path` / `ffprobe_path` if ffmpeg is not on `PATH`, then
    `wrentv.exe restart`.
-5. Allow TCP 32500 (and TCP/UDP 42069 if using built-in torrents) through Windows Firewall.
+5. Allow TCP 32500 through Windows Firewall.
 
 Hardware transcoding is auto-detected in this order: NVENC, Quick Sync, AMF.
 Uninstall with `wrentv.exe stop` then `wrentv.exe uninstall`.

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Source is something playable: a local file, a torrent file, or a debrid link.
+// Source is something playable: a local file or a debrid stream.
 type Source interface {
 	// Input is what ffmpeg/ffprobe should read (a path or an http URL).
 	Input() string

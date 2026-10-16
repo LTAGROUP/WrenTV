@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -47,6 +48,7 @@ func (s *Server) linkLibrary(ctx context.Context, r *http.Request, views []title
 	for _, v := range views {
 		byKind[v.MediaType] = append(byKind[v.MediaType], v.TMDBID)
 	}
+	streamLibs, _ := s.DB.LibraryIDsBySource(ctx, "stream")
 	found := map[string]*db.Item{}
 	for kind, tids := range byKind {
 		items, _, err := s.DB.QueryItems(ctx, db.ItemQuery{LibraryIDs: ids, Kind: kind, TMDBIDs: tids, UserID: principal(r).User.ID, Limit: 200})
@@ -54,7 +56,12 @@ func (s *Server) linkLibrary(ctx context.Context, r *http.Request, views []title
 			continue
 		}
 		for _, it := range items {
-			found[kind+":"+strconv.Itoa(it.TMDBID)] = it
+			key := kind + ":" + strconv.Itoa(it.TMDBID)
+			// A title in a real library beats its streamed copy.
+			if old := found[key]; old != nil && !slices.Contains(streamLibs, old.LibraryID) {
+				continue
+			}
+			found[key] = it
 		}
 	}
 	var in, out []titleView

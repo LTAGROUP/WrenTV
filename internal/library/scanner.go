@@ -34,7 +34,7 @@ type Scanner struct {
 	probeWorkers int
 
 	// ingestMu serializes item creation so concurrent sources (watcher,
-	// full scans, torrents) never create duplicate shows/seasons.
+	// full scans, server downloads) never create duplicate shows/seasons.
 	ingestMu sync.Mutex
 
 	scanMu   sync.Mutex
@@ -115,6 +115,9 @@ func (s *Scanner) Periodic(ctx context.Context, every time.Duration) {
 
 // ScanLibrary does a full incremental scan of every path in the library.
 func (s *Scanner) ScanLibrary(ctx context.Context, lib *db.Library) (ScanResult, error) {
+	if lib.Source == "stream" {
+		return ScanResult{}, nil // streaming libraries have no folders
+	}
 	s.scanMu.Lock()
 	if s.scanning[lib.ID] {
 		s.scanMu.Unlock()
@@ -162,7 +165,7 @@ func (s *Scanner) ScanLibrary(ctx context.Context, lib *db.Library) (ScanResult,
 				res.Updated++
 				continue
 			}
-			if _, err := s.Ingest(ctx, lib, root, f.path, f.size, f.mtime, "", -1); err != nil {
+			if _, err := s.Ingest(ctx, lib, root, f.path, f.size, f.mtime); err != nil {
 				slog.Warn("ingest failed", "path", f.path, "err", err)
 				continue
 			}
@@ -210,7 +213,7 @@ func (s *Scanner) ScanDir(ctx context.Context, lib *db.Library, root, dir string
 			}
 			continue
 		}
-		if _, err := s.Ingest(ctx, lib, root, f.path, f.size, f.mtime, "", -1); err == nil {
+		if _, err := s.Ingest(ctx, lib, root, f.path, f.size, f.mtime); err == nil {
 			changed++
 		}
 	}
@@ -247,29 +250,17 @@ func underReachableRoot(p string, roots map[string]bool) bool {
 }
 
 // Ingest creates the item hierarchy for a file and attaches the file.
-// root is the library folder the path is relative to (for torrents, "").
-func (s *Scanner) Ingest(ctx context.Context, lib *db.Library, root, path string, size, mtime int64, torrentID string, fileIdx int) (*db.Item, error) {
-	return s.IngestAs(ctx, lib, root, path, path, size, mtime, torrentID, fileIdx, nil)
-}
-
-// IngestAs is Ingest where the path used for parsing names differs from the
-// stored path (torrent files are stored as torrent://id/index/path). If anchor
-// is a movie the file attaches to it; if it is a show, episodes go under it
-// (used when a replacement torrent must keep the same items and watch state).
-func (s *Scanner) IngestAs(ctx context.Context, lib *db.Library, root, parsePath, storePath string, size, mtime int64, torrentID string, fileIdx int, anchor *db.Item) (*db.Item, error) {
+// root is the library folder the path is relative to.
+func (s *Scanner) Ingest(ctx context.Context, lib *db.Library, root, path string, size, mtime int64) (*db.Item, error) {
 	s.ingestMu.Lock()
 	defer s.ingestMu.Unlock()
 
 	var target *db.Item
 	switch lib.Type {
 	case "movies":
-		if anchor != nil && anchor.Kind == "movie" {
-			target = anchor
-			break
-		}
-		mi := ParseMovie(root, parsePath)
+		mi := ParseMovie(root, path)
 		if mi.Title == "" {
-			mi.Title = strings.TrimSuffix(filepath.Base(parsePath), filepath.Ext(parsePath))
+			mi.Title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 		}
 		key := MatchKey(mi.Title, mi.Year)
 		if mi.TMDBID > 0 {
@@ -287,15 +278,12 @@ func (s *Scanner) IngestAs(ctx context.Context, lib *db.Library, root, parsePath
 			s.hub.Publish(Event{Type: "item.added", LibraryID: lib.ID, ItemID: it.ID})
 		}
 	case "shows":
-		ep := ParseEpisode(root, parsePath)
-		anchored := anchor != nil && anchor.Kind == "show"
-		if !ep.OK || (ep.ShowTitle == "" && !anchored) {
-			return nil, fmt.Errorf("could not determine season/episode from %q", filepath.Base(parsePath))
+		ep := ParseEpisode(root, path)
+		if !ep.OK || ep.ShowTitle == "" {
+			return nil, fmt.Errorf("could not determine season/episode from %q", filepath.Base(path))
 		}
 		var show *db.Item
-		if anchored {
-			show = anchor
-		} else {
+		{
 			key := MatchKey(ep.ShowTitle, ep.ShowYear)
 			if ep.ShowTMDB > 0 {
 				key = fmt.Sprintf("tmdb:%d", ep.ShowTMDB)
@@ -351,15 +339,13 @@ func (s *Scanner) IngestAs(ctx context.Context, lib *db.Library, root, parsePath
 		return nil, fmt.Errorf("unknown library type %q", lib.Type)
 	}
 
-	f := &db.MediaFile{ItemID: target.ID, LibraryID: lib.ID, Path: storePath, Size: size, MTime: mtime, TorrentID: torrentID, TorrentFileIndex: fileIdx}
+	f := &db.MediaFile{ItemID: target.ID, LibraryID: lib.ID, Path: path, Size: size, MTime: mtime}
 	GuessFromName(f)
 	if err := s.db.InsertFile(ctx, f); err != nil {
 		return nil, err
 	}
 	kick(s.matchKick)
-	if torrentID == "" {
-		kick(s.probeKick)
-	}
+	kick(s.probeKick)
 	return target, nil
 }
 

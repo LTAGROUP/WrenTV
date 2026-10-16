@@ -2,119 +2,18 @@ package api
 
 import (
 	"context"
-	"io"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
-
-	"github.com/go-chi/chi/v5"
 
 	"github.com/LTAGROUP/wrentv/internal/config"
 	"github.com/LTAGROUP/wrentv/internal/db"
 	"github.com/LTAGROUP/wrentv/internal/direct"
-	"github.com/LTAGROUP/wrentv/internal/torrent"
+	"github.com/LTAGROUP/wrentv/internal/streaming"
 )
-
-// ---------- torrents ----------
-
-func (s *Server) handleListTorrents(w http.ResponseWriter, r *http.Request) {
-	ts, err := s.DB.ListTorrents(r.Context())
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, nonNil(ts))
-}
-
-func (s *Server) handleGetTorrent(w http.ResponseWriter, r *http.Request) {
-	t, err := s.DB.GetTorrent(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, 404, "torrent not found")
-		return
-	}
-	files, _ := s.DB.FilesForTorrent(r.Context(), t.ID)
-	type fileRow struct {
-		ItemID string `json:"itemId"`
-		Name   string `json:"name"`
-		Size   int64  `json:"size"`
-	}
-	rows := []fileRow{}
-	for _, f := range files {
-		rows = append(rows, fileRow{f.ItemID, displayFileName(f.Path), f.Size})
-	}
-	writeJSON(w, 200, map[string]any{"torrent": t, "files": rows})
-}
-
-// handleAddTorrent accepts JSON {libraryId, magnet, externalRef} or a multipart
-// form with fields libraryId and file (.torrent).
-func (s *Server) handleAddTorrent(w http.ResponseWriter, r *http.Request) {
-	req, err := readTorrentInput(r)
-	if err != nil {
-		writeErr(w, 400, err.Error())
-		return
-	}
-	req.AddedBy = principal(r).User.ID
-	t, err := s.Torrents.Add(r.Context(), req)
-	if err != nil {
-		writeErr(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, 202, t)
-}
-
-func (s *Server) handleReplaceTorrent(w http.ResponseWriter, r *http.Request) {
-	req, err := readTorrentInput(r)
-	if err != nil {
-		writeErr(w, 400, err.Error())
-		return
-	}
-	t, err := s.Torrents.Replace(r.Context(), chi.URLParam(r, "id"), req.Magnet, req.TorrentFile)
-	if err != nil {
-		writeErr(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, 202, t)
-}
-
-func (s *Server) handleDeleteTorrent(w http.ResponseWriter, r *http.Request) {
-	if err := s.Torrents.Delete(r.Context(), chi.URLParam(r, "id")); err != nil {
-		writeErr(w, 404, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func readTorrentInput(r *http.Request) (torrent.AddRequest, error) {
-	var req torrent.AddRequest
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
-		if err := r.ParseMultipartForm(8 << 20); err != nil {
-			return req, err
-		}
-		req.LibraryID = r.FormValue("libraryId")
-		req.Magnet = r.FormValue("magnet")
-		req.ExternalRef = r.FormValue("externalRef")
-		if f, _, err := r.FormFile("file"); err == nil {
-			defer f.Close()
-			b, err := io.ReadAll(io.LimitReader(f, 8<<20))
-			if err != nil {
-				return req, err
-			}
-			req.TorrentFile = b
-		}
-		return req, nil
-	}
-	var body struct {
-		LibraryID   string `json:"libraryId"`
-		Magnet      string `json:"magnet"`
-		ExternalRef string `json:"externalRef"`
-	}
-	if err := decode(r, &body); err != nil {
-		return req, err
-	}
-	req.LibraryID, req.Magnet, req.ExternalRef = body.LibraryID, body.Magnet, body.ExternalRef
-	return req, nil
-}
 
 func (s *Server) handleIntegrationLibraries(w http.ResponseWriter, r *http.Request) {
 	libs, err := s.DB.ListLibraries(r.Context())
@@ -142,39 +41,73 @@ func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 		sessions = append(sessions, sess{x.ID, x.UserID, x.ItemID, x.Decision.Engine, string(x.Decision.Method), x.Decision.Reasons, x.Started.Unix()})
 	}
 	writeJSON(w, 200, map[string]any{
-		"version":          s.Version,
-		"hardware":         s.Streams.HW(),
-		"sessions":         sessions,
-		"torrentProviders": s.Torrents.Providers(),
-		"metadata":         s.TMDB.Enabled(),
-		"ratings":          s.OMDb.Enabled(),
+		"version":   s.Version,
+		"hardware":  s.Streams.HW(),
+		"sessions":  sessions,
+		"streaming": s.streamingStatus(),
+		"metadata":  s.TMDB.Enabled(),
+		"ratings":   s.OMDb.Enabled(),
 	})
 }
 
 // settingsView is the subset of configuration editable from apps. Secrets are
 // write-only: they are reported as set/unset, never echoed back.
 type settingsView struct {
-	ServerName      string                 `json:"serverName"`
-	PublicURL       string                 `json:"publicUrl"`
-	HWAccel         string                 `json:"hwaccel"`
-	TMDBKeySet      bool                   `json:"tmdbKeySet"`
-	OMDbKeySet      bool                   `json:"omdbKeySet"`
-	Fingerprint     bool                   `json:"markerFingerprinting"`
-	TorrentsEnabled bool                   `json:"torrentsEnabled"`
-	Providers       []string               `json:"torrentProviders"`
-	DebridService   string                 `json:"debridService"`
-	DebridKeySet    bool                   `json:"debridKeySet"`
-	Webhooks        []config.WebhookConfig `json:"webhooks"`
-	IntegrationKey  string                 `json:"integrationKey"`
-	RemoteAccess    *remoteAccessView      `json:"remoteAccess,omitempty"`
-	RestartRequired bool                   `json:"restartRequired,omitempty"`
+	ServerName      string                  `json:"serverName"`
+	PublicURL       string                  `json:"publicUrl"`
+	HWAccel         string                  `json:"hwaccel"`
+	TMDBKeySet      bool                    `json:"tmdbKeySet"`
+	OMDbKeySet      bool                    `json:"omdbKeySet"`
+	Fingerprint     bool                    `json:"markerFingerprinting"`
+	Streaming       streamingView           `json:"streaming"`
+	UserDefaults    config.UserLimitsConfig `json:"userDefaults"`
+	Webhooks        []config.WebhookConfig  `json:"webhooks"`
+	IntegrationKey  string                  `json:"integrationKey"`
+	RemoteAccess    *remoteAccessView       `json:"remoteAccess,omitempty"`
+	RestartRequired bool                    `json:"restartRequired,omitempty"`
 }
 
-type remoteAccessView struct {
-	Enabled    bool          `json:"enabled"`
-	UPnP       bool          `json:"upnp"`
-	PublicPort int           `json:"publicPort"`
-	Status     direct.Status `json:"status"`
+type streamingView struct {
+	Enabled bool `json:"enabled"`
+	// Active: enabled with a debrid key and TMDB, so titles can be played.
+	Active          bool                   `json:"active"`
+	Debrid          []debridView           `json:"debrid"`
+	Addons          []config.AddonConfig   `json:"addons"`
+	Qualities       []string               `json:"qualities"`
+	MaxSizeGB       map[string]float64     `json:"maxSizeGB"`
+	Prefetch        bool                   `json:"prefetch"`
+	Mode            string                 `json:"mode"`
+	MovieLibrary    string                 `json:"movieLibrary"`
+	ShowLibrary     string                 `json:"showLibrary"`
+	DownloadQuality string                 `json:"downloadQuality"`
+	Limits          config.StreamingLimits `json:"limits"`
+}
+
+// debridView is one debrid service, in the order they're tried.
+type debridView struct {
+	Provider string `json:"provider"`
+	Name     string `json:"name"`
+	KeySet   bool   `json:"keySet"`
+	// KeyHint is the key's last characters, so owners can tell keys apart.
+	KeyHint string `json:"keyHint,omitempty"`
+}
+
+var debridNames = map[string]string{"torbox": "TorBox", "alldebrid": "AllDebrid", "realdebrid": "Real-Debrid"}
+
+func (s *Server) debridKeys() map[string]*string {
+	c := &s.Cfg.Streaming
+	return map[string]*string{"torbox": &c.TorBoxKey, "alldebrid": &c.AllDebridKey, "realdebrid": &c.RealDebridKey}
+}
+
+// providerOrder is the configured order with any missing services appended.
+func providerOrder(order []string) []string {
+	out := []string{}
+	for _, p := range append(slices.Clone(order), "torbox", "alldebrid", "realdebrid") {
+		if debridNames[p] != "" && !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (s *Server) settings() settingsView {
@@ -186,13 +119,35 @@ func (s *Server) settings() settingsView {
 			hooks[i].Secret = "••••••"
 		}
 	}
+	st := c.Streaming
+	sv := streamingView{Enabled: st.Enabled, Active: s.Streaming.Active(), Addons: nonNil(st.Addons), Qualities: nonNil(st.Qualities),
+		MaxSizeGB: st.MaxSizeGB, Prefetch: st.Prefetch, Mode: st.Mode, MovieLibrary: st.MovieLibrary, ShowLibrary: st.ShowLibrary,
+		DownloadQuality: st.DownloadQuality, Limits: st.Limits, Debrid: []debridView{}}
+	if sv.MaxSizeGB == nil {
+		sv.MaxSizeGB = map[string]float64{}
+	}
+	keys := s.debridKeys()
+	for _, p := range providerOrder(st.ProviderOrder) {
+		k := *keys[p]
+		v := debridView{Provider: p, Name: debridNames[p], KeySet: k != ""}
+		if len(k) > 8 {
+			v.KeyHint = "…" + k[len(k)-4:]
+		}
+		sv.Debrid = append(sv.Debrid, v)
+	}
 	return settingsView{
 		ServerName: c.ServerName, PublicURL: c.PublicURL, HWAccel: c.Transcode.HWAccel, TMDBKeySet: c.Metadata.TMDBAPIKey != "",
-		OMDbKeySet: c.Metadata.OMDbAPIKey != "", Fingerprint: c.Markers.Fingerprint,
-		TorrentsEnabled: c.Torrents.Enabled, Providers: c.Torrents.Providers, DebridService: c.Torrents.Debrid.Service,
-		DebridKeySet: c.Torrents.Debrid.APIKey != "", Webhooks: hooks, IntegrationKey: c.IntegrationKey,
-		RemoteAccess: s.remoteAccess(),
+		OMDbKeySet: c.Metadata.OMDbAPIKey != "", Fingerprint: c.Markers.Fingerprint, Streaming: sv, UserDefaults: c.Users,
+		Webhooks: hooks, IntegrationKey: c.IntegrationKey, RemoteAccess: s.remoteAccess(),
 	}
+}
+
+func (s *Server) streamingStatus() map[string]any {
+	names := []string{}
+	for _, p := range s.Streaming.Providers() {
+		names = append(names, p.Name())
+	}
+	return map[string]any{"active": s.Streaming.Active(), "providers": names, "activeStreams": s.Streaming.ActiveStreams()}
 }
 
 func (s *Server) remoteAccess() *remoteAccessView {
@@ -203,24 +158,140 @@ func (s *Server) remoteAccess() *remoteAccessView {
 	return &remoteAccessView{Enabled: rc.Enabled, UPnP: rc.UPnP, PublicPort: rc.PublicPort, Status: s.Direct.Status()}
 }
 
+type remoteAccessView struct {
+	Enabled    bool          `json:"enabled"`
+	UPnP       bool          `json:"upnp"`
+	PublicPort int           `json:"publicPort"`
+	Status     direct.Status `json:"status"`
+}
+
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.settings())
 }
 
+type streamingPatch struct {
+	Enabled         *bool                   `json:"enabled"`
+	TorBoxKey       *string                 `json:"torboxKey"`
+	AllDebridKey    *string                 `json:"alldebridKey"`
+	RealDebridKey   *string                 `json:"realdebridKey"`
+	ProviderOrder   *[]string               `json:"providerOrder"`
+	Addons          *[]config.AddonConfig   `json:"addons"`
+	Qualities       *[]string               `json:"qualities"`
+	MaxSizeGB       *map[string]float64     `json:"maxSizeGB"`
+	Prefetch        *bool                   `json:"prefetch"`
+	Mode            *string                 `json:"mode"`
+	MovieLibrary    *string                 `json:"movieLibrary"`
+	ShowLibrary     *string                 `json:"showLibrary"`
+	DownloadQuality *string                 `json:"downloadQuality"`
+	Limits          *config.StreamingLimits `json:"limits"`
+}
+
+// apply validates and applies a streaming patch.
+func (s *Server) applyStreaming(r *http.Request, p *streamingPatch) error {
+	c := &s.Cfg.Streaming
+	if p.Enabled != nil {
+		c.Enabled = *p.Enabled
+	}
+	for name, v := range map[string]*string{"torbox": p.TorBoxKey, "alldebrid": p.AllDebridKey, "realdebrid": p.RealDebridKey} {
+		if v != nil {
+			*s.debridKeys()[name] = strings.TrimSpace(*v)
+		}
+	}
+	if p.ProviderOrder != nil {
+		c.ProviderOrder = providerOrder(*p.ProviderOrder)
+	}
+	if p.Addons != nil {
+		var addons []config.AddonConfig
+		for _, a := range *p.Addons {
+			ad, err := streaming.ParseAddon(a.Name, a.URL)
+			if err != nil {
+				return err
+			}
+			name := strings.TrimSpace(a.Name)
+			if name == "" {
+				name = ad.Name
+			}
+			addons = append(addons, config.AddonConfig{Name: name, URL: ad.BaseURL + "/manifest.json", Enabled: a.Enabled})
+		}
+		c.Addons = addons
+	}
+	if p.Qualities != nil {
+		var qs []string
+		for _, q := range *p.Qualities {
+			if (q == "2160p" || q == "1080p" || q == "720p") && !slices.Contains(qs, q) {
+				qs = append(qs, q)
+			}
+		}
+		if len(qs) == 0 {
+			return fmt.Errorf("pick at least one quality")
+		}
+		c.Qualities = qs
+	}
+	if p.MaxSizeGB != nil {
+		for q, v := range *p.MaxSizeGB {
+			if v < 0 {
+				return fmt.Errorf("size limits can't be negative")
+			}
+			if c.MaxSizeGB == nil {
+				c.MaxSizeGB = map[string]float64{}
+			}
+			c.MaxSizeGB[q] = v
+		}
+	}
+	if p.Prefetch != nil {
+		c.Prefetch = *p.Prefetch
+	}
+	if p.Mode != nil {
+		if *p.Mode != "stream" && *p.Mode != "download" {
+			return fmt.Errorf("mode must be stream or download")
+		}
+		c.Mode = *p.Mode
+	}
+	for _, lib := range []struct {
+		v   *string
+		dst *string
+		typ string
+	}{{p.MovieLibrary, &c.MovieLibrary, "movies"}, {p.ShowLibrary, &c.ShowLibrary, "shows"}} {
+		if lib.v == nil {
+			continue
+		}
+		if *lib.v != "" {
+			l, err := s.DB.GetLibrary(r.Context(), *lib.v)
+			if err != nil || l.Source != "files" || l.Type != lib.typ || len(l.Paths) == 0 {
+				return fmt.Errorf("downloads need a %s library with a folder", lib.typ)
+			}
+		}
+		*lib.dst = *lib.v
+	}
+	if p.DownloadQuality != nil {
+		c.DownloadQuality = *p.DownloadQuality
+	}
+	if p.Limits != nil {
+		l := *p.Limits
+		if l.MaxStreams < 0 || l.MaxDownloads < 0 || l.PrefetchWorkers < 0 || l.BandwidthMbps < 0 || l.PerStreamMbps < 0 ||
+			l.DownloadMbps < 0 || l.DownloadQuotaGB < 0 || l.MinFreeGB < 0 {
+			return fmt.Errorf("limits can't be negative")
+		}
+		c.Limits = l
+	}
+	if c.Mode == "download" && (c.MovieLibrary == "" || c.ShowLibrary == "") {
+		return fmt.Errorf("download mode needs a movie library and a show library")
+	}
+	return nil
+}
+
 func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ServerName      *string                 `json:"serverName"`
-		PublicURL       *string                 `json:"publicUrl"`
-		HWAccel         *string                 `json:"hwaccel"`
-		TMDBAPIKey      *string                 `json:"tmdbApiKey"`
-		OMDbAPIKey      *string                 `json:"omdbApiKey"`
-		Fingerprint     *bool                   `json:"markerFingerprinting"`
-		TorrentsEnabled *bool                   `json:"torrentsEnabled"`
-		Providers       *[]string               `json:"torrentProviders"`
-		DebridService   *string                 `json:"debridService"`
-		DebridAPIKey    *string                 `json:"debridApiKey"`
-		Webhooks        *[]config.WebhookConfig `json:"webhooks"`
-		RemoteAccess    *struct {
+		ServerName   *string                  `json:"serverName"`
+		PublicURL    *string                  `json:"publicUrl"`
+		HWAccel      *string                  `json:"hwaccel"`
+		TMDBAPIKey   *string                  `json:"tmdbApiKey"`
+		OMDbAPIKey   *string                  `json:"omdbApiKey"`
+		Fingerprint  *bool                    `json:"markerFingerprinting"`
+		Streaming    *streamingPatch          `json:"streaming"`
+		UserDefaults *config.UserLimitsConfig `json:"userDefaults"`
+		Webhooks     *[]config.WebhookConfig  `json:"webhooks"`
+		RemoteAccess *struct {
 			Enabled    *bool `json:"enabled"`
 			UPnP       *bool `json:"upnp"`
 			PublicPort *int  `json:"publicPort"`
@@ -255,21 +326,21 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 			s.Markers.Kick()
 		}
 	}
-	if req.TorrentsEnabled != nil {
-		c.Torrents.Enabled = *req.TorrentsEnabled
-		restart = true
+	if req.Streaming != nil {
+		if err := s.applyStreaming(r, req.Streaming); err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		if s.Streaming.Active() {
+			_, _ = s.Streaming.Libraries(r.Context())
+		}
 	}
-	if req.Providers != nil {
-		c.Torrents.Providers = *req.Providers
-		restart = true
-	}
-	if req.DebridService != nil {
-		c.Torrents.Debrid.Service = *req.DebridService
-		restart = true
-	}
-	if req.DebridAPIKey != nil {
-		c.Torrents.Debrid.APIKey = strings.TrimSpace(*req.DebridAPIKey)
-		restart = true
+	if u := req.UserDefaults; u != nil {
+		if u.MaxStreams < 0 || u.MaxDownloads < 0 {
+			writeErr(w, 400, "limits can't be negative")
+			return
+		}
+		c.Users = *u
 	}
 	if req.Webhooks != nil {
 		// Keep existing secrets when the client sends the masked placeholder.

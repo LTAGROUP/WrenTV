@@ -13,7 +13,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 )
 
-// Kick wakes the matcher and prober (e.g. after a torrent is added).
+// Kick wakes the matcher and prober (e.g. after files are added).
 func (s *Scanner) Kick() {
 	kick(s.matchKick)
 	kick(s.probeKick)
@@ -128,6 +128,12 @@ func (s *Scanner) matchMovie(ctx context.Context, it *db.Item) error {
 	if err != nil {
 		return err
 	}
+	ApplyMovie(it, m)
+	return s.db.UpdateItemMetadata(ctx, it)
+}
+
+// ApplyMovie copies TMDB movie metadata onto an item.
+func ApplyMovie(it *db.Item, m *tmdb.Movie) {
 	it.TMDBID = m.ID
 	it.Title = m.Title
 	it.OriginalTitle = m.OriginalTitle
@@ -144,7 +150,6 @@ func (s *Scanner) matchMovie(ctx context.Context, it *db.Item) error {
 	it.ContentRating = tmdb.ContentRatingUS(m)
 	it.Genres = genres(m.Genres)
 	it.MatchState = "matched"
-	return s.db.UpdateItemMetadata(ctx, it)
 }
 
 func (s *Scanner) matchShow(ctx context.Context, it *db.Item) error {
@@ -172,6 +177,16 @@ func (s *Scanner) matchShow(ctx context.Context, it *db.Item) error {
 	if err != nil {
 		return err
 	}
+	ApplyShow(it, sh)
+	if err := s.db.UpdateItemMetadata(ctx, it); err != nil {
+		return err
+	}
+	s.fillSeasons(ctx, it)
+	return nil
+}
+
+// ApplyShow copies TMDB show metadata onto an item.
+func ApplyShow(it *db.Item, sh *tmdb.Show) {
 	it.TMDBID = sh.ID
 	it.Title = sh.Name
 	it.OriginalTitle = sh.OriginalName
@@ -190,11 +205,17 @@ func (s *Scanner) matchShow(ctx context.Context, it *db.Item) error {
 	it.ContentRating = tmdb.ShowRatingUS(sh)
 	it.Genres = genres(sh.Genres)
 	it.MatchState = "matched"
-	if err := s.db.UpdateItemMetadata(ctx, it); err != nil {
-		return err
+}
+
+// ApplyEpisode copies TMDB episode metadata onto an item.
+func ApplyEpisode(it *db.Item, e tmdb.Episode) {
+	if e.Name != "" {
+		it.Title = e.Name
 	}
-	s.fillSeasons(ctx, it)
-	return nil
+	it.Overview, it.StillPath, it.AirDate = e.Overview, e.StillPath, e.AirDate
+	it.RuntimeMin, it.Rating = e.Runtime, e.VoteAverage
+	it.Year = yearOf(e.AirDate, 0)
+	it.MatchState = "matched"
 }
 
 // fillSeasons fetches each season present on disk once and fills all its episodes.
@@ -235,13 +256,7 @@ func (s *Scanner) fillSeasons(ctx context.Context, show *db.Item) {
 				_ = s.db.UpdateItemMetadata(ctx, ep)
 				continue
 			}
-			if e.Name != "" {
-				ep.Title = e.Name
-			}
-			ep.Overview, ep.StillPath, ep.AirDate = e.Overview, e.StillPath, e.AirDate
-			ep.RuntimeMin, ep.Rating = e.Runtime, e.VoteAverage
-			ep.Year = yearOf(e.AirDate, 0)
-			ep.MatchState = "matched"
+			ApplyEpisode(ep, e)
 			_ = s.db.UpdateItemMetadata(ctx, ep)
 			_, _ = s.db.ExecContext(ctx, `UPDATE items SET sort_title=? WHERE id=?`, padNum(ep.SeasonNumber)+padNum(ep.EpisodeNumber), ep.ID)
 		}

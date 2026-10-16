@@ -19,7 +19,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/library"
 	"github.com/LTAGROUP/wrentv/internal/media"
 	"github.com/LTAGROUP/wrentv/internal/stream"
-	"github.com/LTAGROUP/wrentv/internal/torrent"
+	"github.com/LTAGROUP/wrentv/internal/streaming"
 )
 
 type playRequest struct {
@@ -68,8 +68,8 @@ type versionView struct {
 }
 
 // handlePlay picks a file, decides how the client should play it and opens a session.
-// Torrent-backed items that are between sources return status "pending"; clients
-// show a "finding a better source" state and retry.
+// Streamed titles whose streams are still being looked up return status
+// "pending"; clients show the message and retry.
 func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	it, ok := s.itemFor(r)
 	if !ok || (it.Kind != "movie" && it.Kind != "episode") {
@@ -85,41 +85,64 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		req.Caps.Engines = []string{"avplayer"}
 	}
 	ctx := r.Context()
-	files, err := s.DB.FilesForItem(ctx, it.ID)
+	p := principal(r)
+	if err := s.admitPlayback(p.User, it.ID); err != nil {
+		writeErr(w, http.StatusTooManyRequests, err.Error())
+		return
+	}
+	streamed := s.isStreamLibrary(ctx, it.LibraryID)
+	if streamed {
+		if !s.limitsFor(p.User).CanStream {
+			writeErr(w, http.StatusForbidden, "streaming isn't available on this server")
+			return
+		}
+		// Look up streams on first play; wait a little so a quick lookup
+		// starts playback at once, else the client retries.
+		if ready, err := s.Streaming.Ensure(ctx, it, 12*time.Second); !ready {
+			if err != nil {
+				if local, _ := s.DB.FileEquivalent(ctx, it); local == nil {
+					writeErr(w, http.StatusFailedDependency, streamErrMessage(err))
+					return
+				}
+			} else {
+				writeJSON(w, 202, playResponse{Status: "pending", Message: "Finding a stream…"})
+				return
+			}
+		}
+	}
+	files, err := s.playableFiles(ctx, it)
 	if err != nil || len(files) == 0 {
 		writeJSON(w, 202, playResponse{Status: "pending", Message: "Finding a source…"})
 		return
 	}
 	f := chooseFile(files, req)
 
-	if f.TorrentID != "" {
-		t, err := s.DB.GetTorrent(ctx, f.TorrentID)
-		if err != nil {
-			writeErr(w, 404, "torrent not found")
-			return
-		}
-		switch t.Status {
-		case torrent.StatusReady:
-		case torrent.StatusFailed:
-			writeErr(w, http.StatusFailedDependency, "No playable source could be found for this title.")
-			return
-		case torrent.StatusResolving:
-			writeJSON(w, 202, playResponse{Status: "pending", Message: "Preparing stream…"})
-			return
-		default:
-			writeJSON(w, 202, playResponse{Status: "pending", Message: "Finding a better source…"})
-			return
-		}
-	}
-
 	src, err := s.openSource(ctx, f)
-	if errors.Is(err, torrent.ErrPending) {
-		writeJSON(w, 202, playResponse{Status: "pending", Message: "Preparing stream…"})
+	if f.StreamID != "" && errors.Is(err, streaming.ErrUnavailable) {
+		// The stored stream went away: find another.
+		_, _ = s.Streaming.Ensure(ctx, it, 0)
+		writeJSON(w, 202, playResponse{Status: "pending", Message: "Finding another stream…"})
+		return
+	}
+	if errors.Is(err, streaming.ErrBusy) {
+		writeErr(w, http.StatusServiceUnavailable, "The server is playing as many streams as it allows. Try again shortly.")
 		return
 	}
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "could not open media: "+err.Error())
 		return
+	}
+	if streamed {
+		s.Streaming.Prefetch(it)
+		if s.Cfg.Streaming.Mode == "download" && f.StreamID != "" {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if _, err := s.Streaming.QueueDownload(ctx, it, p.User.ID); err != nil {
+					slog.Debug("auto download", "item", it.ID, "err", err)
+				}
+			}()
+		}
 	}
 
 	info, err := s.ensureProbe(ctx, f, src)
@@ -158,7 +181,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		kbps = 20000
 	}
 	sess, err := s.Streams.Create(stream.NewSessionOpts{
-		UserID: principal(r).User.ID, ItemID: it.ID, FileID: f.ID, Src: src, Info: info, Decision: dec,
+		UserID: p.User.ID, ItemID: it.ID, FileID: f.ID, Src: src, Info: info, Decision: dec,
 		Keyframes: kf, KbpsTarget: kbps, MaxWidth: req.MaxWidth,
 	})
 	if err != nil {
@@ -235,7 +258,7 @@ func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
 // chooseFile returns the requested version, else the one this client plays
 // best: a version it can play without transcoding beats one that needs it
 // (a 1080p file is served instead of transcoding the 4K one down), then a
-// version that fits the requested quality, then local over torrent.
+// version that fits the requested quality, then a file over a stream.
 func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 	for _, f := range files {
 		if f.ID == req.FileID {
@@ -243,8 +266,8 @@ func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 		}
 	}
 	type rank struct {
-		tier, torrent, fit, height int
-		size                       int64
+		tier, streamed, fit, height int
+		size                        int64
 	}
 	rankOf := func(f *db.MediaFile) rank {
 		rk := rank{tier: 1, size: -f.Size}
@@ -262,8 +285,8 @@ func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 		} else if !fits {
 			rk.tier = 2
 		}
-		if f.TorrentID != "" {
-			rk.torrent = 1
+		if f.StreamID != "" {
+			rk.streamed = 1
 		}
 		if fits {
 			rk.height = -h // the best version within the limit
@@ -276,8 +299,8 @@ func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 		switch {
 		case a.tier != b.tier:
 			return a.tier < b.tier
-		case a.torrent != b.torrent:
-			return a.torrent < b.torrent
+		case a.streamed != b.streamed:
+			return a.streamed < b.streamed
 		case a.fit != b.fit:
 			return a.fit < b.fit
 		case a.height != b.height:
@@ -380,8 +403,8 @@ func versionLabel(f *db.MediaFile) string {
 	case f.Size > 0:
 		parts = append(parts, fmt.Sprintf("%d MB", max(1, f.Size>>20)))
 	}
-	if f.TorrentID != "" {
-		parts = append(parts, "Torrent")
+	if f.StreamID != "" {
+		parts = append(parts, "Stream")
 	}
 	if len(parts) == 0 {
 		return displayFileName(f.Path)
@@ -462,12 +485,72 @@ func fileHeight(f *db.MediaFile) int {
 }
 
 func (s *Server) openSource(ctx context.Context, f *db.MediaFile) (stream.Source, error) {
-	if f.TorrentID == "" {
+	if f.StreamID == "" {
 		return stream.OpenFile(f.Path)
 	}
-	tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	sctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	return s.Torrents.SourceFor(tctx, f)
+	return s.Streaming.Source(sctx, f)
+}
+
+// playableFiles are an item's versions, best first. A streamed title also
+// offers the real file of the same movie or episode (which wins), so files
+// and streams mix.
+func (s *Server) playableFiles(ctx context.Context, it *db.Item) ([]*db.MediaFile, error) {
+	files, err := s.DB.FilesForItem(ctx, it.ID)
+	if err != nil {
+		return nil, err
+	}
+	if s.isStreamLibrary(ctx, it.LibraryID) {
+		if eq, err := s.DB.FileEquivalent(ctx, it); err == nil {
+			local, _ := s.DB.FilesForItem(ctx, eq.ID)
+			files = append(local, files...)
+		}
+	}
+	return files, nil
+}
+
+// admitPlayback enforces a user's limit on simultaneous playbacks. Playing
+// the same title again (another version, a restart) doesn't count, and a
+// session the user left idle (closed without saying so) makes room.
+func (s *Server) admitPlayback(u *db.User, itemID string) error {
+	max := s.limitsFor(u).MaxStreams
+	if max <= 0 {
+		return nil
+	}
+	var mine []*stream.Session
+	for _, x := range s.Streams.List() {
+		if x.UserID == u.ID && x.ItemID != itemID {
+			mine = append(mine, x)
+		}
+	}
+	if len(mine) < max {
+		return nil
+	}
+	idlest := mine[0]
+	for _, x := range mine[1:] {
+		if x.Idle() > idlest.Idle() {
+			idlest = x
+		}
+	}
+	if idlest.Idle() > 2*time.Minute {
+		s.Streams.Stop(idlest.ID)
+		return nil
+	}
+	if max == 1 {
+		return errors.New("You're already watching something. Stop it to play this.")
+	}
+	return fmt.Errorf("You're already watching on %d screens, the most your account allows.", max)
+}
+
+func streamErrMessage(err error) string {
+	switch {
+	case errors.Is(err, streaming.ErrNoStreams):
+		return "No cached stream is available for this title right now."
+	case errors.Is(err, streaming.ErrDisabled):
+		return "Streaming isn't set up on this server."
+	}
+	return "Couldn't find a stream: " + err.Error()
 }
 
 func (s *Server) ensureProbe(ctx context.Context, f *db.MediaFile, src stream.Source) (*media.Info, error) {

@@ -37,10 +37,22 @@ type Config struct {
 	RemoteAccess RemoteAccessConfig `yaml:"remote_access"`
 	Metadata     MetadataConfig     `yaml:"metadata"`
 	Transcode    TranscodeConfig    `yaml:"transcode"`
-	Torrents     TorrentConfig      `yaml:"torrents"`
+	Streaming    StreamingConfig    `yaml:"streaming"`
+	Users        UserLimitsConfig   `yaml:"users"`
 	Webhooks     []WebhookConfig    `yaml:"webhooks"`
 	Scanner      ScannerConfig      `yaml:"scanner"`
 	Markers      MarkersConfig      `yaml:"markers"`
+
+	// LegacyTorrents is read from configs written before streaming replaced
+	// torrents, so a Real-Debrid key carries over. Never written back.
+	LegacyTorrents *legacyTorrents `yaml:"torrents,omitempty"`
+}
+
+type legacyTorrents struct {
+	Debrid struct {
+		Service string `yaml:"service"`
+		APIKey  string `yaml:"api_key"`
+	} `yaml:"debrid"`
 }
 
 // MarkersConfig controls intro/credits detection. Chapter names are always
@@ -106,36 +118,78 @@ type TranscodeConfig struct {
 	ScratchDir string `yaml:"scratch_dir"`
 }
 
-type TorrentConfig struct {
+// StreamingConfig turns the server into a shared Stremio-style client:
+// any movie or show can be searched and played, resolved through Stremio
+// addons to releases that are already cached on the owner's debrid accounts.
+// Only the stream (info hash and file) is stored; bytes are proxied on demand.
+// In download mode the file is also saved into a real library.
+type StreamingConfig struct {
 	Enabled bool `yaml:"enabled"`
-	// Providers are tried in order. Supported: "debrid", "builtin".
-	Providers   []string `yaml:"providers"`
-	DownloadDir string   `yaml:"download_dir"`
-	ListenPort  int      `yaml:"listen_port"`
-	// PortForwarding lets the built-in engine ask the router to forward
-	// ListenPort (UPnP IGD / NAT-PMP). Off by default: the engine streams
-	// fine on outbound connections alone and never seeds.
-	PortForwarding bool              `yaml:"port_forwarding"`
-	Debrid         DebridConfig      `yaml:"debrid"`
-	Health         TorrentHealthConf `yaml:"health"`
+	// Debrid accounts (owner's keys, shared by every user). Providers are
+	// tried in ProviderOrder; a stream plays through the first that has it cached.
+	TorBoxKey     string   `yaml:"torbox_key"`
+	AllDebridKey  string   `yaml:"alldebrid_key"`
+	RealDebridKey string   `yaml:"realdebrid_key"`
+	ProviderOrder []string `yaml:"provider_order"`
+	// Addons are Stremio addon manifests queried for releases.
+	Addons []AddonConfig `yaml:"addons"`
+	// Qualities resolved and stored for every title, best first.
+	Qualities []string `yaml:"qualities"`
+	// MaxSizeGB skips releases larger than this per quality (0 = no limit).
+	MaxSizeGB map[string]float64 `yaml:"max_size_gb"`
+	// Prefetch resolves the rest of the season after an episode is played.
+	Prefetch bool `yaml:"prefetch"`
+	// Mode: "stream" stores only the stream; "download" also saves the file
+	// into the download library, which then replaces the stream.
+	Mode string `yaml:"mode"`
+	// MovieLibrary and ShowLibrary are the real libraries downloads go into.
+	MovieLibrary    string          `yaml:"movie_library"`
+	ShowLibrary     string          `yaml:"show_library"`
+	DownloadQuality string          `yaml:"download_quality"`
+	Limits          StreamingLimits `yaml:"limits"`
 }
 
-type DebridConfig struct {
-	// Service: "realdebrid" (more can be added behind the same interface).
-	Service string `yaml:"service"`
-	APIKey  string `yaml:"api_key"`
+type AddonConfig struct {
+	Name    string `yaml:"name" json:"name"`
+	URL     string `yaml:"url" json:"url"`
+	Enabled bool   `yaml:"enabled" json:"enabled"`
 }
 
-type TorrentHealthConf struct {
-	// MetadataTimeoutSec: give up if torrent metadata is not received.
-	MetadataTimeoutSec int `yaml:"metadata_timeout_sec"`
-	// StallTimeoutSec: a stream that makes no progress for this long is unplayable.
-	StallTimeoutSec int `yaml:"stall_timeout_sec"`
-	// MinPeers below which (after the metadata timeout) a torrent is unhealthy.
-	MinPeers int `yaml:"min_peers"`
-	// ReplaceTimeoutMin: how long an unplayable torrent waits for a backend
-	// to supply a replacement before it is marked failed.
-	ReplaceTimeoutMin int `yaml:"replace_timeout_min"`
+// StreamingLimits bound what streaming may cost the server. 0 means no limit.
+type StreamingLimits struct {
+	// MaxStreams is the most debrid-backed playbacks at once (all users).
+	MaxStreams int `yaml:"max_streams" json:"maxStreams"`
+	// BandwidthMbps caps all debrid traffic through the server; PerStreamMbps
+	// caps one playback; DownloadMbps caps server downloads.
+	BandwidthMbps float64 `yaml:"bandwidth_mbps" json:"bandwidthMbps"`
+	PerStreamMbps float64 `yaml:"per_stream_mbps" json:"perStreamMbps"`
+	DownloadMbps  float64 `yaml:"download_mbps" json:"downloadMbps"`
+	// MaxDownloads is how many server downloads run at once.
+	MaxDownloads int `yaml:"max_downloads" json:"maxDownloads"`
+	// PrefetchWorkers is how many episodes are resolved at once in the background.
+	PrefetchWorkers int `yaml:"prefetch_workers" json:"prefetchWorkers"`
+	// DownloadQuotaGB stops downloading once downloaded files total this
+	// much; MinFreeGB keeps this much disk free.
+	DownloadQuotaGB float64 `yaml:"download_quota_gb" json:"downloadQuotaGB"`
+	MinFreeGB       float64 `yaml:"min_free_gb" json:"minFreeGB"`
+}
+
+// UserLimitsConfig holds defaults for users without their own limits.
+type UserLimitsConfig struct {
+	// MaxStreams is how many playbacks one user may run at once (0 = no limit).
+	MaxStreams int `yaml:"max_streams" json:"maxStreams"`
+	// DeviceDownloads lets users save titles to their devices.
+	DeviceDownloads bool `yaml:"device_downloads" json:"deviceDownloads"`
+	// MaxDownloads is how many device downloads one user may run at once.
+	MaxDownloads int `yaml:"max_downloads" json:"maxDownloads"`
+}
+
+// DefaultAddons are offered on new servers.
+func DefaultAddons() []AddonConfig {
+	return []AddonConfig{
+		{Name: "torrentio", URL: "https://torrentio.strem.fun/manifest.json", Enabled: true},
+		{Name: "comet", URL: "https://comet.feels.legal/manifest.json", Enabled: true},
+	}
 }
 
 type WebhookConfig struct {
@@ -170,13 +224,17 @@ func defaults() Config {
 		RemoteAccess: RemoteAccessConfig{Enabled: true, UPnP: true},
 		Metadata:     MetadataConfig{Language: "en-US", Workers: 8},
 		Transcode:    TranscodeConfig{FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HWAccel: "auto", VAAPIDevice: "/dev/dri/renderD128"},
-		Torrents: TorrentConfig{
-			Enabled:    true,
-			Providers:  []string{"builtin"},
-			ListenPort: 42069,
-			Debrid:     DebridConfig{Service: "realdebrid"},
-			Health:     TorrentHealthConf{MetadataTimeoutSec: 60, StallTimeoutSec: 45, MinPeers: 1, ReplaceTimeoutMin: 30},
+		Streaming: StreamingConfig{
+			ProviderOrder:   []string{"torbox", "alldebrid", "realdebrid"},
+			Addons:          DefaultAddons(),
+			Qualities:       []string{"2160p", "1080p"},
+			MaxSizeGB:       map[string]float64{"2160p": 0, "1080p": 0},
+			Prefetch:        true,
+			Mode:            "stream",
+			DownloadQuality: "2160p",
+			Limits:          StreamingLimits{MaxDownloads: 2, PrefetchWorkers: 2, MinFreeGB: 20},
 		},
+		Users:   UserLimitsConfig{DeviceDownloads: true, MaxDownloads: 2},
 		Scanner: ScannerConfig{Watch: true, IntervalMin: 30, ProbeWorkers: 4},
 		Markers: MarkersConfig{Fingerprint: true},
 	}
@@ -229,6 +287,16 @@ func Load(dataDir string) (*Config, error) {
 	}
 
 	dirty := false
+	if lt := c.LegacyTorrents; lt != nil {
+		if lt.Debrid.APIKey != "" && c.Streaming.RealDebridKey == "" && (lt.Debrid.Service == "" || lt.Debrid.Service == "realdebrid") {
+			c.Streaming.RealDebridKey = lt.Debrid.APIKey
+		}
+		c.LegacyTorrents = nil
+		dirty = true
+	}
+	if len(c.Streaming.ProviderOrder) == 0 {
+		c.Streaming.ProviderOrder = []string{"torbox", "alldebrid", "realdebrid"}
+	}
 	if c.MachineID == "" {
 		c.MachineID = randHex(16)
 		dirty = true
@@ -250,9 +318,6 @@ func Load(dataDir string) (*Config, error) {
 	if c.Transcode.ScratchDir == "" {
 		c.Transcode.ScratchDir = filepath.Join(dataDir, "transcode")
 	}
-	if c.Torrents.DownloadDir == "" {
-		c.Torrents.DownloadDir = filepath.Join(dataDir, "torrents")
-	}
 	return &c, nil
 }
 
@@ -272,7 +337,9 @@ func (c *Config) applyEnv() {
 	set("FFMPEG", &c.Transcode.FFmpegPath)
 	set("FFPROBE", &c.Transcode.FFprobePath)
 	set("HWACCEL", &c.Transcode.HWAccel)
-	set("DEBRID_API_KEY", &c.Torrents.Debrid.APIKey)
+	set("TORBOX_API_KEY", &c.Streaming.TorBoxKey)
+	set("ALLDEBRID_API_KEY", &c.Streaming.AllDebridKey)
+	set("REALDEBRID_API_KEY", &c.Streaming.RealDebridKey)
 	set("PUBLIC_URL", &c.PublicURL)
 	set("DIRECT_API", &c.RemoteAccess.API)
 	set("ACME_DIRECTORY", &c.RemoteAccess.ACMEDirectory)
@@ -293,11 +360,8 @@ func (c *Config) applyEnv() {
 			}
 		}
 	}
-	if v, err := strconv.ParseBool(Getenv("TORRENT_PORT_FORWARDING")); err == nil {
-		c.Torrents.PortForwarding = v
-	}
-	if v, ok := LookupEnv("TORRENT_PROVIDERS"); ok {
-		c.Torrents.Providers = strings.Split(v, ",")
+	if v, err := strconv.ParseBool(Getenv("STREAMING")); err == nil {
+		c.Streaming.Enabled = v
 	}
 }
 

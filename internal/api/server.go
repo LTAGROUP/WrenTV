@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -26,30 +27,33 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/metadata/omdb"
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 	"github.com/LTAGROUP/wrentv/internal/stream"
-	"github.com/LTAGROUP/wrentv/internal/torrent"
+	"github.com/LTAGROUP/wrentv/internal/streaming"
 	"github.com/LTAGROUP/wrentv/internal/web"
 	"github.com/LTAGROUP/wrentv/internal/webhook"
 )
 
 type Server struct {
-	Version  string
-	Cfg      *config.Config
-	DB       *db.DB
-	Scanner  *library.Scanner
-	Watcher  *library.Watcher
-	TMDB     *tmdb.Client
-	OMDb     *omdb.Client
-	Markers  *markers.Analyzer
-	Streams  *stream.Manager
-	Torrents *torrent.Manager
-	Hub      *library.Hub
-	Hooks    *webhook.Sender
-	Images   *images.Cache
-	Direct   *direct.Manager // automatic HTTPS addresses (supabase mode)
+	Version   string
+	Cfg       *config.Config
+	DB        *db.DB
+	Scanner   *library.Scanner
+	Watcher   *library.Watcher
+	TMDB      *tmdb.Client
+	OMDb      *omdb.Client
+	Markers   *markers.Analyzer
+	Streams   *stream.Manager
+	Streaming *streaming.Service
+	Hub       *library.Hub
+	Hooks     *webhook.Sender
+	Images    *images.Cache
+	Direct    *direct.Manager // automatic HTTPS addresses (supabase mode)
 
 	Auth  auth.Provider
 	Local *auth.Local    // set in local mode
 	Supa  *auth.Supabase // set in supabase mode
+
+	tickets     *tickets // device download links
+	ticketsOnce sync.Once
 }
 
 type ctxKey int
@@ -86,21 +90,15 @@ func (s *Server) Router() http.Handler {
 		}
 		sess.ServeHTTP(w, r, chi.URLParam(r, "*"))
 	})
-	r.Get("/internal/torrent/{token}", func(w http.ResponseWriter, r *http.Request) {
-		s.Torrents.ServeInternal(w, r, chi.URLParam(r, "token"))
-	})
-	r.Head("/internal/torrent/{token}", func(w http.ResponseWriter, r *http.Request) {
-		s.Torrents.ServeInternal(w, r, chi.URLParam(r, "token"))
-	})
+	r.Get("/internal/stream/{token}", s.serveInternalStream)
+	r.Head("/internal/stream/{token}", s.serveInternalStream)
+	// Device downloads: the ticket is the credential (download managers resume without headers).
+	r.Get("/download/{ticket}/*", s.serveDeviceDownload)
+	r.Head("/download/{ticket}/*", s.serveDeviceDownload)
 
 	// Backend services (e.g. a Riven-like source manager), authenticated by the integration key.
 	r.Route("/api/integration", func(r chi.Router) {
 		r.Use(s.integrationAuth)
-		r.Get("/torrents", s.handleListTorrents)
-		r.Post("/torrents", s.handleAddTorrent)
-		r.Get("/torrents/{id}", s.handleGetTorrent)
-		r.Post("/torrents/{id}/replace", s.handleReplaceTorrent)
-		r.Delete("/torrents/{id}", s.handleDeleteTorrent)
 		r.Get("/libraries", s.handleIntegrationLibraries)
 		r.Post("/libraries", s.handleCreateLibrary)
 		r.Post("/libraries/{id}/scan", s.handleScanLibrary)
@@ -118,6 +116,9 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/items/{id}/children", s.handleChildren)
 		r.Get("/api/items/{id}/extras", s.handleExtras)
 		r.Get("/api/discover/trending", s.handleTrending)
+		r.Get("/api/discover/search", s.handleDiscoverSearch)
+		r.Post("/api/streaming/titles", s.handleAddStreamTitle)
+		r.Post("/api/items/{id}/download", s.handleDeviceDownload)
 		r.Post("/api/items/{id}/progress", s.handleProgress)
 		r.Post("/api/items/{id}/watched", s.handleWatched)
 		r.Post("/api/items/{id}/play", s.handlePlay)
@@ -136,11 +137,14 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/api/libraries/{id}", s.handleDeleteLibrary)
 			r.Post("/api/libraries/{id}/scan", s.handleScanLibrary)
 			r.Post("/api/items/{id}/match", s.handleRematch)
-			r.Get("/api/torrents", s.handleListTorrents)
-			r.Post("/api/torrents", s.handleAddTorrent)
-			r.Get("/api/torrents/{id}", s.handleGetTorrent)
-			r.Delete("/api/torrents/{id}", s.handleDeleteTorrent)
-			r.Post("/api/torrents/{id}/replace", s.handleReplaceTorrent)
+			r.Get("/api/items/{id}/streams", s.handleItemStreams)
+			r.Delete("/api/items/{id}/streams", s.handleForgetStreams)
+			r.Post("/api/items/{id}/server-download", s.handleServerDownload)
+			r.Get("/api/admin/downloads", s.handleListDownloads)
+			r.Delete("/api/admin/downloads/{id}", s.handleCancelDownload)
+			r.Post("/api/admin/downloads/{id}/retry", s.handleRetryDownload)
+			r.Post("/api/admin/streaming/check-debrid", s.handleCheckDebrid)
+			r.Post("/api/admin/streaming/check-addon", s.handleCheckAddon)
 			r.Get("/api/users", s.handleListUsers)
 			r.Post("/api/users", s.handleCreateUser)
 			r.Patch("/api/users/{id}", s.handleUpdateUser)
@@ -191,6 +195,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "invalid or expired sign-in")
 			return
 		}
+		p = s.withStreamingAccess(r.Context(), p)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, p)))
 	})
 }

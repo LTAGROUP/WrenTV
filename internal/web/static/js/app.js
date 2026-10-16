@@ -1,5 +1,5 @@
 import { api, account, local, state, saveSession, isSupabase, img, ApiError } from './api.js';
-import { esc, $, $$, el, toast, icons, fmtRuntime, fmtDuration } from './ui.js';
+import { esc, $, $$, el, toast, icons, fmtRuntime, fmtDuration, fmtSize } from './ui.js';
 import { openPlayer } from './player.js';
 import * as manage from './manage.js';
 import * as browse from './browse.js';
@@ -39,9 +39,31 @@ const routes = [
   [/^\/manage\/?$/, manage.viewStatus, true],
   [/^\/manage\/libraries$/, manage.viewLibraries, true],
   [/^\/manage\/users$/, manage.viewUsers, true],
-  [/^\/manage\/torrents$/, manage.viewTorrents, true],
+  [/^\/manage\/downloads$/, manage.viewDownloads, true],
   [/^\/manage\/settings$/, manage.viewSettings, true],
 ];
+
+export const canStream = () => !!(state.server?.streaming && state.limits?.canStream);
+
+// Titles that aren't on the server yet are added to the streaming library on first open.
+document.addEventListener('click', async (e) => {
+  const a = e.target.closest('[data-stream-title]');
+  if (!a) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (a.dataset.busy) return;
+  a.dataset.busy = '1';
+  a.classList.add('busy');
+  try {
+    const it = await api('/api/streaming/titles', { method: 'POST', body: { tmdbId: Number(a.dataset.streamTitle), mediaType: a.dataset.media } });
+    go('/item/' + it.id);
+  } catch (ex) {
+    toast(ex.message);
+  } finally {
+    delete a.dataset.busy;
+    a.classList.remove('busy');
+  }
+}, true);
 
 export const isAdmin = () => state.user && (state.user.role === 'owner' || state.user.role === 'admin' || state.user.isAdmin);
 
@@ -95,6 +117,7 @@ async function loadMe() {
   const me = await api('/api/me');
   state.user = me.user;
   state.libraryIds = me.libraryIds;
+  state.limits = me.limits || {};
   libraries = await api('/api/libraries');
 }
 
@@ -235,7 +258,7 @@ async function shell(view, seq) {
           <a class="nav" href="/manage/stats" data-path="/manage/stats">${icons.chart}<span>Stats</span></a>
           <a class="nav" href="/manage/libraries" data-path="/manage/libraries">${icons.folder}<span>Libraries</span></a>
           <a class="nav" href="/manage/users" data-path="/manage/users">${icons.users}<span>${isSupabase() ? 'Sharing' : 'Users'}</span></a>
-          ${state.server.torrents ? `<a class="nav" href="/manage/torrents" data-path="/manage/torrents">${icons.torrent}<span>Torrents</span></a>` : ''}
+          ${state.server.streaming ? `<a class="nav" href="/manage/downloads" data-path="/manage/downloads">${icons.download}<span>Downloads</span></a>` : ''}
           <a class="nav" href="/manage/settings" data-path="/manage/settings">${icons.settings}<span>Settings</span></a>` : ''}
         <div class="spacer"></div>
         <div class="account"><div class="avatar">${esc((name[0] || '?').toUpperCase())}</div>
@@ -313,6 +336,11 @@ export function posterCard(it, extra = '') {
 export function titleCard(v, rank) {
   const r = rank ? `<span class="rank">${rank}</span>` : '';
   if (v.item) return posterCard(v.item, r);
+  if (canStream()) {
+    return `<a class="card" href="/item/stream" data-stream-title="${v.tmdbId}" data-media="${esc(v.mediaType)}" title="Stream ${esc(v.title)}">
+      <div class="poster">${v.posterPath ? lazyImg(img(v.posterPath), v.title) : `<div class="ph">${esc(v.title)}</div>`}${r}</div>
+      <div class="t">${esc(v.title)}</div><div class="s">${esc(v.year || '')}</div></a>`;
+  }
   const href = `https://www.themoviedb.org/${v.mediaType === 'show' ? 'tv' : 'movie'}/${v.tmdbId}`;
   return `<a class="card ext" href="${href}" target="_blank" rel="noopener" title="Not in your library — open on TMDB">
     <div class="poster">${v.posterPath ? lazyImg(img(v.posterPath), v.title) : `<div class="ph">${esc(v.title)}</div>`}${r}<span class="tag">Not in library</span></div>
@@ -470,9 +498,24 @@ async function viewSearch() {
   setTitle('Search');
   const input = $('#search-form input');
   if (input) input.value = q;
-  const items = q ? await api('/api/search?q=' + encodeURIComponent(q)) : [];
-  return `<div class="page-head"><h1>Results for “${esc(q)}”</h1></div>
-    ${items.length ? `<div class="grid">${items.map((it) => posterCard(it)).join('')}</div>` : '<div class="empty"><h2>No matches</h2></div>'}`;
+  if (!q) return '<div class="empty"><h2>Search for a movie or show</h2></div>';
+  const [items, more] = await Promise.all([
+    api('/api/search?q=' + encodeURIComponent(q)),
+    api('/api/discover/search?q=' + encodeURIComponent(q)).catch(() => ({ items: [] })),
+  ]);
+  // Library results first; TMDB adds whatever the server doesn't have.
+  const have = new Set(items.map((it) => it.id));
+  const extra = (more.items || []).filter((v) => !v.item || !have.has(v.item.id));
+  const inLib = [...items, ...extra.filter((v) => v.item).map((v) => v.item)];
+  const rest = extra.filter((v) => !v.item);
+  const restTitle = canStream() ? 'Stream' : 'Not on this server';
+  const node = el(`<div><div class="page-head"><h1>Results for “${esc(q)}”</h1></div>
+    ${inLib.length ? `<h2 class="grid-title">On this server</h2><div class="grid">${inLib.map((it) => posterCard(it)).join('')}</div>` : ''}
+    ${rest.length ? `<h2 class="grid-title">${restTitle}${canStream() ? ' <span class="sub">plays through the server’s debrid service</span>' : ''}</h2>
+      <div class="grid">${rest.map((v) => titleCard(v)).join('')}</div>` : ''}
+    ${!inLib.length && !rest.length ? '<div class="empty"><h2>No matches</h2></div>' : ''}</div>`);
+  bindPlayLinks(node);
+  return node;
 }
 
 // Quality badges for a file: resolution, HDR format, audio.
@@ -484,7 +527,7 @@ function badgesFor(f) {
   const a = f.info?.audio?.find((x) => x.default) || f.info?.audio?.[0];
   if (a?.atmos || a?.profile?.includes('Atmos')) b.push('Atmos');
   if (a?.channels >= 6) b.push(a.channels === 8 ? '7.1' : '5.1');
-  if (f.torrentId) b.push('Torrent');
+  if (f.streamId) b.push('Stream');
   return b;
 }
 
@@ -543,7 +586,7 @@ async function viewItem(id) {
   if (it.kind === 'show' && d.children?.length) meta.push(`${d.children.length} season${d.children.length > 1 ? 's' : ''}`);
   if (it.contentRating) meta.push(`<span class="pill">${esc(it.contentRating)}</span>`);
   const file = d.files?.[0];
-  const badges = file ? badgesFor(file).filter((b) => b !== 'Torrent') : [];
+  const badges = file ? badgesFor(file).filter((b) => b !== 'Stream') : [];
   if (badges.length) meta.push(badges.map((b, i) => `<span class="qbadge${i ? ' dim' : ''}">${esc(b)}</span>`).join(' '));
   const genres = it.genres?.length ? it.genres : show?.genres || [];
 
@@ -565,6 +608,11 @@ async function viewItem(id) {
   }
   actions += `<button class="btn lg" data-act="trailer" hidden>Trailer</button>`;
   if (playable) actions += `<button class="btn lg ghost" data-act="watched">${it.progress?.watched ? 'Mark unwatched' : 'Mark watched'}</button>`;
+  if (playable && d.canDownload && (d.files?.length || d.streaming)) actions += `<button class="btn lg ghost" data-act="download" title="Save to this device">${icons.download} Download</button>`;
+  if (isAdmin() && d.streaming) {
+    actions += `<button class="btn lg ghost" data-act="serverdl" title="Save as a file in your library">Download to server</button>`;
+    if (it.kind !== 'show' || d.children?.length) actions += `<button class="btn lg ghost" data-act="restream" title="Forget saved streams and look again">Find new streams</button>`;
+  }
   if (isAdmin() && (it.kind === 'movie' || it.kind === 'show')) {
     actions += `<button class="btn lg ghost" data-act="collect">${icons.plus} Collection</button><button class="btn lg ghost" data-act="match">Fix match</button>`;
   }
@@ -589,7 +637,7 @@ async function viewItem(id) {
   if (d.files?.length) {
     below += `<div class="files"><h2 style="font-size:16px">Files</h2>${d.files.map((f) => `<div class="file">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${badgesFor(f).map((b) => `<span class="qbadge dim">${esc(b)}</span>`).join('') || `<b>${esc(f.container)}</b>`}
-      ${f.torrentStatus ? `<span class="status s-${esc(f.torrentStatus)}">${esc(f.torrentStatus)}</span>` : ''}
+      ${f.release ? `<span class="small muted">${esc(f.release)}</span>` : ''}
       ${f.info?.chapters?.length ? `<span class="small muted">${f.info.chapters.length} chapters</span>` : ''}
       </div>
       <code class="muted">${esc(f.fileName)}</code>
@@ -616,10 +664,56 @@ async function viewItem(id) {
     render();
   });
   act('match', () => manage.fixMatch(it));
+  act('download', (e) => downloadToDevice(it, e.currentTarget, version()));
+  act('serverdl', async (e) => {
+    const b = e.currentTarget;
+    b.disabled = true;
+    try {
+      const r = await api(`/api/items/${it.id}/server-download`, { method: 'POST' });
+      toast(r.queued > 1 ? `${r.queued} episodes queued for download` : 'Queued for download');
+    } catch (ex) { toast(ex.message); }
+    b.disabled = false;
+  });
+  act('restream', async () => {
+    if (!(await manage.confirmForget(it))) return;
+    await api(`/api/items/${it.id}/streams`, { method: 'DELETE' });
+    toast('Saved streams cleared. The next play looks again.');
+    render();
+  });
   bindPlayLinks(node);
   bindShelves(node);
   loadExtras(it, node);
   return node;
+}
+
+// Device downloads: the server hands out a short-lived link to the original
+// file (or stream) and the browser saves it.
+async function downloadToDevice(it, btn, fileId) {
+  btn.disabled = true;
+  const label = btn.innerHTML;
+  try {
+    for (let i = 0; ; i++) {
+      const r = await api(`/api/items/${it.id}/download`, { method: 'POST', body: { fileId } });
+      if (r.status !== 'pending') {
+        const a = document.createElement('a');
+        a.href = r.url;
+        a.download = r.fileName || '';
+        document.body.append(a);
+        a.click();
+        a.remove();
+        toast(`Downloading ${r.fileName}${r.size ? ` (${fmtSize(r.size)})` : ''}`);
+        break;
+      }
+      if (i >= 20) throw new Error('No stream found yet. Try again in a minute.');
+      btn.textContent = r.message || 'Finding a stream…';
+      await new Promise((res) => setTimeout(res, 3000));
+    }
+  } catch (ex) {
+    toast(ex.message);
+  } finally {
+    btn.innerHTML = label;
+    btn.disabled = false;
+  }
 }
 
 async function loadExtras(it, node) {
