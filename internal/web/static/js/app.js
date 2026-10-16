@@ -343,7 +343,7 @@ export function titleCard(v, rank) {
   const r = rank ? `<span class="rank">${rank}</span>` : '';
   if (v.item) return posterCard(v.item, r);
   if (canStream()) {
-    return `<a class="card" href="/item/stream" data-stream-title="${v.tmdbId}" data-media="${esc(v.mediaType)}" title="Stream ${esc(v.title)}">
+    return `<a class="card" href="/item/stream" data-stream-title="${v.tmdbId}" data-media="${esc(v.mediaType)}">
       <div class="poster">${v.posterPath ? lazyImg(img(v.posterPath), v.title) : `<div class="ph">${esc(v.title)}</div>`}${r}</div>
       <div class="t">${esc(v.title)}</div><div class="s">${esc(v.year || '')}</div></a>`;
   }
