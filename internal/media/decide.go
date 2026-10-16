@@ -16,6 +16,11 @@ type ClientCaps struct {
 	NativeContainers []string `json:"nativeContainers"` // mp4, mov (direct); HLS remux covers the rest
 	DolbyVision      bool     `json:"dolbyVision"`
 	HDR              bool     `json:"hdr"`
+	// NeedsSDR is set by clients that pass HDR video to the display untouched
+	// (Android TV) when the display can't show HDR: it would look washed out,
+	// so HDR is transcoded and tone-mapped to SDR. Apple clients tone-map HDR
+	// themselves and leave it unset.
+	NeedsSDR bool `json:"needsSdr,omitempty"`
 	// MaxKbps limits bitrate (0 = unlimited, e.g. on LAN).
 	MaxKbps int `json:"maxKbps"`
 	// ForceEngine pins an engine ("" = let the server decide).
@@ -23,8 +28,7 @@ type ClientCaps struct {
 	// ForceTranscode is for testing / poor connections.
 	ForceTranscode bool `json:"forceTranscode"`
 	// AudioFallback is the codec unsupported audio is converted to during a
-	// remux: "alac" (Apple, default), "flac" (browsers) or "aac". Lossless
-	// codecs have no encoder priming, so per-segment encodes join seamlessly.
+	// remux: "alac" (Apple, default), "flac" (browsers) or "aac" (Android).
 	AudioFallback string `json:"audioFallback"`
 }
 
@@ -178,6 +182,9 @@ func nativeVideo(v *Stream, caps ClientCaps) (bool, string) {
 			// Profile 5 has no HDR10 fallback; without DV support colors are wrong.
 			return false, "Dolby Vision profile 5 without DV display support"
 		}
+	}
+	if caps.NeedsSDR && v.HDR != "" && v.HDR != "HLG" {
+		return false, v.HDR + " video on an SDR display"
 	}
 	if v.Codec == "hevc" && v.BitDepth > 10 {
 		return false, "HEVC >10-bit"

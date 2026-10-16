@@ -37,3 +37,27 @@ func TestDecideDolbyVisionProfile7(t *testing.T) {
 		t.Fatalf("profile 8: want a plain remux, got %+v", d)
 	}
 }
+
+func TestDecideHDROnSDRDisplay(t *testing.T) {
+	info := &Info{
+		Container: "mkv",
+		Video:     []Stream{{Codec: "hevc", BitDepth: 10, PixFmt: "yuv420p10le", HDR: "HDR10"}},
+		Audio:     []Stream{{Codec: "truehd", Default: true}},
+	}
+	tv := ClientCaps{Engines: []string{"avplayer"}, NativeVideo: []string{"h264", "hevc"},
+		NativeAudio: []string{"aac", "eac3"}, NativeContainers: []string{"mp4", "mkv"}, AudioFallback: "aac"}
+
+	if d := Decide(info, tv, -1); d.Method != MethodRemux || !d.VideoCopy {
+		t.Fatalf("HDR display: want a remux, got %+v", d)
+	}
+	tv.NeedsSDR = true
+	if d := Decide(info, tv, -1); d.Method != MethodTranscode || d.VideoCopy {
+		t.Fatalf("SDR display: want a tone-mapping transcode, got %+v", d)
+	}
+	// HLG is watchable on SDR displays as it is.
+	hlg := *info
+	hlg.Video = []Stream{{Codec: "hevc", BitDepth: 10, PixFmt: "yuv420p10le", HDR: "HLG"}}
+	if d := Decide(&hlg, tv, -1); d.Method != MethodRemux {
+		t.Fatalf("HLG: want a remux, got %+v", d)
+	}
+}

@@ -404,6 +404,8 @@ data class ClientCaps(
     val nativeContainers: List<String>,
     val dolbyVision: Boolean,
     val hdr: Boolean,
+    /** The display can't show HDR and nothing here tone-maps it: the server sends SDR. */
+    val needsSdr: Boolean = false,
     val maxKbps: Int = 0,
     val audioFallback: String? = null,
 )

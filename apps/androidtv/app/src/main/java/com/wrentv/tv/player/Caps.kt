@@ -72,6 +72,9 @@ object DeviceCaps {
             nativeContainers = listOf("mp4", "mov", "mkv", "ts"),
             dolbyVision = dolbyVision,
             hdr = hdr || dolbyVision,
+            // Android hands HDR frames to the display as they are; on an SDR TV
+            // (or an HDMI input without HDR turned on) they look washed out.
+            needsSdr = !hdr && !dolbyVision,
             // Not FLAC: Android's decoder fails where each HLS segment's
             // separately encoded FLAC stream restarts its frame numbers.
             audioFallback = "aac",
