@@ -160,7 +160,7 @@ struct LibraryView: View {
             }
         }
         .navigationTitle(library.name)
-        .navigationSubtitle(tab == "titles" && loaded ? "\(items.count) \(library.type == "shows" ? "shows" : "movies")" : "")
+        .navigationSubtitleIfAvailable(tab == "titles" && loaded ? "\(items.count) \(library.type == "shows" ? "shows" : "movies")" : "")
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Picker("View", selection: $tab) {

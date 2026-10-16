@@ -43,7 +43,7 @@ struct MainView: View {
             }
         }
         .tabViewStyle(.sidebarAdaptable)
-        .tabBarMinimizeBehavior(.onScrollDown)
+        .minimizesTabBarOnScroll()
     }
 }
 

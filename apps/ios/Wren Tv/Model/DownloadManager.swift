@@ -160,8 +160,9 @@ final class DownloadManager {
         preparing[id] = nil
         if let t = tasks.removeValue(forKey: id) {
             t.cancel { [weak self] data in
-                Task { @MainActor in
-                    if let data { try? data.write(to: self?.resumeURL(id) ?? URL(fileURLWithPath: "/dev/null")) }
+                guard let data else { return }
+                Task { @MainActor [weak self] in
+                    if let url = self?.resumeURL(id) { try? data.write(to: url) }
                 }
             }
         }

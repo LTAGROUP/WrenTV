@@ -321,7 +321,7 @@ struct GenreItemsView: View {
             }
         }
         .navigationTitle(route.genre)
-        .navigationSubtitle(items.map { "\($0.count) title\($0.count == 1 ? "" : "s")" } ?? "")
+        .navigationSubtitleIfAvailable(items.map { "\($0.count) title\($0.count == 1 ? "" : "s")" } ?? "")
         .toolbar {
             Picker("Show", selection: $kind) {
                 Text("All").tag("")

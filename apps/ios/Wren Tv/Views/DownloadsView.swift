@@ -29,7 +29,7 @@ struct DownloadsView: View {
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Downloads")
-        .navigationSubtitle(downloads.usedBytes > 0 ? ByteCountFormatter.string(fromByteCount: downloads.usedBytes, countStyle: .file) + " on this device" : "")
+        .navigationSubtitleIfAvailable(downloads.usedBytes > 0 ? ByteCountFormatter.string(fromByteCount: downloads.usedBytes, countStyle: .file) + " on this device" : "")
         .confirmationDialog("Remove \(confirmRemove?.displayTitle ?? "")?", isPresented: Binding(get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } })) {
             Button("Remove Download", role: .destructive) {
                 if let x = confirmRemove { downloads.remove(x.id) }

@@ -257,3 +257,16 @@ extension Color {
     static let wrenInk = Color(red: 0x1C / 255, green: 0x1A / 255, blue: 0x21 / 255)
     static let wrenCream = Color(red: 0xF7 / 255, green: 0xF1 / 255, blue: 0xE8 / 255)
 }
+
+/// Modifiers that only exist on newer iOS versions. Older versions skip them.
+extension View {
+    /// The subtitle under a large navigation title (iOS 26+).
+    @ViewBuilder func navigationSubtitleIfAvailable(_ subtitle: String) -> some View {
+        if #available(iOS 26, *) { navigationSubtitle(subtitle) } else { self }
+    }
+
+    /// Shrinks the tab bar while scrolling down (iOS 26+).
+    @ViewBuilder func minimizesTabBarOnScroll() -> some View {
+        if #available(iOS 26, *) { tabBarMinimizeBehavior(.onScrollDown) } else { self }
+    }
+}

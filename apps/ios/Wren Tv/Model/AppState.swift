@@ -24,6 +24,7 @@ final class AppState {
 
     private var eventsTask: Task<Void, Never>?
     private var pathMonitor: NWPathMonitor?
+    private var sawFirstPath = false
     private var picking: Task<Void, Never>?
 
     /// Signed in to an account that can't use this server yet (not shared, or
@@ -325,13 +326,17 @@ final class AppState {
 
     private func watchNetwork() {
         let m = NWPathMonitor()
-        var first = true
+        sawFirstPath = false
         m.pathUpdateHandler = { [weak self] path in
             guard path.status == .satisfied else { return }
-            if first { first = false; return }
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(2)) // let the new network settle
-                self?.pickAddress()
+            // The monitor runs on the main queue (below).
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if !self.sawFirstPath { self.sawFirstPath = true; return }
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(2)) // let the new network settle
+                    self?.pickAddress()
+                }
             }
         }
         m.start(queue: .main)

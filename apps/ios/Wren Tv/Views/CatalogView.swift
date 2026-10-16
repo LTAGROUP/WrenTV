@@ -41,7 +41,7 @@ struct CatalogView: View {
             }
         }
         .navigationTitle(label)
-        .navigationSubtitle(genres.first { $0.id == genre }?.name ?? "")
+        .navigationSubtitleIfAvailable(genres.first { $0.id == genre }?.name ?? "")
         .toolbar {
             ToolbarItemGroup {
                 Menu {
