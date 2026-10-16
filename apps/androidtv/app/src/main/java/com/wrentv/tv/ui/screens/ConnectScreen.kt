@@ -182,7 +182,6 @@ private fun LinkCard(code: String?, link: String?, hint: String, modifier: Modif
 @Composable
 private fun ServerPicker(useAddress: () -> Unit) {
     val state = LocalAppState.current
-    val scope = rememberCoroutineScope()
     var opening by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     val first = remember { FocusRequester() }
@@ -209,7 +208,7 @@ private fun ServerPicker(useAddress: () -> Unit) {
                     if (opening != null) return@ListRow
                     opening = s.id
                     error = null
-                    scope.launch {
+                    state.scope.launch {
                         try {
                             state.open(s)
                         } catch (e: Exception) {
@@ -229,7 +228,7 @@ private fun ServerPicker(useAddress: () -> Unit) {
     error?.let { Spacer(Modifier.height(14.dp)); Text(it, color = Wren.bad, style = MaterialTheme.typography.bodyLarge) }
     Spacer(Modifier.height(22.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-        PillButton("Refresh", { scope.launch { state.loadAccountServers() } }, if (servers.isNullOrEmpty()) Modifier.focusRequester(first) else Modifier)
+        PillButton("Refresh", { state.scope.launch { state.loadAccountServers() } }, if (servers.isNullOrEmpty()) Modifier.focusRequester(first) else Modifier)
         PillButton("Connect by Address", useAddress)
         WatchDownloads()
     }

@@ -7,6 +7,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -131,7 +132,8 @@ class AppState(context: Context) {
         store.setSession(accounts.storeKey, session)
         account = session
         accountEmail = session.email
-        loadAccountServers(open = true)
+        // The sign-in screen goes away now, taking its coroutine with it: connect from the app's own scope.
+        scope.launch { loadAccountServers(open = true) }
     }
 
     /**
@@ -155,6 +157,8 @@ class AppState(context: Context) {
         accounts.acceptInvites(session)
         val servers = try {
             accounts.servers(session).also { accountServersError = null }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             accountServersError = e.message
             return
@@ -162,7 +166,13 @@ class AppState(context: Context) {
         accountServers = servers
         if (!open) return
         val pick = servers.singleOrNull() ?: servers.filter { it.online }.singleOrNull() ?: return
-        runCatching { open(pick) }.onFailure { accountServersError = it.message }
+        try {
+            open(pick)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            accountServersError = e.message
+        }
     }
 
     /** Connects to one of the account's servers at whichever published address answers (home network first, then remote). */
