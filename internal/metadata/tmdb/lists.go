@@ -90,3 +90,19 @@ func (c *Client) Chart(ctx context.Context, chart, mediaType string, pages int) 
 	}
 	return out, nil
 }
+
+// ByGenre returns popular titles in a TMDB genre. mediaType is "movie" or
+// "tv". Only titles with enough votes to be worth showing.
+func (c *Client) ByGenre(ctx context.Context, mediaType string, genreID int) ([]Title, error) {
+	var r struct {
+		Results []Title `json:"results"`
+	}
+	params := url.Values{"with_genres": {fmt.Sprint(genreID)}, "sort_by": {"popularity.desc"}, "vote_count.gte": {"200"}}
+	if err := c.get(ctx, "/discover/"+mediaType, params, 12*time.Hour, &r); err != nil {
+		return nil, err
+	}
+	for i := range r.Results {
+		r.Results[i].MediaType = mediaType
+	}
+	return r.Results, nil
+}

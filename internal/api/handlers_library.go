@@ -218,6 +218,32 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	cont := s.continueWatching(ctx, r, ids)
+
+	type shelf struct {
+		Library *db.Library `json:"library"`
+		Items   []*db.Item  `json:"items"`
+	}
+	shelves := []shelf{}
+	for _, l := range libs {
+		kind := "movie"
+		if l.Type == "shows" {
+			kind = "show"
+		}
+		items, _, _ := s.DB.QueryItems(ctx, db.ItemQuery{LibraryID: l.ID, Kind: kind, Sort: "added", Limit: 20, UserID: p.User.ID})
+		if len(items) > 0 {
+			shelves = append(shelves, shelf{l, items})
+		}
+	}
+	topRated, genres := s.homeRows(ctx, p.User.ID, ids)
+	writeJSON(w, 200, map[string]any{"continueWatching": nonNil(cont), "recentlyAdded": shelves, "topRated": topRated, "genres": genres,
+		"collections": s.homeCollections(ctx, r)})
+}
+
+// continueWatching is in-progress movies and episodes, then the next
+// episode of shows watched recently.
+func (s *Server) continueWatching(ctx context.Context, r *http.Request, ids []string) []*db.Item {
+	p := principal(r)
 	cont, _ := s.DB.ContinueWatching(ctx, p.User.ID, ids, 20)
 	// "Up next": the next episode for shows watched recently.
 	upNext := []*db.Item{}
@@ -252,25 +278,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 	cont = append(cont, upNext...)
 	s.decorateEpisodes(ctx, cont)
-
-	type shelf struct {
-		Library *db.Library `json:"library"`
-		Items   []*db.Item  `json:"items"`
-	}
-	shelves := []shelf{}
-	for _, l := range libs {
-		kind := "movie"
-		if l.Type == "shows" {
-			kind = "show"
-		}
-		items, _, _ := s.DB.QueryItems(ctx, db.ItemQuery{LibraryID: l.ID, Kind: kind, Sort: "added", Limit: 20, UserID: p.User.ID})
-		if len(items) > 0 {
-			shelves = append(shelves, shelf{l, items})
-		}
-	}
-	topRated, genres := s.homeRows(ctx, p.User.ID, ids)
-	writeJSON(w, 200, map[string]any{"continueWatching": nonNil(cont), "recentlyAdded": shelves, "topRated": topRated, "genres": genres,
-		"collections": s.homeCollections(ctx, r)})
+	return nonNil(cont)
 }
 
 // decorateEpisodes fills show artwork onto episodes lacking stills.

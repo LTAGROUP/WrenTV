@@ -56,7 +56,8 @@ document.addEventListener('click', async (e) => {
   a.classList.add('busy');
   try {
     const it = await api('/api/streaming/titles', { method: 'POST', body: { tmdbId: Number(a.dataset.streamTitle), mediaType: a.dataset.media } });
-    go('/item/' + it.id);
+    if (a.dataset.streamPlay && it.kind === 'movie') openPlayer(it.id, { resume: true });
+    else go('/item/' + it.id);
   } catch (ex) {
     toast(ex.message);
   } finally {
@@ -403,6 +404,7 @@ function pickFeatured(home) {
 
 async function viewHome() {
   setTitle('Home');
+  if (canStream()) return viewDiscoverHome();
   const home = await api('/api/home');
   if (!libraries.length) {
     return `<div class="empty"><h2>No libraries yet</h2><p>${isAdmin() ? 'Add a folder with your movies or shows to get started.' : 'The server owner hasn\'t shared any libraries with you yet.'}</p>
@@ -427,6 +429,45 @@ async function viewHome() {
   $('[data-feature-play]', node)?.addEventListener('click', (e) => openPlayer(e.currentTarget.dataset.featurePlay, { resume: true, onClose: () => render() }));
   loadTrending(node);
   return node;
+}
+
+// viewDiscoverHome is the home page when the server streams: everything
+// on TMDB, in rows, not just what the libraries hold.
+async function viewDiscoverHome() {
+  const home = await api('/api/discover/home');
+  if (!home.enabled) {
+    return `<div class="empty"><h2>Discovery needs TMDB</h2><p>${isAdmin() ? 'Add a TMDB API key in Settings to fill the home page.' : 'The server owner hasn\'t set up TMDB yet.'}</p>
+      ${isAdmin() ? '<a class="btn primary" href="/manage/settings">Open settings</a>' : ''}</div>`;
+  }
+  const hero = home.hero.length ? home.hero[Math.floor(Date.now() / 3.6e6) % home.hero.length] : null;
+  let html = hero ? discoverHero(hero) : '';
+  if (home.continueWatching.length) html += shelf('Continue Watching', home.continueWatching.map(wideCard).join(''));
+  home.rows.forEach((row, i) => {
+    if (i === 1 && home.recentlyWatched.length) html += shelf('Recently Watched', home.recentlyWatched.map((it) => posterCard(it)).join(''));
+    html += shelf(row.title, row.items.map((v, n) => titleCard(v, row.id === 'trending' && n < 10 ? n + 1 : 0)).join(''));
+  });
+  if (home.rows.length < 2 && home.recentlyWatched.length) html += shelf('Recently Watched', home.recentlyWatched.map((it) => posterCard(it)).join(''));
+  const node = el(`<div class="discover">${html || '<div class="empty"><h2>Nothing to show</h2><p>TMDB didn\'t answer. Try again in a moment.</p></div>'}</div>`);
+  bindPlayLinks(node);
+  bindShelves(node);
+  $('[data-feature-play]', node)?.addEventListener('click', (e) => openPlayer(e.currentTarget.dataset.featurePlay, { resume: true, onClose: () => render() }));
+  return node;
+}
+
+function discoverHero(v) {
+  const it = v.item;
+  const kind = v.mediaType === 'show' ? 'Series' : 'Film';
+  const meta = [v.year, kind, v.rating && `★ ${v.rating.toFixed(1)}`].filter(Boolean);
+  const stream = `data-stream-title="${v.tmdbId}" data-media="${esc(v.mediaType)}"`;
+  const play = it ? (it.kind === 'movie' ? `<button class="btn primary lg" data-feature-play="${it.id}">▶ Play</button>` : '')
+    : v.mediaType === 'movie' ? `<a class="btn primary lg" href="/item/stream" ${stream} data-stream-play="1">▶ Play</a>` : '';
+  const info = it ? `<a class="btn lg" href="/item/${it.id}">More info</a>` : `<a class="btn lg" href="/item/stream" ${stream}>More info</a>`;
+  return `<section class="feature"><div class="bg" style="background-image:url('${img(v.backdropPath, 'w1280')}')"></div>
+    <div class="content"><div class="eyebrow">Trending this week</div>
+    ${it?.logoPath ? `<img class="logo-img" src="${img(it.logoPath, 'w500')}" alt="${esc(v.title)}">` : `<h1>${esc(v.title)}</h1>`}
+    <div class="meta">${meta.join('<span class="muted">·</span>')}</div>
+    <p class="overview">${esc(v.overview || '')}</p>
+    <div class="actions">${play}${info}</div></div></section>`;
 }
 
 async function loadTrending(node) {
