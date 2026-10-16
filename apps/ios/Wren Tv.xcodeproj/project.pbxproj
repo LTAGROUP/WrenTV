@@ -1,0 +1,571 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 110;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		6066576F3081FF4100ADFF8B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 606657553081FF3F00ADFF8B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6066575C3081FF3F00ADFF8B;
+			remoteInfo = "Wren Tv";
+		};
+		606657793081FF4100ADFF8B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 606657553081FF3F00ADFF8B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6066575C3081FF3F00ADFF8B;
+			remoteInfo = "Wren Tv";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		6066575D3081FF3F00ADFF8B /* Wren Tv.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Wren Tv.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		6066576E3081FF4100ADFF8B /* Wren TvTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Wren TvTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		606657783081FF4100ADFF8B /* Wren TvUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Wren TvUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		6066577E3081FF4100ADFF8B /* Exceptions for "Wren Tv" folder in "Wren Tv" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 6066575C3081FF3F00ADFF8B /* Wren Tv */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		6066575F3081FF3F00ADFF8B /* Wren Tv */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				6066577E3081FF4100ADFF8B /* Exceptions for "Wren Tv" folder in "Wren Tv" target */,
+			);
+			path = "Wren Tv";
+			sourceTree = "<group>";
+		};
+		606657713081FF4100ADFF8B /* Wren TvTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Wren TvTests";
+			sourceTree = "<group>";
+		};
+		6066577B3081FF4100ADFF8B /* Wren TvUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Wren TvUITests";
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		6066575A3081FF3F00ADFF8B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		6066576B3081FF4100ADFF8B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		606657753081FF4100ADFF8B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		606657543081FF3F00ADFF8B = {
+			isa = PBXGroup;
+			children = (
+				6066575F3081FF3F00ADFF8B /* Wren Tv */,
+				606657713081FF4100ADFF8B /* Wren TvTests */,
+				6066577B3081FF4100ADFF8B /* Wren TvUITests */,
+				6066575E3081FF3F00ADFF8B /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		6066575E3081FF3F00ADFF8B /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				6066575D3081FF3F00ADFF8B /* Wren Tv.app */,
+				6066576E3081FF4100ADFF8B /* Wren TvTests.xctest */,
+				606657783081FF4100ADFF8B /* Wren TvUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		6066575C3081FF3F00ADFF8B /* Wren Tv */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6066577F3081FF4100ADFF8B /* Build configuration list for PBXNativeTarget "Wren Tv" */;
+			buildPhases = (
+				606657593081FF3F00ADFF8B /* Sources */,
+				6066575A3081FF3F00ADFF8B /* Frameworks */,
+				6066575B3081FF3F00ADFF8B /* Resources */,
+			);
+			buildRules = (
+			);
+			fileSystemSynchronizedGroups = (
+				6066575F3081FF3F00ADFF8B /* Wren Tv */,
+			);
+			name = "Wren Tv";
+			productName = "Wren Tv";
+			productReference = 6066575D3081FF3F00ADFF8B /* Wren Tv.app */;
+			productType = "com.apple.product-type.application";
+		};
+		6066576D3081FF4100ADFF8B /* Wren TvTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 606657843081FF4100ADFF8B /* Build configuration list for PBXNativeTarget "Wren TvTests" */;
+			buildPhases = (
+				6066576A3081FF4100ADFF8B /* Sources */,
+				6066576B3081FF4100ADFF8B /* Frameworks */,
+				6066576C3081FF4100ADFF8B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				606657703081FF4100ADFF8B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				606657713081FF4100ADFF8B /* Wren TvTests */,
+			);
+			name = "Wren TvTests";
+			productName = "Wren TvTests";
+			productReference = 6066576E3081FF4100ADFF8B /* Wren TvTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		606657773081FF4100ADFF8B /* Wren TvUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 606657873081FF4100ADFF8B /* Build configuration list for PBXNativeTarget "Wren TvUITests" */;
+			buildPhases = (
+				606657743081FF4100ADFF8B /* Sources */,
+				606657753081FF4100ADFF8B /* Frameworks */,
+				606657763081FF4100ADFF8B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6066577A3081FF4100ADFF8B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				6066577B3081FF4100ADFF8B /* Wren TvUITests */,
+			);
+			name = "Wren TvUITests";
+			productName = "Wren TvUITests";
+			productReference = 606657783081FF4100ADFF8B /* Wren TvUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		606657553081FF3F00ADFF8B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					6066575C3081FF3F00ADFF8B = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					6066576D3081FF4100ADFF8B = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 6066575C3081FF3F00ADFF8B;
+					};
+					606657773081FF4100ADFF8B = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 6066575C3081FF3F00ADFF8B;
+					};
+				};
+			};
+			buildConfigurationList = 606657583081FF3F00ADFF8B /* Build configuration list for PBXProject "Wren Tv" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 606657543081FF3F00ADFF8B;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 6066575E3081FF3F00ADFF8B /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				6066575C3081FF3F00ADFF8B /* Wren Tv */,
+				6066576D3081FF4100ADFF8B /* Wren TvTests */,
+				606657773081FF4100ADFF8B /* Wren TvUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		6066575B3081FF3F00ADFF8B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		6066576C3081FF4100ADFF8B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		606657763081FF4100ADFF8B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		606657593081FF3F00ADFF8B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		6066576A3081FF4100ADFF8B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		606657743081FF4100ADFF8B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		606657703081FF4100ADFF8B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6066575C3081FF3F00ADFF8B /* Wren Tv */;
+			targetProxy = 6066576F3081FF4100ADFF8B /* PBXContainerItemProxy */;
+		};
+		6066577A3081FF4100ADFF8B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6066575C3081FF3F00ADFF8B /* Wren Tv */;
+			targetProxy = 606657793081FF4100ADFF8B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		606657803081FF4100ADFF8B /* Debug configuration for PBXNativeTarget "Wren Tv" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "Wren Tv/Wren_Tv.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 82TLKK4L6W;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Wren Tv/Info.plist";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "ltagroup.Wren-Tv";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		606657813081FF4100ADFF8B /* Release configuration for PBXNativeTarget "Wren Tv" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "Wren Tv/Wren_Tv.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 82TLKK4L6W;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Wren Tv/Info.plist";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "ltagroup.Wren-Tv";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		606657823081FF4100ADFF8B /* Debug configuration for PBXProject "Wren Tv" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 82TLKK4L6W;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		606657833081FF4100ADFF8B /* Release configuration for PBXProject "Wren Tv" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 82TLKK4L6W;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		606657853081FF4100ADFF8B /* Debug configuration for PBXNativeTarget "Wren TvTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 82TLKK4L6W;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "ltagroup.Wren-TvTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Wren Tv.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Wren Tv";
+			};
+			name = Debug;
+		};
+		606657863081FF4100ADFF8B /* Release configuration for PBXNativeTarget "Wren TvTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 82TLKK4L6W;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "ltagroup.Wren-TvTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Wren Tv.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Wren Tv";
+			};
+			name = Release;
+		};
+		606657883081FF4100ADFF8B /* Debug configuration for PBXNativeTarget "Wren TvUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 82TLKK4L6W;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "ltagroup.Wren-TvUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = "Wren Tv";
+			};
+			name = Debug;
+		};
+		606657893081FF4100ADFF8B /* Release configuration for PBXNativeTarget "Wren TvUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 82TLKK4L6W;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "ltagroup.Wren-TvUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = "Wren Tv";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		606657583081FF3F00ADFF8B /* Build configuration list for PBXProject "Wren Tv" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				606657823081FF4100ADFF8B /* Debug configuration for PBXProject "Wren Tv" */,
+				606657833081FF4100ADFF8B /* Release configuration for PBXProject "Wren Tv" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		6066577F3081FF4100ADFF8B /* Build configuration list for PBXNativeTarget "Wren Tv" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				606657803081FF4100ADFF8B /* Debug configuration for PBXNativeTarget "Wren Tv" */,
+				606657813081FF4100ADFF8B /* Release configuration for PBXNativeTarget "Wren Tv" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		606657843081FF4100ADFF8B /* Build configuration list for PBXNativeTarget "Wren TvTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				606657853081FF4100ADFF8B /* Debug configuration for PBXNativeTarget "Wren TvTests" */,
+				606657863081FF4100ADFF8B /* Release configuration for PBXNativeTarget "Wren TvTests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		606657873081FF4100ADFF8B /* Build configuration list for PBXNativeTarget "Wren TvUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				606657883081FF4100ADFF8B /* Debug configuration for PBXNativeTarget "Wren TvUITests" */,
+				606657893081FF4100ADFF8B /* Release configuration for PBXNativeTarget "Wren TvUITests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 606657553081FF3F00ADFF8B /* Project object */;
+	validationLevel = 1;
+}

@@ -1,0 +1,225 @@
+import Foundation
+
+/// A signed-in Wren TV account (Supabase Auth session).
+struct AccountSession: Codable, Sendable {
+    var accessToken: String
+    var refreshToken: String
+    var expiresAt: Double
+    var email: String
+}
+
+extension SupabaseInfo {
+    /// The Wren TV account service. The publishable key is public: every
+    /// account server hands it to its clients in /api/server.
+    static let wrenTV = SupabaseInfo(url: "https://buycndonhmcafzzcvmgu.supabase.co",
+                                     publishableKey: "sb_publishable_vNiXbucy_8L_RQBFPoBPvA_HNZv1i15")
+}
+
+extension AccountSession {
+    /// The account's user id, from the access token.
+    var userId: String? {
+        let parts = accessToken.split(separator: ".")
+        guard parts.count > 1 else { return nil }
+        var b64 = parts[1].replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while b64.count % 4 != 0 { b64 += "=" }
+        guard let data = Data(base64Encoded: b64),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return obj["sub"] as? String
+    }
+}
+
+/// A server this account owns or has been shared, as the account service lists it.
+struct AccountServer: Decodable, Identifiable, Hashable {
+    var id: String
+    var name: String
+    var owner_id: String
+    var local_urls: [String]?
+    var public_url: String?
+    var remote_url: String?
+    var last_seen_at: String?
+
+    var lastSeen: Date? {
+        guard let s = last_seen_at else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: s) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: s)
+    }
+
+    /// Every address the server published, best first.
+    var candidates: [URL] {
+        AddressPicker.candidates(entered: nil, localUrls: local_urls ?? [], publicUrl: public_url, remoteUrl: remote_url)
+    }
+}
+
+/// Talks to the Wren TV account service (Supabase Auth over REST).
+struct AccountClient: Sendable {
+    let url: URL
+    let publishableKey: String
+
+    init(_ info: SupabaseInfo) {
+        url = URL(string: info.url)!
+        publishableKey = info.publishableKey
+    }
+
+    /// Keychain account under which the session is stored; shared by every
+    /// server that uses the same account service.
+    var keychainKey: String { "account:" + url.absoluteString }
+
+    private struct TokenResponse: Decodable {
+        var access_token: String?
+        var refresh_token: String?
+        var expires_in: Double?
+        var expires_at: Double?
+        var user: U?
+        struct U: Decodable { var email: String? }
+    }
+
+    private struct ErrorResponse: Decodable {
+        var msg: String?
+        var message: String?
+        var error_description: String?
+        var error: String?
+    }
+
+    private func request(_ path: String, body: [String: Any], bearer: String? = nil) async throws -> Data {
+        var req = URLRequest(url: URL(string: path, relativeTo: url)!)
+        req.httpMethod = "POST"
+        req.setValue(publishableKey, forHTTPHeaderField: "apikey")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let bearer { req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if status >= 400 {
+            let e = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            let msg = e?.msg ?? e?.error_description ?? e?.message ?? e?.error ?? HTTPURLResponse.localizedString(forStatusCode: status)
+            throw WrenTVError(message: msg.prefix(1).uppercased() + msg.dropFirst(), status: status)
+        }
+        return data
+    }
+
+    private func session(from data: Data, email fallback: String) throws -> AccountSession? {
+        let t = try JSONDecoder().decode(TokenResponse.self, from: data)
+        guard let access = t.access_token, let refresh = t.refresh_token else { return nil }
+        let expires = t.expires_at ?? Date().timeIntervalSince1970 + (t.expires_in ?? 3600)
+        return AccountSession(accessToken: access, refreshToken: refresh, expiresAt: expires, email: t.user?.email ?? fallback)
+    }
+
+    func signIn(email: String, password: String) async throws -> AccountSession {
+        let data = try await request("/auth/v1/token?grant_type=password", body: ["email": email, "password": password])
+        guard let s = try session(from: data, email: email) else { throw WrenTVError(message: "Sign-in failed") }
+        await acceptInvites(s)
+        return s
+    }
+
+    /// Returns nil when the account must confirm its email before signing in.
+    func signUp(email: String, password: String, name: String) async throws -> AccountSession? {
+        let data = try await request("/auth/v1/signup", body: ["email": email, "password": password, "data": ["display_name": name]])
+        guard let s = try session(from: data, email: email) else { return nil }
+        await acceptInvites(s)
+        return s
+    }
+
+    func refresh(_ s: AccountSession) async throws -> AccountSession {
+        let data = try await request("/auth/v1/token?grant_type=refresh_token", body: ["refresh_token": s.refreshToken])
+        guard let n = try session(from: data, email: s.email) else { throw WrenTVError(message: "Your sign-in expired", status: 401) }
+        return n
+    }
+
+    func signOut(_ s: AccountSession) async {
+        _ = try? await request("/auth/v1/logout", body: [:], bearer: s.accessToken)
+    }
+
+    struct ServerAddresses: Decodable {
+        var local_urls: [String]?
+        var public_url: String?
+        var remote_url: String?
+    }
+
+    /// The addresses a server published in its heartbeat (visible to its
+    /// owner and the accounts it's shared with).
+    func addresses(server id: String, _ s: AccountSession) async -> ServerAddresses? {
+        guard var c = URLComponents(url: URL(string: "/rest/v1/servers", relativeTo: url)!, resolvingAgainstBaseURL: true) else { return nil }
+        c.queryItems = [.init(name: "id", value: "eq." + id), .init(name: "select", value: "local_urls,public_url,remote_url")]
+        guard let u = c.url else { return nil }
+        var req = URLRequest(url: u)
+        req.setValue(publishableKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(s.accessToken)", forHTTPHeaderField: "Authorization")
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return (try? JSONDecoder().decode([ServerAddresses].self, from: data))?.first
+    }
+
+    /// The servers this account owns or has been shared, most recently seen first.
+    func servers(_ s: AccountSession) async throws -> [AccountServer] {
+        var c = URLComponents(url: URL(string: "/rest/v1/servers", relativeTo: url)!, resolvingAgainstBaseURL: true)!
+        c.queryItems = [.init(name: "select", value: "id,name,owner_id,local_urls,public_url,remote_url,last_seen_at"),
+                        .init(name: "order", value: "last_seen_at.desc.nullslast")]
+        var req = URLRequest(url: c.url!)
+        req.setValue(publishableKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(s.accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if status >= 400 { throw WrenTVError(message: "Couldn't load your servers", status: status) }
+        return try JSONDecoder().decode([AccountServer].self, from: data)
+    }
+
+    /// Turns pending share invites for this email into access.
+    func acceptInvites(_ s: AccountSession) async {
+        _ = try? await request("/rest/v1/rpc/accept_invites", body: [:], bearer: s.accessToken)
+    }
+}
+
+/// Supplies the bearer token for server requests, refreshing account sessions
+/// before they expire.
+actor TokenSource {
+    private enum Kind {
+        case local(String)
+        case account(AccountClient, AccountSession)
+    }
+
+    private var kind: Kind
+    private var refreshing: Task<AccountSession, Error>?
+
+    init(localToken: String) { kind = .local(localToken) }
+    init(account: AccountClient, session: AccountSession) { kind = .account(account, session) }
+
+    var email: String? {
+        if case .account(_, let s) = kind { return s.email }
+        return nil
+    }
+
+    var accountSession: AccountSession? {
+        if case .account(_, let s) = kind { return s }
+        return nil
+    }
+
+    func token() async throws -> String {
+        switch kind {
+        case .local(let t):
+            return t
+        case .account(let client, let s):
+            if s.expiresAt - 60 > Date().timeIntervalSince1970 { return s.accessToken }
+            let task = refreshing ?? Task { try await client.refresh(s) }
+            refreshing = task
+            defer { refreshing = nil }
+            let fresh = try await task.value
+            kind = .account(client, fresh)
+            Keychain.setSession(fresh, for: client.keychainKey)
+            return fresh.accessToken
+        }
+    }
+}
+
+extension Keychain {
+    static func session(for key: String) -> AccountSession? {
+        guard let s = get(key) else { return nil }
+        return try? JSONDecoder().decode(AccountSession.self, from: Data(s.utf8))
+    }
+
+    static func setSession(_ s: AccountSession?, for key: String) {
+        set(s.flatMap { (try? JSONEncoder().encode($0)).flatMap { String(data: $0, encoding: .utf8) } }, for: key)
+    }
+}

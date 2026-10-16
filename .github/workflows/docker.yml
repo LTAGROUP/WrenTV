@@ -1,11 +1,14 @@
 # Builds the server image on every push to main and publishes it to
 # ghcr.io/ltagroup/wrentv (:latest and :<short sha>). Servers update with
 #   docker compose pull && docker compose up -d
+# Pushes that only touch the client apps (apps/) are skipped.
 name: Docker image
 
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'apps/**'
   workflow_dispatch:
 
 permissions:
