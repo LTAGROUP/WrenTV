@@ -89,6 +89,142 @@ export const icons = {
   torrent: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"/></svg>',
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 01-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 010-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 014 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 010 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>',
   activity: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>',
+  stack: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="7" width="13" height="14" rx="2"/><path d="M4 17V5a2 2 0 012-2h10"/></svg>',
+  tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12V4a1 1 0 011-1h8l9 9-9 9z"/><circle cx="8" cy="8" r="1.6" fill="currentColor"/></svg>',
+  chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>',
   menu: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
   back: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>',
 };
+
+// ---------- dropdowns ----------
+// Native <select> menus render as OS widgets that clash with the app (and
+// look broken over video). enhanceSelect keeps the <select> as the source of
+// truth (value, change events, forms) and draws a styled button and menu.
+
+let openMenu = null;
+
+function closeMenu() {
+  if (!openMenu) return;
+  openMenu.menu.remove();
+  openMenu.btn.setAttribute('aria-expanded', 'false');
+  openMenu.btn.classList.remove('open');
+  openMenu = null;
+}
+document.addEventListener('mousedown', (e) => { if (openMenu && !openMenu.menu.contains(e.target) && !openMenu.btn.contains(e.target)) closeMenu(); }, true);
+window.addEventListener('resize', closeMenu);
+document.addEventListener('scroll', (e) => { if (openMenu && !openMenu.menu.contains(e.target)) closeMenu(); }, true);
+
+const valueDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+
+export function enhanceSelect(sel) {
+  if (sel.dataset.enhanced || sel.multiple || sel.dataset.native !== undefined) return;
+  sel.dataset.enhanced = '1';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'dd' + (sel.className ? ' ' + sel.className : '');
+  btn.setAttribute('aria-haspopup', 'listbox');
+  btn.setAttribute('aria-expanded', 'false');
+  if (sel.title) btn.title = sel.title;
+  const caption = sel.dataset.caption;
+  btn.innerHTML = `${caption ? `<span class="dd-cap">${esc(caption)}</span>` : ''}<span class="dd-val"></span><svg class="dd-chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  sel.classList.add('dd-native');
+  sel.tabIndex = -1;
+  sel.setAttribute('aria-hidden', 'true');
+  sel.after(btn);
+
+  const sync = () => {
+    const o = sel.selectedOptions[0];
+    $('.dd-val', btn).textContent = o ? o.textContent : '';
+    btn.hidden = sel.hidden;
+    btn.disabled = sel.disabled;
+  };
+  // Programmatic value changes don't fire events; catch them on this element.
+  Object.defineProperty(sel, 'value', {
+    configurable: true,
+    get() { return valueDesc.get.call(this); },
+    set(v) { valueDesc.set.call(this, v); sync(); },
+  });
+  new MutationObserver(sync).observe(sel, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'disabled'] });
+  sel.addEventListener('change', sync);
+  sync();
+
+  const choose = (opt) => {
+    closeMenu();
+    btn.focus();
+    if (opt.value === sel.value) return;
+    sel.value = opt.value;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    sel.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+
+  const open = () => {
+    if (openMenu?.btn === btn) return closeMenu();
+    closeMenu();
+    const menu = document.createElement('div');
+    menu.className = 'dd-menu' + (btn.closest('.player') ? ' dark' : '');
+    menu.setAttribute('role', 'listbox');
+    let html = '';
+    for (const node of sel.children) {
+      if (node.tagName === 'OPTGROUP') {
+        html += `<div class="dd-group">${esc(node.label)}</div>`;
+        for (const o of node.children) html += optHtml(o);
+      } else html += optHtml(node);
+    }
+    menu.innerHTML = html;
+    // The player is full screen; menus must live inside it to stay visible.
+    (btn.closest('.player') || document.body).append(menu);
+    const r = btn.getBoundingClientRect();
+    const below = innerHeight - r.bottom - 12, above = r.top - 12;
+    const up = below < 220 && above > below;
+    menu.style.minWidth = `${Math.max(r.width, 180)}px`;
+    menu.style.maxHeight = `${Math.max(140, Math.min(380, up ? above : below))}px`;
+    const left = Math.min(r.left, innerWidth - menu.offsetWidth - 8);
+    menu.style.left = `${Math.max(8, left)}px`;
+    if (up) menu.style.bottom = `${innerHeight - r.top + 6}px`; else menu.style.top = `${r.bottom + 6}px`;
+    menu.classList.toggle('up', up);
+    btn.setAttribute('aria-expanded', 'true');
+    btn.classList.add('open');
+    openMenu = { btn, menu };
+    const opts = $$('.dd-opt:not([aria-disabled])', menu);
+    const cur = $('.dd-opt[aria-selected=true]', menu) || opts[0];
+    cur?.focus();
+    cur?.scrollIntoView({ block: 'nearest' });
+    menu.addEventListener('click', (e) => {
+      const o = e.target.closest('.dd-opt');
+      if (o && !o.hasAttribute('aria-disabled')) choose(sel.options[Number(o.dataset.i)]);
+    });
+    menu.addEventListener('keydown', (e) => {
+      const i = opts.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown') { e.preventDefault(); opts[Math.min(opts.length - 1, i + 1)]?.focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); opts[Math.max(0, i - 1)]?.focus(); }
+      else if (e.key === 'Home') { e.preventDefault(); opts[0]?.focus(); }
+      else if (e.key === 'End') { e.preventDefault(); opts.at(-1)?.focus(); }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (i >= 0) choose(sel.options[Number(opts[i].dataset.i)]); }
+      else if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); closeMenu(); btn.focus(); }
+      else if (e.key.length === 1) {
+        const k = e.key.toLowerCase();
+        const n = opts.slice(i + 1).concat(opts.slice(0, i + 1)).find((o) => o.textContent.trim().toLowerCase().startsWith(k));
+        n?.focus();
+      }
+    });
+  };
+  const optHtml = (o) => `<div class="dd-opt" role="option" tabindex="-1" data-i="${o.index}" aria-selected="${o.selected}"${o.disabled ? ' aria-disabled="true"' : ''}>
+    <svg class="dd-check" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.2l2.3 2.3 4.7-4.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>${esc(o.textContent)}</span></div>`;
+
+  btn.addEventListener('click', open);
+  btn.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); open(); }
+  });
+}
+
+// Enhance every select as it appears.
+export function enhanceAll(root = document) {
+  for (const s of root.querySelectorAll('select')) enhanceSelect(s);
+}
+new MutationObserver((muts) => {
+  for (const m of muts) for (const n of m.addedNodes) {
+    if (n.nodeType !== 1) continue;
+    if (n.tagName === 'SELECT') enhanceSelect(n); else if (n.querySelector) enhanceAll(n);
+  }
+}).observe(document.documentElement, { childList: true, subtree: true });

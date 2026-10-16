@@ -195,7 +195,8 @@ func (s *Server) handleLibraryItems(w http.ResponseWriter, r *http.Request) {
 		kind = "show"
 	}
 	items, total, err := s.DB.QueryItems(r.Context(), db.ItemQuery{
-		LibraryID: id, Kind: kind, Sort: r.URL.Query().Get("sort"), Search: r.URL.Query().Get("q"),
+		LibraryID: id, Kind: kind, Sort: r.URL.Query().Get("sort"), Search: r.URL.Query().Get("q"), Genre: r.URL.Query().Get("genre"),
+		Unwatched: r.URL.Query().Get("unwatched") == "1",
 		Limit: queryInt(r, "limit", 500), Offset: queryInt(r, "offset", 0), UserID: p.User.ID,
 	})
 	if err != nil {
@@ -264,7 +265,8 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	topRated, genres := s.homeRows(ctx, p.User.ID, ids)
-	writeJSON(w, 200, map[string]any{"continueWatching": nonNil(cont), "recentlyAdded": shelves, "topRated": topRated, "genres": genres})
+	writeJSON(w, 200, map[string]any{"continueWatching": nonNil(cont), "recentlyAdded": shelves, "topRated": topRated, "genres": genres,
+		"collections": s.homeCollections(ctx, r)})
 }
 
 // decorateEpisodes fills show artwork onto episodes lacking stills.
@@ -329,6 +331,7 @@ type FileView struct {
 	Info          *media.Info `json:"info,omitempty"`
 	TorrentStatus string      `json:"torrentStatus,omitempty"`
 	FileName      string      `json:"fileName"`
+	Label         string      `json:"label"`
 }
 
 func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
@@ -368,7 +371,7 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 		files, _ := s.DB.FilesForItem(ctx, it.ID)
 		views := []FileView{}
 		for _, f := range files {
-			v := FileView{MediaFile: f, FileName: displayFileName(f.Path)}
+			v := FileView{MediaFile: f, FileName: displayFileName(f.Path), Label: versionLabel(f)}
 			if f.Probe != "" {
 				var info media.Info
 				if json.Unmarshal([]byte(f.Probe), &info) == nil {
@@ -433,6 +436,7 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	_ = s.DB.TrackPlay(r.Context(), principal(r).User.ID, it.ID, req.Position, req.Duration)
 	w.WriteHeader(http.StatusNoContent)
 }
 

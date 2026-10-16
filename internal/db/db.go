@@ -163,6 +163,70 @@ var migrations = []string{
 		peers INTEGER NOT NULL DEFAULT 0,
 		analyzed_at INTEGER NOT NULL
 	);`,
+	// Per-user preferences (JSON), collections, and play history for stats.
+	`CREATE TABLE user_prefs (
+		user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		body TEXT NOT NULL DEFAULT '{}',
+		updated_at INTEGER NOT NULL
+	);
+	CREATE TABLE collections (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		description TEXT NOT NULL DEFAULT '',
+		kind TEXT NOT NULL CHECK (kind IN ('manual','smart','tmdb')),
+		rules TEXT NOT NULL DEFAULT '{}',
+		library_id TEXT REFERENCES libraries(id) ON DELETE CASCADE,
+		poster_path TEXT NOT NULL DEFAULT '',
+		backdrop_path TEXT NOT NULL DEFAULT '',
+		sort TEXT NOT NULL DEFAULT '',
+		item_limit INTEGER NOT NULL DEFAULT 0,
+		show_on_home INTEGER NOT NULL DEFAULT 0,
+		home_order INTEGER NOT NULL DEFAULT 0,
+		show_missing INTEGER NOT NULL DEFAULT 0,
+		visible_from TEXT NOT NULL DEFAULT '',
+		visible_until TEXT NOT NULL DEFAULT '',
+		titles TEXT NOT NULL DEFAULT '[]',
+		synced_at INTEGER NOT NULL DEFAULT 0,
+		sync_error TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+	CREATE TABLE collection_items (
+		collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+		item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+		position INTEGER NOT NULL DEFAULT 0,
+		added_at INTEGER NOT NULL,
+		PRIMARY KEY (collection_id, item_id)
+	);
+	CREATE TABLE play_history (
+		id TEXT PRIMARY KEY,
+		session_id TEXT NOT NULL DEFAULT '',
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		item_id TEXT REFERENCES items(id) ON DELETE SET NULL,
+		show_id TEXT NOT NULL DEFAULT '',
+		library_id TEXT NOT NULL DEFAULT '',
+		kind TEXT NOT NULL DEFAULT '',
+		title TEXT NOT NULL DEFAULT '',
+		show_title TEXT NOT NULL DEFAULT '',
+		year INTEGER NOT NULL DEFAULT 0,
+		poster_path TEXT NOT NULL DEFAULT '',
+		file_id TEXT NOT NULL DEFAULT '',
+		method TEXT NOT NULL DEFAULT '',
+		engine TEXT NOT NULL DEFAULT '',
+		video_copy INTEGER NOT NULL DEFAULT 1,
+		height INTEGER NOT NULL DEFAULT 0,
+		client TEXT NOT NULL DEFAULT '',
+		started_at INTEGER NOT NULL,
+		last_seen_at INTEGER NOT NULL,
+		position_start REAL NOT NULL DEFAULT 0,
+		position_end REAL NOT NULL DEFAULT 0,
+		duration REAL NOT NULL DEFAULT 0,
+		played_seconds REAL NOT NULL DEFAULT 0,
+		completed INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX play_history_started ON play_history(started_at DESC);
+	CREATE INDEX play_history_user ON play_history(user_id, item_id, last_seen_at DESC);
+	CREATE INDEX play_history_session ON play_history(session_id);`,
 }
 
 func (d *DB) migrate(ctx context.Context) error {

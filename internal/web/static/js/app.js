@@ -2,6 +2,8 @@ import { api, account, local, state, saveSession, isSupabase, img, ApiError } fr
 import { esc, $, $$, el, toast, icons, fmtRuntime, fmtDuration } from './ui.js';
 import { openPlayer } from './player.js';
 import * as manage from './manage.js';
+import * as browse from './browse.js';
+import { viewStats } from './stats.js';
 
 const app = $('#app');
 let libraries = [];
@@ -24,6 +26,14 @@ document.addEventListener('click', (e) => {
 const routes = [
   [/^\/$/, viewHome],
   [/^\/library\/([^/]+)$/, viewLibrary],
+  [/^\/library\/([^/]+)\/genres$/, browse.viewGenres],
+  [/^\/library\/([^/]+)\/collections$/, browse.viewCollections],
+  [/^\/genres$/, () => browse.viewGenres()],
+  [/^\/genre$/, browse.viewGenre],
+  [/^\/collections$/, () => browse.viewCollections()],
+  [/^\/collection\/([^/]+)$/, browse.viewCollection],
+  [/^\/account$/, browse.viewAccount],
+  [/^\/manage\/stats$/, viewStats, true],
   [/^\/item\/([^/]+)$/, viewItem],
   [/^\/search$/, viewSearch],
   [/^\/manage\/?$/, manage.viewStatus, true],
@@ -216,10 +226,13 @@ async function shell(view, seq) {
       <aside class="sidebar">
         <a class="brand" href="/"><img class="logo" src="/brand/wren-symbol-small-on-dark.svg" alt="">${esc(state.server.name || 'Wren TV')}</a>
         <a class="nav" href="/" data-path="/">${icons.home}<span>Home</span></a>
+        <a class="nav" href="/collections" data-path="/collections">${icons.stack}<span>Collections</span></a>
+        <a class="nav" href="/genres" data-path="/genres">${icons.tag}<span>Genres</span></a>
         <div class="nav-title">Libraries</div>
         <div id="lib-nav">${libNav()}</div>
         ${admin ? `<div class="nav-title">Manage</div>
           <a class="nav" href="/manage" data-path="/manage">${icons.activity}<span>Dashboard</span></a>
+          <a class="nav" href="/manage/stats" data-path="/manage/stats">${icons.chart}<span>Stats</span></a>
           <a class="nav" href="/manage/libraries" data-path="/manage/libraries">${icons.folder}<span>Libraries</span></a>
           <a class="nav" href="/manage/users" data-path="/manage/users">${icons.users}<span>${isSupabase() ? 'Sharing' : 'Users'}</span></a>
           ${state.server.torrents ? `<a class="nav" href="/manage/torrents" data-path="/manage/torrents">${icons.torrent}<span>Torrents</span></a>` : ''}
@@ -228,6 +241,7 @@ async function shell(view, seq) {
         <div class="account"><div class="avatar">${esc((name[0] || '?').toUpperCase())}</div>
           <div style="min-width:0;flex:1"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</div>
           <div class="small muted">${esc(u?.role || '')}</div></div>
+          <a class="btn ghost small" href="/account" title="Your settings" aria-label="Your settings">${icons.settings}</a>
           <button class="btn ghost small" id="signout" title="Sign out">Sign out</button></div>
       </aside>
       <div class="main">
@@ -246,7 +260,9 @@ async function shell(view, seq) {
   }
   for (const a of $$('.nav[data-path]')) {
     const p = a.dataset.path;
-    a.classList.toggle('active', p === '/' ? location.pathname === '/' : location.pathname === p || (p !== '/manage' && location.pathname.startsWith(p + '/')));
+    const here = location.pathname;
+    a.classList.toggle('active', p === '/' ? here === '/' : here === p || (p !== '/manage' && here.startsWith(p + '/'))
+      || (p === '/genres' && here === '/genre') || (p === '/collections' && here.startsWith('/collection/')));
   }
   const page = $('#page');
   page.innerHTML = '<div class="center" style="min-height:50vh"><div class="spinner"></div></div>';
@@ -263,6 +279,8 @@ async function shell(view, seq) {
   }
 }
 
+export const getLibraries = () => libraries;
+
 export function setTitle(t) {
   const el = $('#page-title');
   if (el) el.textContent = t;
@@ -270,16 +288,16 @@ export function setTitle(t) {
 
 // ---------------------------------------------------------------- cards
 
-function progressBar(it) {
+export function progressBar(it) {
   const p = it.progress;
   if (!p || p.watched || !p.duration || p.position < 30) return '';
   return `<div class="bar"><i style="width:${Math.min(100, (p.position / p.duration) * 100).toFixed(1)}%"></i></div>`;
 }
 
 // Images fade in once loaded instead of popping.
-const lazyImg = (src, alt = '') => `<img loading="lazy" class="loading" onload="this.classList.remove('loading')" onerror="this.remove()" src="${src}" alt="${esc(alt)}">`;
+export const lazyImg = (src, alt = '') => `<img loading="lazy" class="loading" onload="this.classList.remove('loading')" onerror="this.remove()" src="${src}" alt="${esc(alt)}">`;
 
-function posterCard(it, extra = '') {
+export function posterCard(it, extra = '') {
   const title = it.kind === 'season' ? (it.seasonNumber === 0 ? 'Specials' : `Season ${it.seasonNumber}`) : it.title;
   const sub = it.kind === 'show' ? (it.childCount ? `${it.childCount} episode${it.childCount > 1 ? 's' : ''}` : it.year || '')
     : it.kind === 'season' ? (it.childCount ? `${it.childCount} episodes` : '') : it.year || '';
@@ -292,7 +310,7 @@ function posterCard(it, extra = '') {
 
 // titleCard shows a TMDB title: the library item when the server has it,
 // otherwise a dimmed poster linking to TMDB.
-function titleCard(v, rank) {
+export function titleCard(v, rank) {
   const r = rank ? `<span class="rank">${rank}</span>` : '';
   if (v.item) return posterCard(v.item, r);
   const href = `https://www.themoviedb.org/${v.mediaType === 'show' ? 'tv' : 'movie'}/${v.tmdbId}`;
@@ -310,9 +328,9 @@ function wideCard(it) {
     <div class="t">${esc(title)}</div><div class="s">${esc(sub)}</div></a>`;
 }
 
-const arrows = '<div class="arrows"><button type="button" data-dir="-1" aria-label="Scroll left">‹</button><button type="button" data-dir="1" aria-label="Scroll right">›</button></div>';
+export const arrows = '<div class="arrows"><button type="button" data-dir="-1" aria-label="Scroll left">‹</button><button type="button" data-dir="1" aria-label="Scroll right">›</button></div>';
 
-function shelf(title, cards, { see, sub, id } = {}) {
+export function shelf(title, cards, { see, sub, id } = {}) {
   return `<section class="shelf"${id ? ` id="${id}"` : ''}><div class="shelf-head"><h2>${esc(title)}${sub ? ` <span class="sub">${esc(sub)}</span>` : ''}</h2>
     ${see ? `<a class="see" href="${see}">See all</a>` : ''}${arrows}</div><div class="row">${cards}</div></section>`;
 }
@@ -322,7 +340,7 @@ function skeletonShelf(title, n = 8, id) {
   return shelf(title, cards, { id });
 }
 
-function bindShelves(root) {
+export function bindShelves(root) {
   for (const b of $$('.arrows button', root)) {
     b.onclick = () => {
       const row = $('.row', b.closest('.shelf'));
@@ -366,6 +384,10 @@ async function viewHome() {
   let html = featured ? featureHero(featured) : '';
   if (home.continueWatching.length) html += shelf('Continue Watching', home.continueWatching.map(wideCard).join(''));
   html += skeletonShelf('Trending this week', 8, 'trending');
+  for (const c of home.collections || []) {
+    const cards = c.items.map((it) => posterCard(it)).join('') + (c.missing || []).map((v) => titleCard(v)).join('');
+    html += shelf(c.collection.name, cards, { see: `/collection/${c.collection.id}`, sub: c.collection.description ? '' : `${c.collection.itemCount} in your library` });
+  }
   for (const s of home.recentlyAdded) {
     if (s.items.length) html += shelf(`Recently Added in ${s.library.name}`, s.items.map((it) => posterCard(it)).join(''), { see: `/library/${s.library.id}?sort=added` });
   }
@@ -391,7 +413,7 @@ async function loadTrending(node) {
   bindShelves(next);
 }
 
-function bindPlayLinks(root) {
+export function bindPlayLinks(root) {
   for (const a of $$('[data-play]', root)) {
     $('.play-ov', a)?.addEventListener('click', (e) => {
       e.preventDefault();
@@ -403,15 +425,43 @@ function bindPlayLinks(root) {
 
 const sorts = [['title', 'Title'], ['added', 'Recently added'], ['year', 'Year'], ['rating', 'Rating']];
 
+// libraryTabs switches between a library's titles, collections and genres.
+export function libraryTabs(id, active) {
+  return `<nav class="tabs"><a href="/library/${id}" class="${active === 'all' ? 'active' : ''}">Library</a>
+    <a href="/library/${id}/collections" class="${active === 'collections' ? 'active' : ''}">Collections</a>
+    <a href="/library/${id}/genres" class="${active === 'genres' ? 'active' : ''}">Genres</a></nav>`;
+}
+
 async function viewLibrary(id) {
   const lib = libraries.find((l) => l.id === id);
   setTitle(lib?.name || 'Library');
-  const sort = new URLSearchParams(location.search).get('sort') || 'title';
-  const res = await api(`/api/libraries/${id}/items?sort=${encodeURIComponent(sort)}&limit=5000`);
-  const node = el(`<div><div class="page-head"><h1>${esc(lib?.name || '')} <span class="muted small">${res.total} ${lib?.type === 'shows' ? 'shows' : 'movies'}</span></h1>
-    <select id="sort" style="width:auto">${sorts.map(([k, v]) => `<option value="${k}" ${k === sort ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
-    ${res.items.length ? `<div class="grid">${res.items.map((it) => posterCard(it)).join('')}</div>` : '<div class="empty"><h2>This library is empty</h2><p>Items appear here as they are scanned.</p></div>'}</div>`);
-  $('#sort', node).onchange = (e) => go(`/library/${id}?sort=${e.target.value}`, true);
+  const qs = new URLSearchParams(location.search);
+  const sort = qs.get('sort') || 'title';
+  const genre = qs.get('genre') || '';
+  const unwatched = qs.get('unwatched') === '1';
+  const params = new URLSearchParams({ sort, limit: '10000' });
+  if (genre) params.set('genre', genre);
+  if (unwatched) params.set('unwatched', '1');
+  const [res, genres] = await Promise.all([
+    api(`/api/libraries/${id}/items?${params}`),
+    api(`/api/genres?libraryId=${encodeURIComponent(id)}`).catch(() => []),
+  ]);
+  const noun = lib?.type === 'shows' ? 'shows' : 'movies';
+  const node = el(`<div>${libraryTabs(id, 'all')}<div class="page-head"><h1>${esc(lib?.name || '')} <span class="muted small">${res.total} ${noun}</span></h1>
+    <div class="toolbar"><button class="chip${unwatched ? ' on' : ''}" id="unwatched" aria-pressed="${unwatched}">Unwatched</button>
+    <select id="genre" data-caption="Genre"><option value="">All</option>${genres.map((g) => `<option value="${esc(g.genre)}" ${g.genre === genre ? 'selected' : ''}>${esc(g.genre)} (${g.count})</option>`).join('')}</select>
+    <select id="sort" data-caption="Sort">${sorts.map(([k, v]) => `<option value="${k}" ${k === sort ? 'selected' : ''}>${v}</option>`).join('')}</select></div></div>
+    ${res.items.length ? `<div class="grid">${res.items.map((it) => posterCard(it)).join('')}</div>`
+      : genre || unwatched ? '<div class="empty"><h2>Nothing matches</h2><p>Try a different genre or turn off Unwatched.</p></div>'
+      : '<div class="empty"><h2>This library is empty</h2><p>Items appear here as they are scanned.</p></div>'}</div>`);
+  const nav = (patch) => {
+    const n = new URLSearchParams(location.search);
+    for (const [k, v] of Object.entries(patch)) v ? n.set(k, v) : n.delete(k);
+    go(`/library/${id}${n.toString() ? '?' + n : ''}`, true);
+  };
+  $('#sort', node).onchange = (e) => nav({ sort: e.target.value === 'title' ? '' : e.target.value });
+  $('#genre', node).onchange = (e) => nav({ genre: e.target.value });
+  $('#unwatched', node).onclick = () => nav({ unwatched: unwatched ? '' : '1' });
   return node;
 }
 
@@ -462,9 +512,14 @@ function personCard(c) {
     <div class="n">${esc(c.name)}</div>${c.character ? `<div class="c">${esc(c.character)}</div>` : ''}</div>`;
 }
 
+// YouTube refuses embeds that arrive without a Referer (error 153), and the
+// app's same-origin referrer policy strips it, so the iframe sends its origin.
 function openTrailer(t) {
-  const bg = el(`<div class="modal-bg"><div class="trailer"><iframe allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen
-    src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(t.youtubeKey)}?autoplay=1&rel=0" title="${esc(t.name)}"></iframe></div></div>`);
+  const key = encodeURIComponent(t.youtubeKey);
+  const q = new URLSearchParams({ autoplay: '1', rel: '0', playsinline: '1', origin: location.origin });
+  const bg = el(`<div class="modal-bg"><div style="display:grid;gap:10px;justify-items:end"><div class="trailer"><iframe allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen
+    referrerpolicy="strict-origin-when-cross-origin" src="https://www.youtube-nocookie.com/embed/${key}?${q}" title="${esc(t.name)}"></iframe></div>
+    <a class="small muted" href="https://www.youtube.com/watch?v=${key}" target="_blank" rel="noopener">Open on YouTube ↗</a></div></div>`);
   const close = () => { bg.remove(); document.removeEventListener('keydown', onKey); };
   const onKey = (e) => e.key === 'Escape' && close();
   bg.addEventListener('mousedown', (e) => e.target === bg && close());
@@ -503,9 +558,16 @@ async function viewItem(id) {
     const n = d.nextEpisode;
     actions += `<button class="btn primary lg" data-act="next">▶ ${n.progress?.position > 30 ? 'Resume' : 'Play'} S${n.seasonNumber} · E${n.episodeNumber}</button>`;
   }
+  // More than one file: pick the version before playing ("Auto" lets the
+  // server choose, e.g. 1080p over transcoding 4K at a lower quality setting).
+  if (playable && d.files?.length > 1) {
+    actions += `<select data-version data-caption="Version" class="version-pick"><option value="">Auto</option>${d.files.map((f) => `<option value="${esc(f.id)}">${esc(f.label || f.fileName)}</option>`).join('')}</select>`;
+  }
   actions += `<button class="btn lg" data-act="trailer" hidden>Trailer</button>`;
   if (playable) actions += `<button class="btn lg ghost" data-act="watched">${it.progress?.watched ? 'Mark unwatched' : 'Mark watched'}</button>`;
-  if (isAdmin() && (it.kind === 'movie' || it.kind === 'show')) actions += `<button class="btn lg ghost" data-act="match">Fix match</button>`;
+  if (isAdmin() && (it.kind === 'movie' || it.kind === 'show')) {
+    actions += `<button class="btn lg ghost" data-act="collect">${icons.plus} Collection</button><button class="btn lg ghost" data-act="match">Fix match</button>`;
+  }
 
   const crumbs = it.kind === 'season' || it.kind === 'episode'
     ? `<div class="small" style="margin-bottom:6px"><a href="/item/${it.showId}">${esc(show?.title || '')}</a>${it.kind === 'episode' && it.parentId ? ` › <a href="/item/${it.parentId}">Season ${it.seasonNumber}</a>` : ''}</div>`
@@ -529,7 +591,7 @@ async function viewItem(id) {
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${badgesFor(f).map((b) => `<span class="qbadge dim">${esc(b)}</span>`).join('') || `<b>${esc(f.container)}</b>`}
       ${f.torrentStatus ? `<span class="status s-${esc(f.torrentStatus)}">${esc(f.torrentStatus)}</span>` : ''}
       ${f.info?.chapters?.length ? `<span class="small muted">${f.info.chapters.length} chapters</span>` : ''}
-      ${d.files.length > 1 ? `<button class="btn small" data-file="${f.id}" style="margin-left:auto">Play this version</button>` : ''}</div>
+      </div>
       <code class="muted">${esc(f.fileName)}</code>
       ${f.info ? `<div class="small muted" style="margin-top:4px">${[f.videoCodec?.toUpperCase(), f.width && `${f.width}×${f.height}`, ...(f.info.audio || []).slice(0, 3).map((a) => [a.codec?.toUpperCase(), a.language].filter(Boolean).join(' '))].filter(Boolean).map(esc).join(' · ')}</div>` : ''}</div>`).join('')}</div>`;
   }
@@ -540,19 +602,20 @@ async function viewItem(id) {
     ${it.tagline ? `<div class="muted" style="font-style:italic">${esc(it.tagline)}</div>` : ''}
     <div class="meta">${meta.join('<span class="muted">·</span>')}</div>
     <div class="ratings" id="ratings">${ratingsHtml({ tmdb: it.rating || show?.rating })}</div>
-    ${genres.length ? `<div class="genres">${genres.map((g) => `<span>${esc(g)}</span>`).join('')}</div>` : ''}
+    ${genres.length ? `<div class="genres">${genres.map((g) => `<a href="/genre?g=${encodeURIComponent(g)}">${esc(g)}</a>`).join('')}</div>` : ''}
     <p class="overview">${esc(it.overview || '')}</p><div class="actions">${actions}</div></div></div></div>${below}</div>`);
 
   const act = (name, fn) => $(`[data-act=${name}]`, node)?.addEventListener('click', fn);
-  act('resume', () => openPlayer(it.id, { start: resumeAt, onClose: () => render() }));
-  act('start', () => openPlayer(it.id, { start: 0, onClose: () => render() }));
+  const version = () => $('[data-version]', node)?.value || undefined;
+  act('resume', () => openPlayer(it.id, { start: resumeAt, fileId: version(), onClose: () => render() }));
+  act('start', () => openPlayer(it.id, { start: 0, fileId: version(), onClose: () => render() }));
+  act('collect', () => browse.addToCollection(it));
   act('next', () => openPlayer(d.nextEpisode.id, { resume: true, onClose: () => render() }));
   act('watched', async () => {
     await api(`/api/items/${it.id}/watched`, { method: 'POST', body: { watched: !it.progress?.watched } });
     render();
   });
   act('match', () => manage.fixMatch(it));
-  for (const b of $$('[data-file]', node)) b.onclick = () => openPlayer(it.id, { start: resumeAt, fileId: b.dataset.file, onClose: () => render() });
   bindPlayLinks(node);
   bindShelves(node);
   loadExtras(it, node);

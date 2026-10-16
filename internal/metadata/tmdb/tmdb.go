@@ -190,6 +190,15 @@ type Movie struct {
 		} `json:"results"`
 	} `json:"release_dates"`
 	Images Images `json:"images"`
+	// BelongsToCollection is the franchise (e.g. "The Dark Knight Collection").
+	BelongsToCollection *CollectionRef `json:"belongs_to_collection"`
+}
+
+type CollectionRef struct {
+	ID           int    `json:"id"`
+	Name         string `json:"name"`
+	PosterPath   string `json:"poster_path"`
+	BackdropPath string `json:"backdrop_path"`
 }
 
 type Images struct {

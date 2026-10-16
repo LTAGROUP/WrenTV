@@ -122,6 +122,12 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/items/{id}/watched", s.handleWatched)
 		r.Post("/api/items/{id}/play", s.handlePlay)
 		r.Delete("/api/sessions/{sid}", s.handleStopSession)
+		r.Get("/api/me/prefs", s.handleGetPrefs)
+		r.Patch("/api/me/prefs", s.handlePatchPrefs)
+		r.Get("/api/genres", s.handleGenres)
+		r.Get("/api/genres/items", s.handleGenreItems)
+		r.Get("/api/collections", s.handleCollections)
+		r.Get("/api/collections/{id}", s.handleCollection)
 
 		r.Group(func(r chi.Router) {
 			r.Use(adminOnly)
@@ -143,6 +149,18 @@ func (s *Server) Router() http.Handler {
 			r.Get("/api/admin/settings", s.handleGetSettings)
 			r.Get("/api/admin/browse", s.handleBrowse)
 			r.Patch("/api/admin/settings", s.handlePatchSettings)
+			r.Get("/api/admin/stats", s.handleStats)
+			r.Get("/api/admin/history", s.handleHistory)
+			r.Post("/api/collections", s.handleCreateCollection)
+			r.Post("/api/collections/auto", s.handleAutoFranchises)
+			r.Get("/api/collections/franchises", s.handleSearchFranchises)
+			r.Patch("/api/collections/{id}", s.handleUpdateCollection)
+			r.Delete("/api/collections/{id}", s.handleDeleteCollection)
+			r.Post("/api/collections/{id}/items", s.handleCollectionAdd)
+			r.Delete("/api/collections/{id}/items/{itemId}", s.handleCollectionRemove)
+			r.Post("/api/collections/{id}/order", s.handleCollectionOrder)
+			r.Post("/api/collections/{id}/sync", s.handleSyncCollection)
+			r.Get("/api/items/{id}/collections", s.handleItemCollections)
 		})
 	})
 
@@ -208,7 +226,7 @@ func (s *Server) integrationAuth(next http.Handler) http.Handler {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-WrenTV-Token, X-WrenTV-Key, X-Haven-Token, X-Haven-Key, Range")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-WrenTV-Token, X-WrenTV-Key, X-WrenTV-Client, X-Haven-Token, X-Haven-Key, Range")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS, HEAD")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges")
 		if r.Method == http.MethodOptions {

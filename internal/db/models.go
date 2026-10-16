@@ -353,6 +353,18 @@ type ItemQuery struct {
 	Genre      string // items tagged with this genre
 	TMDBIDs    []int  // items matched to these TMDB IDs
 	MinRating  float64
+
+	// Smart-collection filters.
+	AnyGenres      []string // tagged with at least one of these
+	ExcludeGenres  []string
+	YearFrom       int
+	YearTo         int
+	ContentRatings []string
+	AddedSince     int64
+	Unwatched      bool // needs UserID; shows count as unwatched while any episode is
+	MinHeight      int  // movies with a file at least this tall (shows: any episode)
+	HDR            bool
+	CollectionID   string // manual collection members; Sort "custom" keeps their order
 }
 
 func (d *DB) QueryItems(ctx context.Context, q ItemQuery) ([]*Item, int, error) {
@@ -408,6 +420,55 @@ func (d *DB) QueryItems(ctx context.Context, q ItemQuery) ([]*Item, int, error) 
 		s := "%" + q.Search + "%"
 		args = append(args, s, s)
 	}
+	if len(q.AnyGenres) > 0 {
+		where = append(where, `EXISTS (SELECT 1 FROM json_each(i.genres) g WHERE g.value IN (`+placeholders(len(q.AnyGenres))+`))`)
+		for _, g := range q.AnyGenres {
+			args = append(args, g)
+		}
+	}
+	if len(q.ExcludeGenres) > 0 {
+		where = append(where, `NOT EXISTS (SELECT 1 FROM json_each(i.genres) g WHERE g.value IN (`+placeholders(len(q.ExcludeGenres))+`))`)
+		for _, g := range q.ExcludeGenres {
+			args = append(args, g)
+		}
+	}
+	if q.YearFrom > 0 {
+		where = append(where, `i.year >= ?`)
+		args = append(args, q.YearFrom)
+	}
+	if q.YearTo > 0 {
+		where = append(where, `i.year <= ?`)
+		args = append(args, q.YearTo)
+	}
+	if len(q.ContentRatings) > 0 {
+		where = append(where, `i.content_rating IN (`+placeholders(len(q.ContentRatings))+`)`)
+		for _, c := range q.ContentRatings {
+			args = append(args, c)
+		}
+	}
+	if q.AddedSince > 0 {
+		where = append(where, `i.added_at >= ?`)
+		args = append(args, q.AddedSince)
+	}
+	if q.Unwatched && q.UserID != "" {
+		where = append(where, `(CASE WHEN i.kind IN ('show','season') THEN EXISTS (SELECT 1 FROM items e WHERE (e.show_id=i.id OR e.parent_id=i.id) AND e.kind='episode'
+			AND NOT EXISTS (SELECT 1 FROM watch_state ws WHERE ws.item_id=e.id AND ws.user_id=? AND ws.watched=1))
+			ELSE NOT EXISTS (SELECT 1 FROM watch_state ws WHERE ws.item_id=i.id AND ws.user_id=? AND ws.watched=1) END)`)
+		args = append(args, q.UserID, q.UserID)
+	}
+	if q.MinHeight > 0 || q.HDR {
+		cond := `f.height >= ?`
+		fargs := []any{q.MinHeight}
+		if q.HDR {
+			cond += ` AND f.hdr != ''`
+		}
+		where = append(where, `EXISTS (SELECT 1 FROM media_files f WHERE (f.item_id=i.id OR f.item_id IN (SELECT e.id FROM items e WHERE e.show_id=i.id)) AND `+cond+`)`)
+		args = append(args, fargs...)
+	}
+	if q.CollectionID != "" {
+		where = append(where, `i.id IN (SELECT item_id FROM collection_items WHERE collection_id=?)`)
+		args = append(args, q.CollectionID)
+	}
 	// Hide movies/episodes that have no playable file (e.g. a torrent was removed).
 	where = append(where, `(i.kind IN ('show','season') OR EXISTS (SELECT 1 FROM media_files f WHERE f.item_id=i.id))`)
 	w := ""
@@ -419,7 +480,17 @@ func (d *DB) QueryItems(ctx context.Context, q ItemQuery) ([]*Item, int, error) 
 		return nil, 0, err
 	}
 	order := "i.sort_title, i.year"
+	var orderArgs []any
 	switch q.Sort {
+	case "custom":
+		if q.CollectionID != "" {
+			order = "(SELECT ci.position FROM collection_items ci WHERE ci.collection_id=? AND ci.item_id=i.id), i.sort_title"
+			orderArgs = append(orderArgs, q.CollectionID)
+		}
+	case "added_asc":
+		order = "i.added_at"
+	case "year_asc":
+		order = "i.year, i.sort_title"
 	case "added":
 		order = "i.added_at DESC"
 	case "year":
@@ -432,8 +503,8 @@ func (d *DB) QueryItems(ctx context.Context, q ItemQuery) ([]*Item, int, error) 
 		order = "i.season_number, i.episode_number"
 	}
 	limit := q.Limit
-	if limit <= 0 || limit > 1000 {
-		limit = 1000
+	if limit <= 0 || limit > 10000 {
+		limit = 10000
 	}
 	sel := `SELECT ` + itemCols + `, ` + aggCols + ` FROM items i`
 	selArgs := []any{}
@@ -441,7 +512,8 @@ func (d *DB) QueryItems(ctx context.Context, q ItemQuery) ([]*Item, int, error) 
 		sel = `SELECT ` + itemCols + `, ` + aggColsUser + `, w.position, w.duration, w.watched, w.updated_at FROM items i LEFT JOIN watch_state w ON w.item_id=i.id AND w.user_id=?`
 		selArgs = append(selArgs, q.UserID, q.UserID, q.UserID)
 	}
-	rows, err := d.QueryContext(ctx, sel+w+` ORDER BY `+order+` LIMIT ? OFFSET ?`, append(append(selArgs, args...), limit, q.Offset)...)
+	all := append(append(append(selArgs, args...), orderArgs...), limit, q.Offset)
+	rows, err := d.QueryContext(ctx, sel+w+` ORDER BY `+order+` LIMIT ? OFFSET ?`, all...)
 	if err != nil {
 		return nil, 0, err
 	}

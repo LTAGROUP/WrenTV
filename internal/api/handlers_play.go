@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -54,6 +55,14 @@ type playResponse struct {
 	// Chapters and the skippable intro/credits of the file being played.
 	Chapters []media.Chapter `json:"chapters"`
 	Markers  media.Markers   `json:"markers"`
+	// Versions are the item's files; clients offer them as a picker.
+	Versions []versionView `json:"versions,omitempty"`
+}
+
+type versionView struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Height int    `json:"height"`
 }
 
 // handlePlay picks a file, decides how the client should play it and opens a session.
@@ -79,7 +88,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 202, playResponse{Status: "pending", Message: "Finding a source…"})
 		return
 	}
-	f := pickFile(files, req.FileID)
+	f := chooseFile(files, req)
 
 	if f.TorrentID != "" {
 		t, err := s.DB.GetTorrent(ctx, f.TorrentID)
@@ -120,6 +129,8 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	audioIdx := -1
 	if req.AudioIndex != nil {
 		audioIdx = *req.AudioIndex
+	} else if prefs, err := s.DB.GetPrefs(ctx, principal(r).User.ID); err == nil {
+		audioIdx = preferredAudio(info, prefs.AudioLanguage)
 	}
 	dec := media.Decide(info, req.Caps, audioIdx)
 
@@ -160,6 +171,10 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		Duration: info.Duration, Info: info, FileID: f.ID,
 		Chapters: nonNil(info.Chapters), Markers: s.markersFor(ctx, f, info),
 	}
+	for _, v := range files {
+		resp.Versions = append(resp.Versions, versionView{ID: v.ID, Label: versionLabel(v), Height: fileHeight(v)})
+	}
+	s.recordPlay(r, it, f, sess.ID, dec, info)
 	base := "/stream/" + sess.ID + "/"
 	if dec.Method == media.MethodDirect {
 		resp.URL = base + "file" + extFor(info.Container)
@@ -215,20 +230,180 @@ func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func pickFile(files []*db.MediaFile, id string) *db.MediaFile {
+// chooseFile returns the requested version, else the one this client plays
+// best: a version it can play without transcoding beats one that needs it
+// (a 1080p file is served instead of transcoding the 4K one down), then a
+// version that fits the requested quality, then local over torrent.
+func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 	for _, f := range files {
-		if f.ID == id {
+		if f.ID == req.FileID {
 			return f
 		}
 	}
-	// Prefer a local file over a torrent, then the highest resolution.
+	type rank struct {
+		tier, torrent, fit, height int
+		size                       int64
+	}
+	rankOf := func(f *db.MediaFile) rank {
+		rk := rank{tier: 1, size: -f.Size}
+		h, w := fileHeight(f), f.Width
+		fits := req.MaxWidth <= 0 || (w > 0 && w <= req.MaxWidth*11/10) || (w == 0 && h > 0 && h*16/9 <= req.MaxWidth*11/10)
+		if f.Probe != "" {
+			var info media.Info
+			if json.Unmarshal([]byte(f.Probe), &info) == nil && info.Duration > 0 {
+				if media.Decide(&info, req.Caps, -1).Method == media.MethodTranscode || !fits {
+					rk.tier = 2
+				} else {
+					rk.tier = 0
+				}
+			}
+		} else if !fits {
+			rk.tier = 2
+		}
+		if f.TorrentID != "" {
+			rk.torrent = 1
+		}
+		if fits {
+			rk.height = -h // the best version within the limit
+		} else {
+			rk.fit, rk.height = 1, h // else the smallest version above it: least work to transcode
+		}
+		return rk
+	}
+	less := func(a, b rank) bool {
+		switch {
+		case a.tier != b.tier:
+			return a.tier < b.tier
+		case a.torrent != b.torrent:
+			return a.torrent < b.torrent
+		case a.fit != b.fit:
+			return a.fit < b.fit
+		case a.height != b.height:
+			return a.height < b.height
+		}
+		return a.size < b.size
+	}
 	var best *db.MediaFile
+	var bestRank rank
 	for _, f := range files {
-		if best == nil || betterFile(f, best) {
-			best = f
+		if rk := rankOf(f); best == nil || less(rk, bestRank) {
+			best, bestRank = f, rk
 		}
 	}
 	return best
+}
+
+// preferredAudio is the typeIndex of the best track in the user's language
+// (its default track if that matches, else the first non-commentary one), or
+// -1 to keep the file's default.
+func preferredAudio(info *media.Info, lang string) int {
+	if lang == "" {
+		return -1
+	}
+	best := -1
+	for _, a := range info.Audio {
+		if db.NormalizeLang(a.Language) != lang || strings.Contains(strings.ToLower(a.Title), "commentary") {
+			continue
+		}
+		if a.Default {
+			return a.TypeIdx
+		}
+		if best < 0 {
+			best = a.TypeIdx
+		}
+	}
+	return best
+}
+
+// versionLabel names a file for version pickers, e.g. "4K · Dolby Vision · 58.2 GB".
+func versionLabel(f *db.MediaFile) string {
+	var parts []string
+	switch h := fileHeight(f); {
+	case f.Width >= 3200 || h >= 2000:
+		parts = append(parts, "4K")
+	case f.Width >= 1800 || h >= 1000:
+		parts = append(parts, "1080p")
+	case f.Width >= 1200 || h >= 700:
+		parts = append(parts, "720p")
+	case h > 0:
+		parts = append(parts, fmt.Sprintf("%dp", h))
+	}
+	switch f.HDR {
+	case "DV", "DV+HDR10":
+		parts = append(parts, "Dolby Vision")
+	case "":
+	default:
+		parts = append(parts, f.HDR)
+	}
+	if f.VideoCodec != "" {
+		parts = append(parts, strings.ToUpper(f.VideoCodec))
+	}
+	switch {
+	case f.Size >= 1<<30:
+		parts = append(parts, fmt.Sprintf("%.1f GB", float64(f.Size)/(1<<30)))
+	case f.Size > 0:
+		parts = append(parts, fmt.Sprintf("%d MB", max(1, f.Size>>20)))
+	}
+	if f.TorrentID != "" {
+		parts = append(parts, "Torrent")
+	}
+	if len(parts) == 0 {
+		return displayFileName(f.Path)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// recordPlay starts a play-history entry for stats.
+func (s *Server) recordPlay(r *http.Request, it *db.Item, f *db.MediaFile, sid string, dec media.Decision, info *media.Info) {
+	ctx := r.Context()
+	p := principal(r)
+	ps := db.PlayStart{SessionID: sid, UserID: p.User.ID, FileID: f.ID, Method: string(dec.Method), Engine: dec.Engine,
+		Client: clientName(r), Item: it, VideoCopy: dec.VideoCopy, Height: fileHeight(f), Duration: info.Duration}
+	if ws, _ := s.DB.GetWatchState(ctx, p.User.ID, it.ID); ws != nil && !ws.Watched {
+		ps.Position = ws.Position
+	}
+	if it.Kind == "episode" {
+		if sh, err := s.DB.GetItem(ctx, it.ShowID); err == nil {
+			ps.ShowTitle = sh.Title
+			if it.PosterPath == "" {
+				c := *it
+				c.PosterPath = sh.PosterPath
+				ps.Item = &c
+			}
+		}
+	}
+	if err := s.DB.StartPlay(ctx, ps); err != nil {
+		slog.Warn("play history", "err", err)
+	}
+}
+
+// clientName describes the player from its User-Agent, e.g. "Chrome on macOS".
+func clientName(r *http.Request) string {
+	if c := strings.TrimSpace(r.Header.Get("X-WrenTV-Client")); c != "" {
+		return c
+	}
+	ua := r.UserAgent()
+	if strings.Contains(ua, "CFNetwork") || strings.Contains(ua, "Wren%20TV") {
+		return "Wren TV for Mac"
+	}
+	browser := "Browser"
+	for _, b := range [][2]string{{"Edg/", "Edge"}, {"Firefox/", "Firefox"}, {"Chrome/", "Chrome"}, {"Safari/", "Safari"}} {
+		if strings.Contains(ua, b[0]) {
+			browser = b[1]
+			break
+		}
+	}
+	os := ""
+	for _, o := range [][2]string{{"iPhone", "iPhone"}, {"iPad", "iPad"}, {"Android", "Android"}, {"Mac OS X", "macOS"}, {"Windows", "Windows"}, {"CrOS", "ChromeOS"}, {"Linux", "Linux"}} {
+		if strings.Contains(ua, o[0]) {
+			os = o[1]
+			break
+		}
+	}
+	if os == "" {
+		return browser
+	}
+	return browser + " on " + os
 }
 
 var reResTag = regexp.MustCompile(`(?i)\b(2160|1440|1080|720|576|480)p\b|\b(4k|uhd)\b`)
@@ -248,16 +423,6 @@ func fileHeight(f *db.MediaFile) int {
 	default:
 		return 2160
 	}
-}
-
-func betterFile(a, b *db.MediaFile) bool {
-	if (a.TorrentID == "") != (b.TorrentID == "") {
-		return a.TorrentID == ""
-	}
-	if ha, hb := fileHeight(a), fileHeight(b); ha != hb {
-		return ha > hb
-	}
-	return a.Size > b.Size
 }
 
 func (s *Server) openSource(ctx context.Context, f *db.MediaFile) (stream.Source, error) {

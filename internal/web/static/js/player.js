@@ -40,7 +40,10 @@ class Player {
     this.opts = opts;
     this.quality = lsGet('wrentv.quality', lsGet('haven.quality', 'orig'));
     this.audioIndex = undefined;
+    // A version the viewer picked sticks; otherwise the server picks the best
+    // one for the quality setting (e.g. the 1080p file rather than transcoding 4K).
     this.fileId = opts.fileId;
+    this.pinnedFile = !!opts.fileId;
     this.sid = null;
     this.hls = null;
     this.lastReport = 0;
@@ -54,9 +57,10 @@ class Player {
       <div class="top">
         <button class="btn ghost" data-close title="Back (Esc)">←</button>
         <div class="ttl"><h2></h2><div class="sub small muted"></div></div>
-        <select data-audio title="Audio" hidden></select>
-        <select data-subs title="Subtitles" hidden></select>
-        <select data-quality title="Quality">${qualities.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
+        <select data-version data-caption="Version" title="Version" hidden></select>
+        <select data-audio data-caption="Audio" title="Audio" hidden></select>
+        <select data-subs data-caption="Subtitles" title="Subtitles" hidden></select>
+        <select data-quality data-caption="Quality" title="Quality">${qualities.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
         <button class="btn ghost small" data-info title="Playback info">ⓘ</button>
       </div>
       <div class="controls">
@@ -90,9 +94,16 @@ class Player {
     $('[data-quality]', r).onchange = (e) => {
       this.quality = e.target.value;
       lsSet('wrentv.quality', this.quality);
+      if (!this.pinnedFile) this.fileId = undefined;
       this.reload();
     };
     $('[data-audio]', r).onchange = (e) => { this.audioIndex = Number(e.target.value); this.reload(); };
+    $('[data-version]', r).onchange = (e) => {
+      this.fileId = e.target.value;
+      this.pinnedFile = true;
+      this.audioIndex = undefined; // track numbers differ between files
+      this.reload();
+    };
     $('[data-subs]', r).onchange = (e) => this.selectSubs(e.target.value);
     $('[data-toggle]', r).onclick = () => this.toggle();
     $('[data-back]', r).onclick = () => this.seek(v.currentTime - 10);
@@ -104,7 +115,7 @@ class Player {
     this.bindTimeline();
 
     this.onKey = (e) => {
-      if (e.target.closest?.('select, input')) return;
+      if (e.target.closest?.('select, input, .dd-menu')) return;
       const k = e.key;
       if (k === 'Escape') {
         if ($('.chapters', r)) return this.toggleChapters(false);
@@ -125,7 +136,7 @@ class Player {
     this.onMove = () => {
       r.classList.remove('idle');
       clearTimeout(idle);
-      idle = setTimeout(() => !v.paused && !$('.chapters', r) && r.classList.add('idle'), 2800);
+      idle = setTimeout(() => !v.paused && !$('.chapters, .dd-menu', r) && r.classList.add('idle'), 2800);
     };
     r.addEventListener('mousemove', this.onMove);
     v.addEventListener('timeupdate', () => { this.report(false); this.update(); });
@@ -382,6 +393,11 @@ class Player {
 
   fillTracks() {
     const info = this.res.info || {};
+    const vs = this.res.versions || [];
+    const ver = $('[data-version]', this.root);
+    ver.innerHTML = vs.map((v) => `<option value="${esc(v.id)}">${esc(v.label)}</option>`).join('');
+    ver.value = this.res.fileId || '';
+    ver.hidden = vs.length < 2;
     const a = $('[data-audio]', this.root);
     const audio = info.audio || [];
     a.innerHTML = audio.map((s) => `<option value="${s.typeIndex}">${esc(trackLabel(s))}</option>`).join('');
