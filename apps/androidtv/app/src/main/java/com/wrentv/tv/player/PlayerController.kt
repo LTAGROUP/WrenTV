@@ -6,6 +6,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.C
@@ -72,6 +73,8 @@ class PlayerController(
     var duration by mutableDoubleStateOf(0.0); private set
     var paused by mutableStateOf(false); private set
     var buffering by mutableStateOf(false); private set
+    /** The playing video's frame rate, once known; the screen matches the TV's refresh rate to it. */
+    var frameRate by mutableFloatStateOf(0f); private set
 
     var audioOptions by mutableStateOf<List<TrackOption>>(emptyList()); private set
     var audioKey by mutableStateOf<String?>(null); private set
@@ -140,6 +143,10 @@ class PlayerController(
             }
 
             override fun onTracksChanged(tracks: Tracks) {
+                groups(C.TRACK_TYPE_VIDEO).firstOrNull { it.isSelected }?.let { g ->
+                    val f = (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it).frameRate } ?: -1f
+                    if (f > 0) frameRate = DisplayMode.normalize(f)
+                }
                 if (isOffline) {
                     audioOptions = groups(C.TRACK_TYPE_AUDIO).mapIndexed { i, g -> TrackOption("t$i", formatLabel(g, "Track ${i + 1}")) }
                     subtitleOptions = groups(C.TRACK_TYPE_TEXT).mapIndexed { i, g -> TrackOption("t$i", formatLabel(g, "Subtitles ${i + 1}")) }

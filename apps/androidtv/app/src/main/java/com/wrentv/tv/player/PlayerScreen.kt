@@ -94,6 +94,9 @@ fun PlayerScreen(target: PlayTarget) {
         c.start()
         onDispose { c.stop() }
     }
+    // Play film at a matching refresh rate; give the TV back its own mode on the way out.
+    LaunchedEffect(c.frameRate) { DisplayMode.apply(context, c.frameRate) }
+    DisposableEffect(Unit) { onDispose { DisplayMode.apply(context, 0f) } }
     LaunchedEffect(c.closeRequested) { if (c.closeRequested) nav.back() }
 
     var controls by remember { mutableStateOf(false) }
