@@ -271,6 +271,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Wren TV";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Wren TV scans the code on your TV to sign it in.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Wren TV connects to media servers on your network.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -310,6 +311,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Wren TV";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Wren TV scans the code on your TV to sign it in.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Wren TV connects to media servers on your network.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

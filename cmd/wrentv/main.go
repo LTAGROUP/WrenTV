@@ -271,6 +271,9 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 		srv.Local = auth.NewLocal(d, cfg.Auth.SigningKey)
 		srv.Auth = srv.Local
 	}
+	// TVs and other devices linked by code or QR code from a signed-in device.
+	srv.Devices = auth.NewDevices(d, cfg.Auth.SigningKey, srv.Local, srv.Supa)
+	srv.Auth = auth.WithDevices(srv.Auth, srv.Devices)
 
 	// Startup scan of every library (incremental: unchanged files are skipped).
 	go func() {

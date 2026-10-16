@@ -1,0 +1,671 @@
+package com.wrentv.tv.data
+
+import kotlinx.serialization.Serializable
+import java.util.Locale
+
+@Serializable
+data class WatchState(val position: Double = 0.0, val duration: Double = 0.0, val watched: Boolean = false) {
+    val fraction: Double get() = if (duration > 0) (position / duration).coerceIn(0.0, 1.0) else 0.0
+}
+
+@Serializable
+data class Item(
+    val id: String,
+    val libraryId: String = "",
+    val kind: String = "movie",
+    val parentId: String? = null,
+    val showId: String? = null,
+    val title: String = "",
+    val originalTitle: String? = null,
+    val year: Int? = null,
+    val overview: String? = null,
+    val tagline: String? = null,
+    val tmdbId: Int? = null,
+    val seasonNumber: Int = 0,
+    val episodeNumber: Int = 0,
+    val posterPath: String? = null,
+    val backdropPath: String? = null,
+    val stillPath: String? = null,
+    val logoPath: String? = null,
+    val rating: Double? = null,
+    val contentRating: String? = null,
+    val genres: List<String>? = null,
+    val runtimeMin: Int? = null,
+    val airDate: String? = null,
+    val matchState: String = "",
+    val addedAt: Long = 0,
+    val progress: WatchState? = null,
+    val showTitle: String? = null,
+    val childCount: Int? = null,
+    val unwatchedCount: Int? = null,
+) {
+    val isPlayable: Boolean get() = kind == "movie" || kind == "episode"
+    val isWatched: Boolean get() = progress?.watched ?: false
+    val inProgress: Boolean get() = progress?.let { !it.watched && it.position > 30 } ?: false
+
+    /** "S1 · E4" for episodes. */
+    val episodeLabel: String get() = "S$seasonNumber · E$episodeNumber"
+
+    val displayTitle: String
+        get() = if (kind == "season") (if (seasonNumber == 0) "Specials" else "Season $seasonNumber") else title
+}
+
+@Serializable
+data class Library(
+    val id: String,
+    val name: String = "",
+    val type: String = "movies",
+    val paths: List<String> = emptyList(),
+    /** "files" (folders on disk) or "stream" (titles streamed through debrid). */
+    val source: String? = null,
+    val lastScanAt: Long? = null,
+    val itemCount: Int? = null,
+) {
+    val isStream: Boolean get() = source == "stream"
+}
+
+@Serializable
+data class User(
+    val id: String,
+    val username: String = "",
+    val displayName: String = "",
+    val isAdmin: Boolean = false,
+    val role: String? = null,
+)
+
+@Serializable
+data class SupabaseInfo(val url: String, val publishableKey: String)
+
+@Serializable
+data class ServerInfo(
+    val name: String = "",
+    val machineId: String = "",
+    val version: String = "",
+    val authMode: String = "local",
+    val setupRequired: Boolean = false,
+    /** Streaming through the owner's debrid service is on and working. */
+    val streaming: Boolean? = null,
+    val supabase: SupabaseInfo? = null,
+    /** The server's id in the account service (account servers only). */
+    val serverId: String? = null,
+    val localUrls: List<String>? = null,
+) {
+    /** Signs in with a Wren TV account (email) rather than a server-local username. */
+    val usesAccounts: Boolean get() = authMode == "supabase" && supabase != null
+    val addressId: String get() = serverId?.takeIf { it.isNotEmpty() } ?: machineId
+}
+
+@Serializable
+data class AuthResponse(val token: String, val user: User)
+
+@Serializable
+data class MeResponse(val user: User, val limits: UserLimitsInfo? = null)
+
+/** What the signed-in user may do, with server defaults applied. */
+@Serializable
+data class UserLimitsInfo(
+    val canStream: Boolean = true,
+    val canDownload: Boolean = false,
+    val maxStreams: Int = 0,
+    val maxDownloads: Int = 0,
+)
+
+/** A TV sign-in code waiting to be approved from a phone or browser. */
+@Serializable
+data class PairStart(val code: String, val secret: String, val expiresIn: Int = 600, val path: String = "")
+
+@Serializable
+data class PairPoll(val status: String, val token: String? = null, val user: User? = null)
+
+@Serializable
+data class HomeResponse(
+    val continueWatching: List<Item> = emptyList(),
+    val recentlyAdded: List<Shelf> = emptyList(),
+    val topRated: List<Item>? = null,
+    val genres: List<GenreRow>? = null,
+    val collections: List<CollectionShelf>? = null,
+) {
+    @Serializable
+    data class Shelf(val library: Library, val items: List<Item> = emptyList())
+}
+
+/** The streaming home page: rows of TMDB titles. */
+@Serializable
+data class DiscoverHome(
+    val enabled: Boolean = false,
+    val streaming: Boolean? = null,
+    val continueWatching: List<Item> = emptyList(),
+    val recentlyWatched: List<Item> = emptyList(),
+    val hero: List<TitleView> = emptyList(),
+    val rows: List<Row> = emptyList(),
+) {
+    @Serializable
+    data class Row(val id: String, val title: String, val items: List<TitleView> = emptyList())
+}
+
+@Serializable
+data class CollectionShelf(val collection: WrenCollection, val items: List<Item> = emptyList(), val missing: List<TitleView>? = null)
+
+/** A page of TMDB's catalog for the Movies and TV Shows pages. */
+@Serializable
+data class CatalogPage(
+    val enabled: Boolean = false,
+    val items: List<TitleView> = emptyList(),
+    val genres: List<Genre> = emptyList(),
+    val page: Int = 1,
+    val totalPages: Int = 1,
+) {
+    @Serializable
+    data class Genre(val id: Int, val name: String)
+}
+
+/** A collection: hand-picked, smart (rules) or synced from TMDB. */
+@Serializable
+data class WrenCollection(
+    val id: String,
+    val name: String = "",
+    val description: String = "",
+    val kind: String = "manual",
+    val libraryId: String? = null,
+    val posterPath: String? = null,
+    val backdropPath: String? = null,
+    val sort: String = "",
+    val showOnHome: Boolean = false,
+    val showMissing: Boolean = false,
+    val visibleFrom: String = "",
+    val visibleUntil: String = "",
+    val syncError: String? = null,
+    val itemCount: Int? = null,
+    val active: Boolean? = null,
+) {
+    val kindLabel: String
+        get() = when (kind) {
+            "smart" -> "Smart"
+            "tmdb" -> "From TMDB"
+            else -> "Hand-picked"
+        }
+}
+
+@Serializable
+data class CollectionDetail(
+    val collection: WrenCollection,
+    val items: List<Item> = emptyList(),
+    val missing: List<TitleView>? = null,
+    /** When streaming, a TMDB collection's every title, in its order. */
+    val titles: List<TitleView>? = null,
+)
+
+@Serializable
+data class GenreCount(
+    val genre: String,
+    val count: Int = 0,
+    val movies: Int = 0,
+    val shows: Int = 0,
+    val backdropPath: String? = null,
+)
+
+@Serializable
+data class UserPrefs(
+    val audioLanguage: String = "",
+    /** Subtitles turn on in this language when a file has them; empty is off. */
+    val subtitleLanguage: String? = null,
+)
+
+@Serializable
+data class GenreRow(val genre: String, val items: List<Item> = emptyList())
+
+/** A TMDB title, linked to the library item when the server has it. */
+@Serializable
+data class TitleView(
+    val tmdbId: Int,
+    val mediaType: String = "movie",
+    val title: String = "",
+    val year: Int? = null,
+    val overview: String? = null,
+    val posterPath: String? = null,
+    val backdropPath: String? = null,
+    val rating: Double? = null,
+    val item: Item? = null,
+) {
+    val id: String get() = "$mediaType:$tmdbId"
+}
+
+@Serializable
+data class TrendingResponse(val enabled: Boolean = false, val items: List<TitleView> = emptyList())
+
+@Serializable
+data class Ratings(
+    val tmdb: Double? = null,
+    val tmdbVotes: Int? = null,
+    val imdb: Double? = null,
+    val imdbVotes: Int? = null,
+    val rottenTomatoes: Int? = null,
+    val metacritic: Int? = null,
+)
+
+@Serializable
+data class CastMember(val name: String, val character: String? = null, val profilePath: String? = null)
+
+@Serializable
+data class Trailer(val youtubeKey: String, val name: String = "")
+
+@Serializable
+data class Extras(
+    val ratings: Ratings = Ratings(),
+    /** Whether IMDb / Rotten Tomatoes / Metacritic ratings are configured. */
+    val omdb: Boolean = false,
+    val tmdb: Boolean = false,
+    val cast: List<CastMember> = emptyList(),
+    val trailer: Trailer? = null,
+    val moreLikeThis: List<TitleView> = emptyList(),
+)
+
+@Serializable
+data class ItemPage(val items: List<Item> = emptyList(), val total: Int = 0)
+
+fun languageName(code: String?): String? {
+    if (code.isNullOrEmpty() || code == "und") return null
+    val name = Locale.forLanguageTag(code).getDisplayLanguage(Locale.getDefault())
+    return name.ifEmpty { code }.replaceFirstChar { it.titlecase(Locale.getDefault()) }
+}
+
+@Serializable
+data class MediaStream(
+    val index: Int = 0,
+    val typeIndex: Int = 0,
+    val codec: String = "",
+    val profile: String? = null,
+    val language: String? = null,
+    val title: String? = null,
+    val default: Boolean = false,
+    val forced: Boolean = false,
+    val width: Int? = null,
+    val height: Int? = null,
+    val hdr: String? = null,
+    val dvProfile: Int? = null,
+    val channels: Int? = null,
+    val channelLayout: String? = null,
+) {
+    val label: String
+        get() = listOfNotNull(languageName(language), title?.takeIf { it.isNotEmpty() }, codecLabel).joinToString(" · ")
+
+    val codecLabel: String
+        get() {
+            var c = when (codec) {
+                "eac3" -> if (profile?.contains("Atmos") == true) "Dolby Atmos" else "Dolby Digital+"
+                "truehd" -> if (profile?.contains("Atmos") == true) "TrueHD Atmos" else "TrueHD"
+                "ac3" -> "Dolby Digital"
+                "dts" -> profile ?: "DTS"
+                "subrip" -> "SRT"
+                "hdmv_pgs_subtitle" -> "PGS"
+                "ass" -> "ASS"
+                else -> codec.uppercase()
+            }
+            val ch = channels
+            if (ch != null && ch > 0) {
+                c += " " + when (ch) {
+                    8 -> "7.1"
+                    6 -> "5.1"
+                    2 -> "Stereo"
+                    else -> "${ch}ch"
+                }
+            }
+            return c
+        }
+}
+
+@Serializable
+data class MediaInfo(
+    val container: String = "",
+    val duration: Double = 0.0,
+    val bitrate: Long? = null,
+    val video: List<MediaStream>? = null,
+    val audio: List<MediaStream>? = null,
+    val subtitles: List<MediaStream>? = null,
+    val chapters: List<Chapter>? = null,
+)
+
+@Serializable
+data class MediaFileView(
+    val id: String,
+    val size: Long = 0,
+    val container: String = "",
+    val duration: Double = 0.0,
+    val videoCodec: String = "",
+    val width: Int = 0,
+    val height: Int = 0,
+    val hdr: String? = null,
+    val dvProfile: Int? = null,
+    /** Set when the file is a saved debrid stream rather than a file on disk. */
+    val streamId: String? = null,
+    /** The release a stream comes from. */
+    val release: String? = null,
+    val fileName: String = "",
+    val label: String? = null,
+    val info: MediaInfo? = null,
+) {
+    /** Badges like "4K", "Dolby Vision", "Atmos". */
+    val badges: List<String>
+        get() {
+            val b = mutableListOf<String>()
+            when {
+                width >= 3200 -> b += "4K"
+                width >= 1800 -> b += "1080p"
+                width >= 1200 -> b += "720p"
+            }
+            when (hdr) {
+                "DV", "DV+HDR10" -> b += "Dolby Vision"
+                "HDR10" -> b += "HDR10"
+                "HLG" -> b += "HLG"
+            }
+            val a = info?.audio?.firstOrNull { it.default } ?: info?.audio?.firstOrNull()
+            if (a != null) {
+                if (a.profile?.contains("Atmos") == true) b += "Atmos"
+                else if ((a.channels ?: 0) >= 6) b += if (a.channels == 8) "7.1" else "5.1"
+            }
+            return b
+        }
+}
+
+@Serializable
+data class ItemDetail(
+    val item: Item,
+    val children: List<Item>? = null,
+    val nextEpisode: Item? = null,
+    val show: Item? = null,
+    val files: List<MediaFileView>? = null,
+    /** The item lives in a streaming library. */
+    val streaming: Boolean? = null,
+    val canDownload: Boolean? = null,
+)
+
+/** A device download link: the original file (or stream) for this device. */
+@Serializable
+data class DeviceDownload(
+    val status: String = "",
+    val message: String? = null,
+    val url: String? = null,
+    val fileName: String? = null,
+    val fileId: String? = null,
+    val size: Long? = null,
+    val label: String? = null,
+    val expiresAt: Long? = null,
+)
+
+/** Search results from TMDB, linked to library items when the server has them. */
+@Serializable
+data class DiscoverSearch(val streaming: Boolean = false, val items: List<TitleView> = emptyList())
+
+@Serializable
+data class ClientCaps(
+    val engines: List<String>,
+    val nativeVideo: List<String>,
+    val nativeAudio: List<String>,
+    val nativeContainers: List<String>,
+    val dolbyVision: Boolean,
+    val hdr: Boolean,
+    val maxKbps: Int = 0,
+    val audioFallback: String? = null,
+)
+
+@Serializable
+data class PlayRequest(val fileId: String? = null, val audioIndex: Int? = null, val caps: ClientCaps, val maxWidth: Int? = null)
+
+@Serializable
+data class Decision(
+    val engine: String = "",
+    val method: String = "",
+    val audioCodec: String? = null,
+    val audioIndex: Int? = null,
+    val reasons: List<String>? = null,
+)
+
+@Serializable
+data class SubtitleTrack(
+    val index: Int,
+    val language: String? = null,
+    val title: String? = null,
+    val codec: String = "",
+    val forced: Boolean = false,
+    val default: Boolean = false,
+    val url: String? = null,
+)
+
+@Serializable
+data class PlayResponse(
+    val status: String = "",
+    val message: String? = null,
+    val sessionId: String? = null,
+    val engine: String? = null,
+    val method: String? = null,
+    val url: String? = null,
+    val decision: Decision? = null,
+    val duration: Double? = null,
+    val resumePosition: Double? = null,
+    val info: MediaInfo? = null,
+    val subtitles: List<SubtitleTrack>? = null,
+    /** The subtitle track the viewer's language setting picks, or -1 for off. */
+    val subtitleIndex: Int? = null,
+    val fileId: String? = null,
+    val chapters: List<Chapter>? = null,
+    val markers: Markers? = null,
+    /** The item's files, when it has more than one, for a version picker. */
+    val versions: List<MediaVersion>? = null,
+)
+
+@Serializable
+data class MediaVersion(val id: String, val label: String = "", val height: Int = 0)
+
+@Serializable
+data class Chapter(val start: Double = 0.0, val end: Double = 0.0, val title: String = "")
+
+@Serializable
+data class TimeRange(val start: Double, val end: Double)
+
+/** The skippable parts of a file, from chapter names or audio fingerprinting. */
+@Serializable
+data class Markers(val intro: TimeRange? = null, val credits: TimeRange? = null, val source: String? = null)
+
+/** A streamed title being saved to the server as a file. */
+@Serializable
+data class ServerDownload(
+    val id: String,
+    val itemId: String? = null,
+    val title: String = "",
+    val quality: String = "",
+    val status: String = "",
+    val path: String? = null,
+    val bytes: Long = 0,
+    val total: Long = 0,
+    val error: String? = null,
+    val createdAt: Long = 0,
+) {
+    val active: Boolean get() = status == "queued" || status == "downloading"
+    val fraction: Float get() = if (total > 0) (bytes.toFloat() / total).coerceAtMost(1f) else 0f
+}
+
+@Serializable
+data class WebhookSetting(val url: String = "", val secret: String? = null, val events: List<String>? = null)
+
+@Serializable
+data class ServerSettings(
+    val serverName: String = "",
+    val publicUrl: String = "",
+    val hwaccel: String = "",
+    val tmdbKeySet: Boolean = false,
+    val omdbKeySet: Boolean? = null,
+    val markerFingerprinting: Boolean? = null,
+    val streaming: StreamingSettings = StreamingSettings(),
+    val userDefaults: UserDefaultsSettings = UserDefaultsSettings(),
+    val webhooks: List<WebhookSetting>? = null,
+    val integrationKey: String = "",
+    val restartRequired: Boolean? = null,
+)
+
+@Serializable
+data class StreamingSettings(
+    val enabled: Boolean = false,
+    val active: Boolean = false,
+    val debrid: List<DebridService> = emptyList(),
+    val addons: List<AddonSetting> = emptyList(),
+    val qualities: List<String> = emptyList(),
+    val maxSizeGB: Map<String, Double>? = null,
+    val prefetch: Boolean = false,
+    val mode: String = "stream",
+    val movieLibrary: String = "",
+    val showLibrary: String = "",
+    val downloadQuality: String = "1080p",
+    val limits: StreamingLimits = StreamingLimits(),
+)
+
+@Serializable
+data class DebridService(val provider: String, val name: String = "", val keySet: Boolean = false, val keyHint: String? = null)
+
+@Serializable
+data class AddonSetting(val name: String = "", val url: String = "", val enabled: Boolean = true)
+
+@Serializable
+data class StreamingLimits(
+    val maxStreams: Int = 0,
+    val bandwidthMbps: Double = 0.0,
+    val perStreamMbps: Double = 0.0,
+    val downloadMbps: Double = 0.0,
+    val maxDownloads: Int = 0,
+    val prefetchWorkers: Int = 0,
+    val downloadQuotaGB: Double = 0.0,
+    val minFreeGB: Double = 0.0,
+)
+
+@Serializable
+data class UserDefaultsSettings(val maxStreams: Int = 0, val deviceDownloads: Boolean = true, val maxDownloads: Int = 0)
+
+/** Result of checking a debrid API key. */
+@Serializable
+data class DebridAccount(
+    val provider: String = "",
+    val ok: Boolean = false,
+    val user: String? = null,
+    val premium: Boolean = false,
+    val expires: String? = null,
+    val error: String? = null,
+)
+
+/** A server account with its streaming limits (-1 = server default, 0 = no limit). */
+@Serializable
+data class ServerUser(
+    val id: String,
+    val username: String = "",
+    val displayName: String = "",
+    val email: String? = null,
+    val isAdmin: Boolean = false,
+    val allowStreaming: Boolean = true,
+    val allowDownloads: Int = -1,
+    val maxStreams: Int = -1,
+    val maxDownloads: Int = -1,
+    val effective: UserLimitsInfo = UserLimitsInfo(),
+)
+
+@Serializable
+data class UserLimitsPatch(val allowStreaming: Boolean, val allowDownloads: Int, val maxStreams: Int, val maxDownloads: Int)
+
+@Serializable
+data class ServerEvent(val type: String = "", val libraryId: String? = null, val itemId: String? = null, val message: String? = null)
+
+// Stats
+
+@Serializable
+data class StatCount(val name: String, val count: Int)
+
+@Serializable
+data class DayStat(val date: String, val plays: Int, val hours: Double)
+
+@Serializable
+data class TopTitle(
+    val itemId: String,
+    val title: String,
+    val year: Int? = null,
+    val posterPath: String? = null,
+    val plays: Int = 0,
+    val users: Int = 0,
+    val hours: Double = 0.0,
+)
+
+@Serializable
+data class TopUser(
+    val userId: String,
+    val name: String,
+    val plays: Int = 0,
+    val hours: Double = 0.0,
+    val lastSeen: Long = 0,
+    val lastPlayed: String = "",
+)
+
+@Serializable
+data class PlayStats(
+    val plays: Int = 0,
+    val hours: Double = 0.0,
+    val users: Int = 0,
+    val titles: Int = 0,
+    val daily: List<DayStat> = emptyList(),
+    val byHour: List<Int> = emptyList(),
+    val byWeekday: List<Int> = emptyList(),
+    val byMethod: List<StatCount>? = null,
+    val byClient: List<StatCount>? = null,
+    val topMovies: List<TopTitle>? = null,
+    val topShows: List<TopTitle>? = null,
+    val topUsers: List<TopUser>? = null,
+)
+
+@Serializable
+data class LibraryStats(
+    val movies: Int = 0,
+    val shows: Int = 0,
+    val episodes: Int = 0,
+    val files: Int = 0,
+    val bytes: Long = 0,
+    val hours: Double = 0.0,
+    val resolutions: List<StatCount>? = null,
+    val hdr: List<StatCount>? = null,
+    val videoCodecs: List<StatCount>? = null,
+    val containers: List<StatCount>? = null,
+)
+
+@Serializable
+data class NowPlaying(
+    val sessionId: String,
+    val userName: String = "",
+    val itemId: String = "",
+    val title: String = "",
+    val subtitle: String? = null,
+    val posterPath: String? = null,
+    val backdropPath: String? = null,
+    val method: String = "",
+    val quality: String = "",
+    val client: String = "",
+    val position: Double = 0.0,
+    val duration: Double = 0.0,
+)
+
+@Serializable
+data class HistoryRow(
+    val id: String,
+    val userName: String = "",
+    val itemId: String? = null,
+    val kind: String = "",
+    val title: String = "",
+    val showTitle: String? = null,
+    val method: String = "",
+    val client: String = "",
+    val startedAt: Long = 0,
+    val playedSeconds: Double = 0.0,
+    val completed: Boolean = false,
+)
+
+@Serializable
+data class StatsResponse(
+    val days: Int = 30,
+    val stats: PlayStats = PlayStats(),
+    val library: LibraryStats = LibraryStats(),
+    val nowPlaying: List<NowPlaying>? = null,
+    val recent: List<HistoryRow>? = null,
+)

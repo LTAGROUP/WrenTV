@@ -106,6 +106,7 @@ struct MoreView: View {
             }
             Section {
                 NavigationLink { PreferencesView() } label: { Label("Playback Settings", systemImage: "slider.horizontal.3") }
+                NavigationLink { LinkTVView() } label: { Label("Link a TV", systemImage: "tv.badge.wifi") }
             }
             if state.isAdmin {
                 Section("Server") {

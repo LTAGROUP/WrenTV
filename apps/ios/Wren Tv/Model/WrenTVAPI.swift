@@ -164,6 +164,10 @@ struct WrenTVAPI: Sendable {
         try await send("POST", "/api/items/\(id)/watched", body: ["watched": watched])
     }
 
+    // TV sign-in: a TV shows a code (and a QR of it); approving signs it in as this user.
+    func pairInfo(_ code: String) async throws -> PairInfo { try await get("/api/pair/\(code)") }
+    func approvePair(_ code: String) async throws { try await send("POST", "/api/pair/\(code)/approve") }
+
     func stopSession(_ sid: String) async {
         _ = try? await send("DELETE", "/api/sessions/\(sid)")
     }

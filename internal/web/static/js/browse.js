@@ -357,6 +357,10 @@ export async function viewAccount() {
       <div class="field"><label>Subtitles</label>
         <select id="subs">${`<option value="">Off</option>` + sorted.map((c) => `<option value="${c}" ${c === prefs.subtitleLanguage ? 'selected' : ''}>${esc(name(c))}</option>`).join('')}</select></div>
       <p class="small muted" style="margin:0">Subtitles in this language turn on by themselves when the file has them. Both settings are saved to your account, so they apply on every device and browser you sign in with. You can still switch tracks while watching.</p>
+    </div>
+    <div class="panel" style="max-width:640px;margin-top:18px"><h2>Sign in a TV</h2>
+      <p class="small muted">On the TV, choose “Sign in with your phone”. Scan its QR code, or enter the code it shows here.</p>
+      <a class="btn" href="/link">Enter a TV code</a>
     </div></div>`);
   const save = (key) => async (e) => {
     try {

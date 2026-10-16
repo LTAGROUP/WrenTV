@@ -209,6 +209,12 @@ struct GenreRoute: Hashable {
     var libraryId: String?
 }
 
+/// A TV waiting to be signed in with a code.
+struct PairInfo: Decodable {
+    var device: String
+    var approved: Bool
+}
+
 struct UserPrefs: Codable, Hashable {
     var audioLanguage: String
     /// Subtitles turn on in this language when a file has them; empty is off.

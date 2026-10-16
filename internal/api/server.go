@@ -51,6 +51,11 @@ type Server struct {
 	Auth  auth.Provider
 	Local *auth.Local    // set in local mode
 	Supa  *auth.Supabase // set in supabase mode
+	// Devices signs in devices linked from another device (TV sign-in codes).
+	Devices *auth.Devices
+
+	pairs     *pairings // TV sign-in codes waiting for approval
+	pairsOnce sync.Once
 
 	tickets     *tickets // device download links
 	ticketsOnce sync.Once
@@ -96,6 +101,11 @@ func (s *Server) Router() http.Handler {
 	r.Get("/download/{ticket}/*", s.serveDeviceDownload)
 	r.Head("/download/{ticket}/*", s.serveDeviceDownload)
 
+	// TV sign-in: the TV asks for a code and polls; a signed-in device approves it.
+	r.Post("/api/pair", s.handleCreatePair)
+	r.Get("/api/pair/{code}", s.handlePairInfo)
+	r.Post("/api/pair/{code}/poll", s.handlePollPair)
+
 	// Backend services (e.g. a Riven-like source manager), authenticated by the integration key.
 	r.Route("/api/integration", func(r chi.Router) {
 		r.Use(s.integrationAuth)
@@ -107,6 +117,7 @@ func (s *Server) Router() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.authenticate)
 		r.Get("/api/me", s.handleMe)
+		r.Post("/api/pair/{code}/approve", s.handleApprovePair)
 		r.Get("/api/events", s.handleEvents)
 		r.Get("/api/home", s.handleHome)
 		r.Get("/api/search", s.handleSearch)

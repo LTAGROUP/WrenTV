@@ -155,6 +155,11 @@ func (s *Supabase) Authenticate(ctx context.Context, token string) (*Principal, 
 	if err != nil {
 		return nil, ErrUnauthorized
 	}
+	return s.principal(ctx, u)
+}
+
+// principal asks the account service what an identified user may do here.
+func (s *Supabase) principal(ctx context.Context, u *db.User) (*Principal, error) {
 	if !s.Claimed() {
 		return nil, ErrUnclaimed
 	}

@@ -106,6 +106,8 @@ async function render() {
       return;
     }
   }
+  // A TV's sign-in code (from its QR code) is approved on its own page.
+  if (location.pathname === '/link') return viewLink();
   for (const [re, view, admin] of routes) {
     const m = location.pathname.match(re);
     if (!m) continue;
@@ -167,14 +169,15 @@ function bindForm(onSubmit) {
 function viewSignIn(mode = 'in') {
   const srv = state.server;
   if (!isSupabase()) {
-    authCard(`<p class="muted">Sign in to <b>${esc(srv.name)}</b>.</p>
+    authCard(`<p class="muted">${location.pathname === '/link' ? 'Sign in to approve your TV.' : `Sign in to <b>${esc(srv.name)}</b>.`}</p>
       <form><div class="field"><label>Username</label><input name="username" autocomplete="username" required></div>
       <div class="field"><label>Password</label><input name="password" type="password" autocomplete="current-password" required></div>
       <p class="error" hidden></p><button class="btn primary lg" style="width:100%">Sign in</button></form>`);
     return bindForm(async (v) => { await local.login(v.username, v.password); render(); });
   }
   const up = mode === 'up';
-  authCard(`<p class="muted">${up ? 'Create your Wren TV account.' : `Sign in with your Wren TV account to use <b>${esc(srv.name)}</b>.`}</p>
+  const linking = location.pathname === '/link';
+  authCard(`<p class="muted">${up ? 'Create your Wren TV account.' : linking ? 'Sign in with your Wren TV account to sign in your TV.' : `Sign in with your Wren TV account to use <b>${esc(srv.name)}</b>.`}</p>
     <form>${up ? '<div class="field"><label>Name</label><input name="name" autocomplete="name" required></div>' : ''}
     <div class="field"><label>Email</label><input name="email" type="email" autocomplete="email" required></div>
     <div class="field"><label>Password</label><input name="password" type="password" minlength="8" autocomplete="${up ? 'new-password' : 'current-password'}" required></div>
@@ -226,6 +229,52 @@ function viewClaim() {
     toast('Server claimed. Welcome to Wren TV!');
     go('/manage/libraries');
   });
+}
+
+// Signs a TV in as this account. The TV shows a code and a QR code of
+// /link?code=…; whoever approves here is who the TV is signed in as.
+async function viewLink() {
+  const params = new URLSearchParams(location.search);
+  const code = (params.get('code') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const who = state.user?.displayName || state.user?.username || state.session?.user?.email || '';
+  const pretty = (c) => c.length === 8 ? c.slice(0, 4) + '-' + c.slice(4) : c;
+  if (!code) {
+    authCard(`<h2 style="margin-bottom:6px">Sign in a TV</h2>
+      <p class="muted">Enter the code shown on your TV.</p>
+      <form><div class="field"><label>Code</label><input name="code" class="code-input" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" required></div>
+      <p class="error" hidden></p><button class="btn primary lg" style="width:100%">Continue</button></form>`);
+    return bindForm(async (v) => go('/link?code=' + encodeURIComponent(v.code.trim()), true));
+  }
+  let info;
+  try {
+    info = await api('/api/pair/' + code);
+  } catch (e) {
+    authCard(`<h2 style="margin-bottom:8px">Code expired</h2><p class="muted">${esc(e.message)}</p>
+      <div class="actions"><button class="btn" id="other">Enter a code</button><a class="btn ghost" href="/">Open Wren TV</a></div>`);
+    $('#other').onclick = () => go('/link', true);
+    return;
+  }
+  authCard(`<h2 style="margin-bottom:6px">Sign in ${esc(info.device)}?</h2>
+    <p class="muted">${esc(info.device)} will be signed in to <b>${esc(state.server.name)}</b> as <b>${esc(who)}</b>. Only approve a code you see on your own TV.</p>
+    <p class="mono" style="font-size:22px;letter-spacing:3px;text-align:center;margin:14px 0">${esc(pretty(code))}</p>
+    <p class="error" hidden></p>
+    <div class="actions"><button class="btn primary lg" id="approve" style="flex:1">Sign in TV</button><a class="btn ghost lg" href="/">Not now</a></div>
+    <p class="switch muted">Not you? <a data-out>Sign out</a></p>`);
+  // Signing out stays on this page, so another account can approve.
+  $('[data-out]', app).onclick = () => (isSupabase() ? account.signOut() : Promise.resolve(saveSession(null))).finally(() => { state.user = null; render(); });
+  $('#approve').onclick = async (e) => {
+    e.target.disabled = true;
+    try {
+      await api('/api/pair/' + code + '/approve', { method: 'POST' });
+      authCard(`<h2 style="margin-bottom:8px">You're all set</h2><p class="muted">${esc(info.device)} is signed in as <b>${esc(who)}</b>. You can close this page.</p>
+        <div class="actions"><a class="btn primary lg" href="/" style="flex:1">Open Wren TV</a></div>`);
+    } catch (ex) {
+      const err = $('.error', app);
+      err.textContent = ex.message;
+      err.hidden = false;
+      e.target.disabled = false;
+    }
+  };
 }
 
 function viewNoAccess() {
