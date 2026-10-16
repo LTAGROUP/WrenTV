@@ -98,6 +98,9 @@ func (s *Session) serveMaster(w http.ResponseWriter) {
 			videoURI = "a/media.m3u8"
 		}
 	}
+	if v != nil && s.subtitleRenditions(&b) {
+		attrs = append(attrs, `SUBTITLES="subs"`)
+	}
 	b.WriteString("#EXT-X-STREAM-INF:" + strings.Join(attrs, ",") + "\n" + videoURI + "\n")
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache")

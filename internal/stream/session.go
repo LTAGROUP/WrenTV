@@ -200,6 +200,7 @@ func (s *Session) close() {
 //	v/media.m3u8, v/init.mp4, v/N.m4s     remux video
 //	a/media.m3u8, a/init.mp4, a/N.m4s     remux audio
 //	subs/N.vtt                text subtitle as WebVTT
+//	subs/N.m3u8, subs/N/K.vtt the same as an HLS subtitle rendition
 func (s *Session) ServeHTTP(w http.ResponseWriter, r *http.Request, file string) {
 	s.touch()
 	track := ""
@@ -224,6 +225,22 @@ func (s *Session) ServeHTTP(w http.ResponseWriter, r *http.Request, file string)
 			return
 		}
 		s.serveSegment(w, r, track, n)
+	case strings.HasPrefix(file, "subs/") && strings.HasSuffix(file, ".m3u8"):
+		idx, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(file, "subs/"), ".m3u8"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		s.serveSubtitlePlaylist(w, r, idx)
+	case strings.HasPrefix(file, "subs/") && strings.Count(file, "/") == 2 && strings.HasSuffix(file, ".vtt"):
+		a, b, _ := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(file, "subs/"), ".vtt"), "/")
+		idx, err1 := strconv.Atoi(a)
+		n, err2 := strconv.Atoi(b)
+		if err1 != nil || err2 != nil {
+			http.NotFound(w, r)
+			return
+		}
+		s.serveSubtitleSegment(w, r, idx, n)
 	case strings.HasPrefix(file, "subs/") && strings.HasSuffix(file, ".vtt"):
 		idx, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(file, "subs/"), ".vtt"))
 		if err != nil {
