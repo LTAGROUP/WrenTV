@@ -32,6 +32,14 @@ first-class media sources.
 docker compose -f deploy/docker/docker-compose.yml up -d
 ```
 
+Every push to `main` publishes `ghcr.io/ltagroup/wrentv:latest` (GitHub Actions, `.github/workflows/docker.yml`).
+To update a server that uses the image:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Use `network_mode: host` on Linux so automatic port forwarding (UPnP) and LAN address detection see the real network.
 Mount your media read-only (for example at `/media`). Config and the database live in `/config`. The image bundles
 jellyfin-ffmpeg; uncomment `/dev/dri` (Intel/AMD) or the NVIDIA block in the compose file for hardware transcoding.
 
