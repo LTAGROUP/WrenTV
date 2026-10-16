@@ -105,13 +105,25 @@ export async function viewCollections(libId) {
 
 const collSorts = [['', 'Default order'], ['title', 'Title'], ['added', 'Recently added'], ['year', 'Newest'], ['year_asc', 'Oldest'], ['rating', 'Rating']];
 
+function sortTitles(list, sort) {
+  const out = [...list];
+  if (sort === 'title') out.sort((a, b) => a.title.localeCompare(b.title));
+  else if (sort === 'year') out.sort((a, b) => (b.year || 0) - (a.year || 0));
+  else if (sort === 'year_asc') out.sort((a, b) => (a.year || 9999) - (b.year || 9999));
+  else if (sort === 'rating') out.sort((a, b) => (b.item?.rating || b.rating || 0) - (a.item?.rating || a.rating || 0));
+  else if (sort === 'added') out.sort((a, b) => (b.item?.addedAt || 0) - (a.item?.addedAt || 0));
+  return out;
+}
+
 export async function viewCollection(id) {
   const sort = qs().get('sort') || '';
   const d = await api(`/api/collections/${id}` + (sort ? `?sort=${sort}` : ''));
   const c = d.collection;
   setTitle(c.name);
   const admin = isAdmin();
-  const meta = [`${d.items.length} in your library`, kindLabel(c)];
+  // When streaming, a TMDB collection is everything in it, not just what the server has.
+  const titles = d.titles ? sortTitles(d.titles, sort) : null;
+  const meta = [titles ? `${titles.length} title${titles.length === 1 ? '' : 's'}` : `${d.items.length} in your library`, kindLabel(c)];
   if (c.visibleFrom) meta.push(`Visible ${fmtMD(c.visibleFrom)} – ${fmtMD(c.visibleUntil)}`);
   if (admin && c.showOnHome) meta.push('Shown on Home');
   const removable = admin && c.kind === 'manual';
@@ -125,9 +137,10 @@ export async function viewCollection(id) {
     <div class="actions"><select id="sort" data-caption="Sort">${collSorts.map(([k, v]) => `<option value="${k}" ${k === sort ? 'selected' : ''}>${v}</option>`).join('')}</select>
     ${admin ? `<button class="btn" data-act="edit">Edit</button>${c.kind === 'tmdb' ? '<button class="btn ghost" data-act="sync">Sync now</button>' : ''}
       <button class="btn ghost danger" data-act="delete">Delete</button>` : ''}</div></div></div></div>
-    ${d.items.length ? `<div class="grid">${d.items.map(card).join('')}</div>`
+    ${titles ? (titles.length ? `<div class="grid">${titles.map((v) => titleCard(v)).join('')}</div>` : '<div class="empty"><h2>This collection is empty</h2></div>')
+      : d.items.length ? `<div class="grid">${d.items.map(card).join('')}</div>`
       : `<div class="empty"><h2>Nothing from your library yet</h2><p>${c.kind === 'manual' ? 'Add titles from their detail page with “+ Collection”.' : 'Titles appear as soon as the library has them.'}</p></div>`}
-    ${d.missing?.length ? `<h2 class="section-title">Not in your library <span class="muted small">${d.missing.length}</span></h2>
+    ${!titles && d.missing?.length ? `<h2 class="section-title">Not in your library <span class="muted small">${d.missing.length}</span></h2>
       <div class="grid">${d.missing.map((v) => titleCard(v)).join('')}</div>` : ''}</div>`);
   $('#sort', node).onchange = (e) => go(`/collection/${id}${e.target.value ? '?sort=' + e.target.value : ''}`, true);
   const act = (n, fn) => $(`[data-act=${n}]`, node)?.addEventListener('click', fn);

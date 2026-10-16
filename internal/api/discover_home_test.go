@@ -101,3 +101,33 @@ func TestDiscoverHome(t *testing.T) {
 		t.Error("no hero titles")
 	}
 }
+
+func TestDiscoverBrowse(t *testing.T) {
+	ctx := context.Background()
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u := &db.User{Username: "u", AllowStreaming: true, AllowDownloads: -1, MaxStreams: -1, MaxDownloads: -1}
+	if err := d.CreateUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	tm := tmdb.New("key", "en-US", cannedTMDB{})
+	s := &Server{Cfg: cfg, DB: d, TMDB: tm, Streaming: streaming.New(streaming.Deps{Cfg: cfg, DB: d, TMDB: tm})}
+	req := httptest.NewRequest("GET", "/api/discover/browse?type=show&sort=top_rated&genre=18&page=2", nil)
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, &auth.Principal{User: u, Role: "owner"}))
+	w := httptest.NewRecorder()
+	s.handleDiscoverBrowse(w, req)
+	var out struct {
+		Items []titleView `json:"items"`
+		Page  int         `json:"page"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if out.Page != 2 || len(out.Items) != 8 || out.Items[0].MediaType != "show" {
+		t.Fatalf("page=%d items=%d first=%+v", out.Page, len(out.Items), out.Items)
+	}
+}

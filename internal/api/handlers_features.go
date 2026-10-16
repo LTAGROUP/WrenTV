@@ -161,20 +161,33 @@ func (s *Server) collectionItems(ctx context.Context, r *http.Request, c *db.Col
 	return nonNil(items), []titleView{}, err
 }
 
-func (s *Server) tmdbCollectionItems(ctx context.Context, r *http.Request, c *db.Collection, q db.ItemQuery) ([]*db.Item, []titleView, error) {
+// collectionTitles is every title of a TMDB collection in its own order,
+// linked to the library items the caller can see.
+func (s *Server) collectionTitles(ctx context.Context, r *http.Request, c *db.Collection) []titleView {
 	views := make([]titleView, 0, len(c.Titles))
 	for _, t := range c.Titles {
 		views = append(views, titleView{TMDBID: t.TMDBID, MediaType: t.MediaType, Title: t.Title, Year: t.Year, PosterPath: t.PosterPath})
 	}
+	return nonNil(s.linkLibrary(ctx, r, views, false))
+}
+
+// canStream reports whether the caller can play titles the server doesn't
+// have. Then a TMDB collection holds everything in it.
+func (s *Server) canStream(r *http.Request) bool {
+	return s.limitsFor(principal(r).User).CanStream
+}
+
+func (s *Server) tmdbCollectionItems(ctx context.Context, r *http.Request, c *db.Collection, q db.ItemQuery) ([]*db.Item, []titleView, error) {
 	// linkLibrary uses every accessible library; respect the collection's own scope.
-	views = s.linkLibrary(ctx, r, views, false)
+	views := s.collectionTitles(ctx, r, c)
+	streaming := s.canStream(r)
 	var items []*db.Item
 	missing := []titleView{}
 	for _, v := range views {
 		switch {
 		case v.Item == nil:
 			missing = append(missing, v)
-		case len(q.LibraryIDs) == 0 || containsStr(q.LibraryIDs, v.Item.LibraryID):
+		case streaming || len(q.LibraryIDs) == 0 || containsStr(q.LibraryIDs, v.Item.LibraryID):
 			items = append(items, v.Item)
 		}
 	}
@@ -184,7 +197,7 @@ func (s *Server) tmdbCollectionItems(ctx context.Context, r *http.Request, c *db
 	if q.Limit > 0 && len(items) > q.Limit {
 		items = items[:q.Limit]
 	}
-	if !c.ShowMissing {
+	if !c.ShowMissing && !streaming {
 		missing = []titleView{}
 	}
 	return nonNil(items), missing, nil
@@ -257,6 +270,9 @@ func (s *Server) handleCollections(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		c.ItemCount = len(items)
+		if c.Kind == "tmdb" && s.canStream(r) {
+			c.ItemCount = len(c.Titles)
+		}
 		c.Active = c.ActiveOn(time.Now())
 		if c.PosterPath == "" && len(items) > 0 {
 			c.PosterPath = items[0].PosterPath
@@ -295,6 +311,12 @@ func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.ItemCount = len(items)
+	resp := map[string]any{"collection": c, "items": items, "missing": missing}
+	// When streaming, a TMDB collection is everything in it, in its order.
+	if c.Kind == "tmdb" && s.canStream(r) {
+		resp["titles"] = s.collectionTitles(r.Context(), r, c)
+		c.ItemCount = len(c.Titles)
+	}
 	c.Active = c.ActiveOn(time.Now())
 	if c.BackdropPath == "" {
 		for _, it := range items {
@@ -304,7 +326,7 @@ func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, 200, map[string]any{"collection": c, "items": items, "missing": missing})
+	writeJSON(w, 200, resp)
 }
 
 type collectionReq struct {

@@ -17,6 +17,8 @@ type discoverRow struct {
 	ID    string      `json:"id"`
 	Title string      `json:"title"`
 	Items []titleView `json:"items"`
+	// CollectionID is set on a collection's row, for "See all".
+	CollectionID string `json:"collectionId,omitempty"`
 }
 
 // discoverSource fetches one row's titles from TMDB.
@@ -131,6 +133,12 @@ func (s *Server) handleDiscoverHome(w http.ResponseWriter, r *http.Request) {
 			kept = append(kept, row)
 		}
 	}
+	// Collections the admin put on the home screen go after the first
+	// personal rows.
+	if cols := s.homeCollectionRows(ctx, r); len(cols) > 0 {
+		at := min(len(kept), 2)
+		kept = append(kept[:at], append(cols, kept[at:]...)...)
+	}
 	out["rows"] = kept
 	// The hero rotates through this week's trending titles with artwork.
 	if len(kept) > 0 && kept[0].ID == "trending" {
@@ -195,6 +203,73 @@ func (s *Server) recentTitles(ctx context.Context, userID string, ids []string, 
 			if len(out) == n {
 				break
 			}
+		}
+	}
+	return out
+}
+
+// handleDiscoverBrowse is the Movies and TV Shows pages when the server
+// streams: TMDB's whole catalog, a page at a time, linked to the library.
+func (s *Server) handleDiscoverBrowse(w http.ResponseWriter, r *http.Request) {
+	if !s.TMDB.Enabled() {
+		writeJSON(w, 200, map[string]any{"enabled": false, "items": []titleView{}, "genres": []tmdb.Genre{}, "page": 1, "totalPages": 0})
+		return
+	}
+	mediaType := "movie"
+	if t := r.URL.Query().Get("type"); t == "show" || t == "tv" {
+		mediaType = "tv"
+	}
+	page := max(1, min(queryInt(r, "page", 1), 500))
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	ts, pages, err := s.TMDB.Discover(ctx, mediaType, r.URL.Query().Get("sort"), queryInt(r, "genre", 0), page)
+	if err != nil {
+		writeErr(w, 502, "TMDB unavailable: "+err.Error())
+		return
+	}
+	views := make([]titleView, 0, len(ts))
+	for _, t := range ts {
+		if t.PosterPath != "" {
+			views = append(views, viewOf(t, ""))
+		}
+	}
+	genres, _ := s.TMDB.Genres(ctx, mediaType)
+	writeJSON(w, 200, map[string]any{"enabled": true, "items": s.linkLibrary(ctx, r, views, false), "genres": nonNil(genres),
+		"page": page, "totalPages": pages})
+}
+
+// homeCollectionRows are the collections promoted to the home screen, as
+// rows of titles. A TMDB collection holds every title in it.
+func (s *Server) homeCollectionRows(ctx context.Context, r *http.Request) []discoverRow {
+	cs, err := s.DB.ListCollections(ctx)
+	if err != nil {
+		return nil
+	}
+	s.syncStaleCollections()
+	var out []discoverRow
+	now := time.Now()
+	for _, c := range cs {
+		if !c.ShowOnHome || !c.ActiveOn(now) || !visibleCollection(r, c) {
+			continue
+		}
+		var views []titleView
+		if c.Kind == "tmdb" {
+			views = s.collectionTitles(ctx, r, c)
+		} else {
+			items, _, err := s.collectionItems(ctx, r, c, 24)
+			if err != nil {
+				continue
+			}
+			for _, it := range items {
+				views = append(views, titleView{TMDBID: it.TMDBID, MediaType: it.Kind, Title: it.Title, Year: it.Year,
+					PosterPath: it.PosterPath, BackdropPath: it.BackdropPath, Item: it})
+			}
+		}
+		if len(views) > 24 {
+			views = views[:24]
+		}
+		if len(views) > 0 {
+			out = append(out, discoverRow{ID: "collection-" + c.ID, Title: c.Name, Items: views, CollectionID: c.ID})
 		}
 	}
 	return out

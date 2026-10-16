@@ -83,8 +83,10 @@ textarea { min-height: 80px; font-family: ui-monospace, Menlo, monospace; font-s
 .main { min-width: 0; }
 .topbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; padding: 12px 28px;
   background: linear-gradient(#121016f2, #121016d9); backdrop-filter: blur(8px); border-bottom: 1px solid #ffffff0a; }
-.topbar .search { max-width: 420px; }
-.topbar .title { font-size: 18px; font-weight: 650; flex: 1; }
+.topbar .search { position: absolute; left: 50%; transform: translateX(-50%); width: min(440px, 38%); }
+.topbar .search input { width: 100%; text-align: center; }
+.topbar .search input:focus { text-align: left; }
+.topbar .title { font-size: 18px; font-weight: 650; flex: 1; min-width: 0; max-width: 30%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .menu-btn { display: none; }
 .page { padding: 24px 28px 60px; }
 .page > * { animation: fade-up .35s var(--ease) both; }
@@ -383,6 +385,8 @@ textarea { min-height: 80px; font-family: ui-monospace, Menlo, monospace; font-s
   .shell.open .sidebar { transform: none; }
   .menu-btn { display: inline-flex; }
   .page { padding: 16px; } .topbar { padding: 10px 16px; }
+  .topbar .search { position: static; transform: none; width: auto; flex: 1; }
+  .topbar .title { display: none; }
   .hero { margin: -16px -16px 20px; padding: 30px 16px 20px; min-height: 380px; }
   .hero .poster { display: none; }
   .hero h1 { font-size: 28px; }

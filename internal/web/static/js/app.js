@@ -25,6 +25,8 @@ document.addEventListener('click', (e) => {
 
 const routes = [
   [/^\/$/, viewHome],
+  [/^\/movies$/, () => viewCatalog('movie')],
+  [/^\/shows$/, () => viewCatalog('show')],
   [/^\/library\/([^/]+)$/, viewLibrary],
   [/^\/library\/([^/]+)\/genres$/, browse.viewGenres],
   [/^\/library\/([^/]+)\/collections$/, browse.viewCollections],
@@ -250,10 +252,13 @@ async function shell(view, seq) {
       <aside class="sidebar">
         <a class="brand" href="/"><img class="logo" src="/brand/wren-symbol-small-on-dark.svg" alt="">${esc(state.server.name || 'Wren TV')}</a>
         <a class="nav" href="/" data-path="/">${icons.home}<span>Home</span></a>
-        <a class="nav" href="/collections" data-path="/collections">${icons.stack}<span>Collections</span></a>
-        <a class="nav" href="/genres" data-path="/genres">${icons.tag}<span>Genres</span></a>
-        <div class="nav-title">Libraries</div>
-        <div id="lib-nav">${libNav()}</div>
+        ${canStream() ? `<a class="nav" href="/movies" data-path="/movies">${icons.movies}<span>Movies</span></a>
+          <a class="nav" href="/shows" data-path="/shows">${icons.shows}<span>TV Shows</span></a>
+          <a class="nav" href="/collections" data-path="/collections">${icons.stack}<span>Collections</span></a>`
+        : `<a class="nav" href="/collections" data-path="/collections">${icons.stack}<span>Collections</span></a>
+          <a class="nav" href="/genres" data-path="/genres">${icons.tag}<span>Genres</span></a>
+          <div class="nav-title">Libraries</div>
+          <div id="lib-nav">${libNav()}</div>`}
         ${admin ? `<div class="nav-title">Manage</div>
           <a class="nav" href="/manage" data-path="/manage">${icons.activity}<span>Dashboard</span></a>
           <a class="nav" href="/manage/stats" data-path="/manage/stats">${icons.chart}<span>Stats</span></a>
@@ -444,13 +449,71 @@ async function viewDiscoverHome() {
   if (home.continueWatching.length) html += shelf('Continue Watching', home.continueWatching.map(wideCard).join(''));
   home.rows.forEach((row, i) => {
     if (i === 1 && home.recentlyWatched.length) html += shelf('Recently Watched', home.recentlyWatched.map((it) => posterCard(it)).join(''));
-    html += shelf(row.title, row.items.map((v, n) => titleCard(v, row.id === 'trending' && n < 10 ? n + 1 : 0)).join(''));
+    html += shelf(row.title, row.items.map((v, n) => titleCard(v, row.id === 'trending' && n < 10 ? n + 1 : 0)).join(''),
+      row.collectionId ? { see: `/collection/${row.collectionId}` } : {});
   });
   if (home.rows.length < 2 && home.recentlyWatched.length) html += shelf('Recently Watched', home.recentlyWatched.map((it) => posterCard(it)).join(''));
   const node = el(`<div class="discover">${html || '<div class="empty"><h2>Nothing to show</h2><p>TMDB didn\'t answer. Try again in a moment.</p></div>'}</div>`);
   bindPlayLinks(node);
   bindShelves(node);
   $('[data-feature-play]', node)?.addEventListener('click', (e) => openPlayer(e.currentTarget.dataset.featurePlay, { resume: true, onClose: () => render() }));
+  return node;
+}
+
+const catalogSorts = [['popular', 'Popular'], ['top_rated', 'Top rated'], ['new', 'Newest']];
+
+// viewCatalog is Movies or TV Shows when the server streams: TMDB's whole
+// catalog, loading more as you scroll.
+async function viewCatalog(type) {
+  const label = type === 'show' ? 'TV Shows' : 'Movies';
+  setTitle(label);
+  const qs = new URLSearchParams(location.search);
+  const sort = qs.get('sort') || 'popular';
+  const genre = qs.get('genre') || '';
+  const query = (page) => `/api/discover/browse?${new URLSearchParams({ type, sort, genre, page: String(page) })}`;
+  const first = await api(query(1));
+  if (!first.enabled) {
+    return `<div class="empty"><h2>${label} need TMDB</h2><p>${isAdmin() ? 'Add a TMDB API key in Settings.' : 'The server owner hasn\'t set up TMDB yet.'}</p></div>`;
+  }
+  const node = el(`<div><div class="page-head"><h1>${label}</h1>
+    <div class="toolbar"><select id="genre" data-caption="Genre"><option value="">All</option>${first.genres.map((g) => `<option value="${g.id}" ${String(g.id) === genre ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select>
+    <select id="sort" data-caption="Sort">${catalogSorts.map(([k, v]) => `<option value="${k}" ${k === sort ? 'selected' : ''}>${v}</option>`).join('')}</select></div></div>
+    <div class="grid">${first.items.map((v) => titleCard(v)).join('')}</div>
+    ${first.items.length ? '' : '<div class="empty"><h2>Nothing matches</h2></div>'}<div class="center" id="more" style="min-height:80px"></div></div>`);
+  const nav = (patch) => {
+    const n = new URLSearchParams(location.search);
+    for (const [k, v] of Object.entries(patch)) v ? n.set(k, v) : n.delete(k);
+    go(`/${type === 'show' ? 'shows' : 'movies'}${n.toString() ? '?' + n : ''}`, true);
+  };
+  $('#sort', node).onchange = (e) => nav({ sort: e.target.value === 'popular' ? '' : e.target.value });
+  $('#genre', node).onchange = (e) => nav({ genre: e.target.value });
+  // Load the next page when the bottom comes into view.
+  let page = 1;
+  let loading = false;
+  const grid = $('.grid', node);
+  const more = $('#more', node);
+  const seen = new Set(first.items.map((v) => v.mediaType + v.tmdbId));
+  const io = new IntersectionObserver(async (entries) => {
+    if (!entries[0].isIntersecting || loading || page >= first.totalPages) return;
+    if (!node.isConnected) return io.disconnect();
+    loading = true;
+    more.innerHTML = '<div class="spinner"></div>';
+    try {
+      const res = await api(query(page + 1));
+      page = res.page;
+      const fresh = res.items.filter((v) => !seen.has(v.mediaType + v.tmdbId));
+      for (const v of fresh) seen.add(v.mediaType + v.tmdbId);
+      grid.insertAdjacentHTML('beforeend', fresh.map((v) => titleCard(v)).join(''));
+    } catch (e) {
+      toast(e.message);
+    } finally {
+      loading = false;
+      more.innerHTML = '';
+      // Still in view (a short page): keep going.
+      if (node.isConnected && more.getBoundingClientRect().top < innerHeight + 400) { io.unobserve(more); io.observe(more); }
+    }
+  }, { rootMargin: '600px' });
+  if (first.totalPages > 1) io.observe(more);
   return node;
 }
 
@@ -549,10 +612,18 @@ async function viewSearch() {
   const extra = (more.items || []).filter((v) => !v.item || !have.has(v.item.id));
   const inLib = [...items, ...extra.filter((v) => v.item).map((v) => v.item)];
   const rest = extra.filter((v) => !v.item);
-  const restTitle = canStream() ? 'Stream' : 'Not on this server';
+  if (canStream()) {
+    // Everything plays, so there's one list: what the server has, then the rest.
+    const all = [...inLib.map((it) => posterCard(it)), ...rest.map((v) => titleCard(v))];
+    const node = el(`<div><div class="page-head"><h1>Results for “${esc(q)}”</h1></div>
+      ${all.length ? `<div class="grid">${all.join('')}</div>` : '<div class="empty"><h2>No matches</h2></div>'}</div>`);
+    bindPlayLinks(node);
+    return node;
+  }
+  const restTitle = 'Not on this server';
   const node = el(`<div><div class="page-head"><h1>Results for “${esc(q)}”</h1></div>
     ${inLib.length ? `<h2 class="grid-title">On this server</h2><div class="grid">${inLib.map((it) => posterCard(it)).join('')}</div>` : ''}
-    ${rest.length ? `<h2 class="grid-title">${restTitle}${canStream() ? ' <span class="sub">plays through the server’s debrid service</span>' : ''}</h2>
+    ${rest.length ? `<h2 class="grid-title">${restTitle}</h2>
       <div class="grid">${rest.map((v) => titleCard(v)).join('')}</div>` : ''}
     ${!inLib.length && !rest.length ? '<div class="empty"><h2>No matches</h2></div>' : ''}</div>`);
   bindPlayLinks(node);
@@ -568,7 +639,7 @@ function badgesFor(f) {
   const a = f.info?.audio?.find((x) => x.default) || f.info?.audio?.[0];
   if (a?.atmos || a?.profile?.includes('Atmos')) b.push('Atmos');
   if (a?.channels >= 6) b.push(a.channels === 8 ? '7.1' : '5.1');
-  if (f.streamId) b.push('Stream');
+  if (f.streamId && isAdmin()) b.push('Stream');
   return b;
 }
 

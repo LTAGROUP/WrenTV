@@ -106,3 +106,49 @@ func (c *Client) ByGenre(ctx context.Context, mediaType string, genreID int) ([]
 	}
 	return r.Results, nil
 }
+
+// Genres lists TMDB's genres for "movie" or "tv".
+func (c *Client) Genres(ctx context.Context, mediaType string) ([]Genre, error) {
+	var r struct {
+		Genres []Genre `json:"genres"`
+	}
+	err := c.get(ctx, "/genre/"+mediaType+"/list", nil, 7*24*time.Hour, &r)
+	return r.Genres, err
+}
+
+// Discover pages through TMDB's whole catalog for "movie" or "tv". sort is
+// "popular", "top_rated" or "new"; genreID 0 means any genre. Returns the
+// page's titles and the number of pages TMDB will serve.
+func (c *Client) Discover(ctx context.Context, mediaType, sort string, genreID, page int) ([]Title, int, error) {
+	date := "primary_release_date"
+	if mediaType == "tv" {
+		date = "first_air_date"
+	}
+	params := url.Values{"page": {fmt.Sprint(page)}, "include_adult": {"false"}}
+	switch sort {
+	case "top_rated":
+		params.Set("sort_by", "vote_average.desc")
+		params.Set("vote_count.gte", "500")
+	case "new":
+		params.Set("sort_by", date+".desc")
+		params.Set(date+".lte", time.Now().Format("2006-01-02"))
+		params.Set("vote_count.gte", "20")
+	default:
+		params.Set("sort_by", "popularity.desc")
+	}
+	if genreID > 0 {
+		params.Set("with_genres", fmt.Sprint(genreID))
+	}
+	var r struct {
+		Results    []Title `json:"results"`
+		TotalPages int     `json:"total_pages"`
+	}
+	if err := c.get(ctx, "/discover/"+mediaType, params, 6*time.Hour, &r); err != nil {
+		return nil, 0, err
+	}
+	for i := range r.Results {
+		r.Results[i].MediaType = mediaType
+	}
+	// TMDB never serves past page 500.
+	return r.Results, min(r.TotalPages, 500), nil
+}
