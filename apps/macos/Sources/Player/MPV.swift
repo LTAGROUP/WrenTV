@@ -1,6 +1,7 @@
 import AppKit
 import OpenGL.GL3
 import SwiftUI
+import Synchronization
 
 struct MPVTrack: Identifiable, Hashable {
     var id: Int
@@ -23,6 +24,8 @@ final class MPVController {
 
     private var position = 0.0
     private var duration = 0.0
+    /// Last position sent to the UI; time-pos fires every frame, which is far more than the controls need.
+    private var publishedPosition = -1.0
 
     init() {
         handle = mpv_create()
@@ -134,6 +137,8 @@ final class MPVController {
         switch (name, p.format) {
         case ("time-pos", MPV_FORMAT_DOUBLE):
             position = p.data.assumingMemoryBound(to: Double.self).pointee
+            guard abs(position - publishedPosition) >= 0.25 else { return }
+            publishedPosition = position
             let (t, d) = (position, duration)
             DispatchQueue.main.async { self.onTime?(t, d) }
         case ("duration", MPV_FORMAT_DOUBLE):
@@ -183,18 +188,24 @@ private func mpvGetProcAddress(_ ctx: UnsafeMutableRawPointer?, _ name: UnsafePo
     return CFBundleGetFunctionPointerForName(bundle, symbol)
 }
 
-/// OpenGL layer driven by mpv's render API.
+/// OpenGL layer driven by mpv's render API. It runs asynchronously, so Core Animation asks
+/// about a new frame on every display refresh (up to 120 Hz on ProMotion) from its own thread,
+/// rather than waiting for the main thread to mark the layer dirty.
 final class MPVLayer: CAOpenGLLayer {
     private weak var controller: MPVController?
     private var renderCtx: OpaquePointer?
     private var glCtx: CGLContextObj?
+    /// Set by mpv's update callback; consumed on the next display refresh.
+    private let updatePending = Atomic<Bool>(false)
+    /// Forces a redraw of the current frame, e.g. after a resize.
+    private let forceDraw = Atomic<Bool>(true)
     /// Called once the render context exists (vo=libmpv needs it before loading a file).
     var onReady: (() -> Void)?
 
     init(controller: MPVController) {
         self.controller = controller
         super.init()
-        isAsynchronous = false
+        isAsynchronous = true
         needsDisplayOnBoundsChange = true
         autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         backgroundColor = NSColor.black.cgColor
@@ -207,6 +218,10 @@ final class MPVLayer: CAOpenGLLayer {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override var bounds: CGRect {
+        didSet { forceDraw.store(true, ordering: .relaxed) }
+    }
 
     override func copyCGLPixelFormat(forDisplayMask mask: UInt32) -> CGLPixelFormatObj {
         let attrs: [CGLPixelFormatAttribute] = [
@@ -246,7 +261,7 @@ final class MPVLayer: CAOpenGLLayer {
         }
         mpv_render_context_set_update_callback(renderCtx, { ctx in
             let layer = Unmanaged<MPVLayer>.fromOpaque(ctx!).takeUnretainedValue()
-            DispatchQueue.main.async { layer.setNeedsDisplay() }
+            layer.updatePending.store(true, ordering: .releasing)
         }, Unmanaged.passUnretained(self).toOpaque())
         if let onReady {
             self.onReady = nil
@@ -255,7 +270,13 @@ final class MPVLayer: CAOpenGLLayer {
     }
 
     override func canDraw(inCGLContext ctx: CGLContextObj, pixelFormat pf: CGLPixelFormatObj, forLayerTime t: CFTimeInterval, displayTime ts: UnsafePointer<CVTimeStamp>?) -> Bool {
-        true
+        guard let renderCtx else { return forceDraw.exchange(false, ordering: .relaxed) }
+        var draw = forceDraw.exchange(false, ordering: .relaxed)
+        if updatePending.exchange(false, ordering: .acquiring) {
+            let flags = mpv_render_context_update(renderCtx)
+            if flags & UInt64(MPV_RENDER_UPDATE_FRAME.rawValue) != 0 { draw = true }
+        }
+        return draw
     }
 
     override func draw(inCGLContext ctx: CGLContextObj, pixelFormat pf: CGLPixelFormatObj, forLayerTime t: CFTimeInterval, displayTime ts: UnsafePointer<CVTimeStamp>?) {
@@ -281,15 +302,18 @@ final class MPVLayer: CAOpenGLLayer {
             }
         }
         glFlush()
+        mpv_render_context_report_swap(renderCtx)
     }
 
     /// Frees the render context; must happen before the mpv handle is destroyed.
     func teardown() {
         guard let rc = renderCtx else { return }
         mpv_render_context_set_update_callback(rc, nil, nil)
-        if let glCtx { CGLSetCurrentContext(glCtx) }
-        mpv_render_context_free(rc)
+        // Core Animation may be drawing on its own thread; hold the context lock while freeing.
+        if let glCtx { CGLLockContext(glCtx); CGLSetCurrentContext(glCtx) }
         renderCtx = nil
+        mpv_render_context_free(rc)
+        if let glCtx { CGLUnlockContext(glCtx) }
     }
 }
 
