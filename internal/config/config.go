@@ -109,11 +109,15 @@ type TranscodeConfig struct {
 type TorrentConfig struct {
 	Enabled bool `yaml:"enabled"`
 	// Providers are tried in order. Supported: "debrid", "builtin".
-	Providers   []string          `yaml:"providers"`
-	DownloadDir string            `yaml:"download_dir"`
-	ListenPort  int               `yaml:"listen_port"`
-	Debrid      DebridConfig      `yaml:"debrid"`
-	Health      TorrentHealthConf `yaml:"health"`
+	Providers   []string `yaml:"providers"`
+	DownloadDir string   `yaml:"download_dir"`
+	ListenPort  int      `yaml:"listen_port"`
+	// PortForwarding lets the built-in engine ask the router to forward
+	// ListenPort (UPnP IGD / NAT-PMP). Off by default: the engine streams
+	// fine on outbound connections alone and never seeds.
+	PortForwarding bool              `yaml:"port_forwarding"`
+	Debrid         DebridConfig      `yaml:"debrid"`
+	Health         TorrentHealthConf `yaml:"health"`
 }
 
 type DebridConfig struct {
@@ -288,6 +292,9 @@ func (c *Config) applyEnv() {
 				c.LocalURLs = append(c.LocalURLs, u)
 			}
 		}
+	}
+	if v, err := strconv.ParseBool(Getenv("TORRENT_PORT_FORWARDING")); err == nil {
+		c.Torrents.PortForwarding = v
 	}
 	if v, ok := LookupEnv("TORRENT_PROVIDERS"); ok {
 		c.Torrents.Providers = strings.Split(v, ",")

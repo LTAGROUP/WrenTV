@@ -107,6 +107,9 @@ func NewManager(d Deps) (*Manager, error) {
 		cc.Seed = false
 		cc.DisableAggressiveUpload = true
 		cc.ListenPort = cfg.ListenPort
+		// No UPnP / NAT-PMP on the router unless the owner opts in. DHT,
+		// trackers and the listen port itself are unchanged.
+		cc.NoDefaultPortForwarding = !cfg.PortForwarding
 		// Read errors surface through our own stall detection; anacrolix logs
 		// every canceled player range request at Error, so keep only Critical.
 		cc.Logger = cc.Logger.WithFilterLevel(alog.Critical)

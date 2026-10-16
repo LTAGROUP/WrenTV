@@ -91,6 +91,7 @@ torrents:
   enabled: true
   providers: [debrid, builtin] # tried in order
   listen_port: 42069
+  port_forwarding: false       # let the engine forward listen_port via UPnP / NAT-PMP
   debrid: { service: realdebrid, api_key: "" }
   health:
     metadata_timeout_sec: 60   # no metadata in time → unplayable
@@ -110,7 +111,7 @@ scanner:
 
 Environment overrides: `WRENTV_DATA_DIR`, `WRENTV_LISTEN`, `WRENTV_SERVER_NAME`, `WRENTV_PUBLIC_URL`,
 `WRENTV_AUTH_MODE`, `WRENTV_SUPABASE_URL`, `WRENTV_SUPABASE_PUBLISHABLE_KEY`, `WRENTV_TMDB_API_KEY`,
-`WRENTV_FFMPEG`, `WRENTV_FFPROBE`, `WRENTV_HWACCEL`, `WRENTV_SCAN_POLL_SEC`, `WRENTV_TORRENT_PROVIDERS`, `WRENTV_DEBRID_API_KEY`,
+`WRENTV_FFMPEG`, `WRENTV_FFPROBE`, `WRENTV_HWACCEL`, `WRENTV_SCAN_POLL_SEC`, `WRENTV_TORRENT_PROVIDERS`, `WRENTV_TORRENT_PORT_FORWARDING`, `WRENTV_DEBRID_API_KEY`,
 `WRENTV_REMOTE_ACCESS`, `WRENTV_PUBLIC_PORT`, `WRENTV_ACME_DIRECTORY`, `WRENTV_DIRECT_API`.
 
 ## Upgrading from Haven
