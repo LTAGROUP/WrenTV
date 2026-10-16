@@ -353,10 +353,16 @@ export function titleCard(v, rank) {
     <div class="t">${esc(v.title)}</div><div class="s">${esc(v.year || '')}</div></a>`;
 }
 
+// "52m left" for something partly watched.
+export function timeLeft(p) {
+  const left = p ? p.duration - p.position : 0;
+  return p && p.duration > 0 && left > 60 && !p.watched ? `${fmtRuntime(Math.max(1, Math.round(left / 60)))} left` : '';
+}
+
 function wideCard(it) {
   const pic = it.stillPath || it.backdropPath;
   const title = it.kind === 'episode' ? it.showTitle || it.title : it.title;
-  const sub = it.kind === 'episode' ? `S${it.seasonNumber} · E${it.episodeNumber} — ${it.title}` : it.year || '';
+  const sub = [it.kind === 'episode' ? `S${it.seasonNumber} · E${it.episodeNumber} — ${it.title}` : it.year, timeLeft(it.progress)].filter(Boolean).join(' · ');
   return `<a class="card wide" href="/item/${it.id}" data-play="${it.id}"><div class="thumb">${pic ? lazyImg(img(pic, 'w500')) : ''}
     <div class="play-ov"><span></span></div>${progressBar(it)}</div>
     <div class="t">${esc(title)}</div><div class="s">${esc(sub)}</div></a>`;
@@ -444,8 +450,7 @@ async function viewDiscoverHome() {
     return `<div class="empty"><h2>Discovery needs TMDB</h2><p>${isAdmin() ? 'Add a TMDB API key in Settings to fill the home page.' : 'The server owner hasn\'t set up TMDB yet.'}</p>
       ${isAdmin() ? '<a class="btn primary" href="/manage/settings">Open settings</a>' : ''}</div>`;
   }
-  const hero = home.hero.length ? home.hero[Math.floor(Date.now() / 3.6e6) % home.hero.length] : null;
-  let html = hero ? discoverHero(hero) : '';
+  let html = home.hero.length ? discoverHero(home.hero) : '';
   if (home.continueWatching.length) html += shelf('Continue Watching', home.continueWatching.map(wideCard).join(''));
   home.rows.forEach((row, i) => {
     if (i === 1 && home.recentlyWatched.length) html += shelf('Recently Watched', home.recentlyWatched.map((it) => posterCard(it)).join(''));
@@ -456,7 +461,7 @@ async function viewDiscoverHome() {
   const node = el(`<div class="discover">${html || '<div class="empty"><h2>Nothing to show</h2><p>TMDB didn\'t answer. Try again in a moment.</p></div>'}</div>`);
   bindPlayLinks(node);
   bindShelves(node);
-  $('[data-feature-play]', node)?.addEventListener('click', (e) => openPlayer(e.currentTarget.dataset.featurePlay, { resume: true, onClose: () => render() }));
+  bindHero(node, home.hero);
   return node;
 }
 
@@ -517,20 +522,67 @@ async function viewCatalog(type) {
   return node;
 }
 
-function discoverHero(v) {
+// The rotating banner of this week's trending titles, like the apps.
+function discoverHero(titles) {
+  return `<section class="feature carousel">${titles.map((v, i) => `<div class="bg${i ? '' : ' on'}" data-bg="${img(v.backdropPath, 'w1280')}"></div>`).join('')}
+    <div class="content">${heroContent(titles, 0)}</div></section>`;
+}
+
+function heroContent(titles, i) {
+  const v = titles[i];
   const it = v.item;
-  const kind = v.mediaType === 'show' ? 'Series' : 'Film';
-  const meta = [v.year, kind, v.rating && `★ ${v.rating.toFixed(1)}`].filter(Boolean);
+  const meta = [v.year, v.mediaType === 'show' ? 'Series' : 'Film', v.rating && `★ ${v.rating.toFixed(1)}`].filter(Boolean);
   const stream = `data-stream-title="${v.tmdbId}" data-media="${esc(v.mediaType)}"`;
-  const play = it ? (it.kind === 'movie' ? `<button class="btn primary lg" data-feature-play="${it.id}">▶ Play</button>` : '')
-    : v.mediaType === 'movie' ? `<a class="btn primary lg" href="/item/stream" ${stream} data-stream-play="1">▶ Play</a>` : '';
-  const info = it ? `<a class="btn lg" href="/item/${it.id}">More info</a>` : `<a class="btn lg" href="/item/stream" ${stream}>More info</a>`;
-  return `<section class="feature"><div class="bg" style="background-image:url('${img(v.backdropPath, 'w1280')}')"></div>
-    <div class="content"><div class="eyebrow">Trending this week</div>
+  const resume = it?.progress && !it.progress.watched && it.progress.position > 30;
+  let actions;
+  if (v.mediaType === 'movie') {
+    actions = (it ? `<button class="btn primary lg" data-feature-play="${it.id}">▶ ${resume ? 'Resume' : 'Play'}</button>`
+      : `<a class="btn primary lg" href="/item/stream" ${stream} data-stream-play="1">▶ Play</a>`)
+      + (it ? `<a class="btn lg" href="/item/${it.id}">Details</a>` : `<a class="btn lg" href="/item/stream" ${stream}>Details</a>`);
+  } else {
+    actions = it ? `<a class="btn primary lg" href="/item/${it.id}">▶ Watch Now</a>` : `<a class="btn primary lg" href="/item/stream" ${stream}>▶ Watch Now</a>`;
+  }
+  const dots = titles.length > 1 ? `<div class="dots">${titles.map((t, n) => `<button type="button" data-dot="${n}" class="${n === i ? 'on' : ''}" title="${esc(t.title)}" aria-label="${esc(t.title)}"></button>`).join('')}</div>` : '';
+  return `<div class="eyebrow">Trending this week</div>
     ${it?.logoPath ? `<img class="logo-img" src="${img(it.logoPath, 'w500')}" alt="${esc(v.title)}">` : `<h1>${esc(v.title)}</h1>`}
     <div class="meta">${meta.join('<span class="muted">·</span>')}</div>
     <p class="overview">${esc(v.overview || '')}</p>
-    <div class="actions">${play}${info}</div></div></section>`;
+    <div class="actions">${actions}</div>${dots}`;
+}
+
+// bindHero plays from the banner and, with several titles, moves to the next
+// one every 8 seconds unless the pointer is over it.
+function bindHero(node, titles) {
+  const sec = $('.feature', node);
+  if (!sec) return;
+  sec.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-feature-play]');
+    if (b) openPlayer(b.dataset.featurePlay, { resume: true, onClose: () => render() });
+    const d = e.target.closest('[data-dot]');
+    if (d) show(Number(d.dataset.dot));
+  });
+  const bgs = $$('.bg', sec);
+  // Backdrops load one ahead of time, not all twenty at once.
+  const load = (n) => { const b = bgs[n % bgs.length]; if (b?.dataset.bg) { b.style.backgroundImage = `url('${b.dataset.bg}')`; delete b.dataset.bg; } };
+  let i = 0;
+  load(0);
+  load(1);
+  const show = (n) => {
+    i = (n + titles.length) % titles.length;
+    load(i);
+    load(i + 1);
+    bgs.forEach((b, k) => b.classList.toggle('on', k === i));
+    const c = el(`<div class="content">${heroContent(titles, i)}</div>`);
+    $('.content', sec).replaceWith(c);
+  };
+  if (titles.length < 2) return;
+  let hover = false;
+  sec.onmouseenter = () => (hover = true);
+  sec.onmouseleave = () => (hover = false);
+  const t = setInterval(() => {
+    if (!sec.isConnected) return clearInterval(t);
+    if (!hover && !document.hidden) show(i + 1);
+  }, 8000);
 }
 
 async function loadTrending(node) {
@@ -682,88 +734,120 @@ function openTrailer(t) {
   document.body.append(bg);
 }
 
+const langNames = (() => { try { return new Intl.DisplayNames([navigator.language], { type: 'language' }); } catch { return null; } })();
+const langName = (c) => (c ? langNames?.of(c) || c : '');
+
+const isWatched = (it) => it.progress?.watched || ((it.kind === 'show' || it.kind === 'season') && it.childCount > 0 && !it.unwatchedCount);
+
+function episodeRows(eps) {
+  if (!eps.length) return '<div class="empty small"><p>No episodes yet.</p></div>';
+  return eps.map((e) => `<a class="episode" href="/item/${e.id}" data-play="${e.id}">
+      <div class="thumb">${e.stillPath ? lazyImg(img(e.stillPath, 'w300')) : ''}<div class="play-ov"><span></span></div>${progressBar(e)}</div>
+      <div><div class="ep-t">${e.episodeNumber}. ${esc(e.title)}${e.progress?.watched ? '<span class="ep-check" title="Watched"></span>' : ''}</div>
+      <div class="small muted">${[e.airDate, fmtRuntime(e.runtimeMin), timeLeft(e.progress)].filter(Boolean).map(esc).join(' · ')}</div>
+      <p class="small muted clamp3">${esc(e.overview || '')}</p></div></a>`).join('');
+}
+
+// The file a version label describes: its own label, else quality and size.
+const versionName = (f) => f.label || [badgesFor(f)[0], fmtSize(f.size)].filter(Boolean).join(' · ') || f.fileName;
+
+function mediaLine(f) {
+  const v = f.videoCodec && `${f.videoCodec.toUpperCase()}${f.width ? ` ${f.width}×${f.height}` : ''}${f.hdr ? ` ${f.hdr}` : ''}${f.dvProfile ? ` P${f.dvProfile}` : ''}`;
+  const a = f.info?.audio?.find((x) => x.default) || f.info?.audio?.[0];
+  const audio = a && [a.codec?.toUpperCase(), a.channels >= 6 ? (a.channels === 8 ? '7.1' : '5.1') : a.channels === 2 ? 'Stereo' : '', a.atmos ? 'Atmos' : '', a.language].filter(Boolean).join(' ');
+  const stream = f.streamId && isAdmin() ? (f.release ? `Stream · ${f.release}` : 'Stream') : '';
+  return [v, audio, fmtSize(f.size), stream].filter(Boolean);
+}
+
 async function viewItem(id) {
-  const d = await api('/api/items/' + id);
+  const [d, prefs] = await Promise.all([api('/api/items/' + id), api('/api/me/prefs').catch(() => ({}))]);
   const it = d.item;
   const show = d.show;
   setTitle(it.kind === 'episode' || it.kind === 'season' ? show?.title || it.title : it.title);
   const backdrop = it.backdropPath || show?.backdropPath || it.stillPath;
-  const poster = it.kind === 'episode' ? null : it.posterPath || show?.posterPath;
   const logo = it.kind === 'movie' || it.kind === 'show' ? it.logoPath : null;
-  const heading = it.kind === 'season' ? (it.seasonNumber === 0 ? 'Specials' : `Season ${it.seasonNumber}`) : it.title;
+  const heading = it.kind === 'season' ? (it.seasonNumber === 0 ? 'Specials' : `Season ${it.seasonNumber}`)
+    : it.kind === 'episode' ? `S${it.seasonNumber} · E${it.episodeNumber} — ${it.title}` : it.title;
+  const top = it.kind === 'movie' || it.kind === 'show';
   const meta = [];
-  if (it.kind === 'episode') meta.push(`S${it.seasonNumber} · E${it.episodeNumber}`);
-  if (it.year) meta.push(it.year);
+  if (it.year) meta.push(esc(it.year));
+  if (it.contentRating) meta.push(`<span class="pill">${esc(it.contentRating)}</span>`);
   if (it.runtimeMin) meta.push(fmtRuntime(it.runtimeMin));
   if (it.kind === 'show' && d.children?.length) meta.push(`${d.children.length} season${d.children.length > 1 ? 's' : ''}`);
-  if (it.contentRating) meta.push(`<span class="pill">${esc(it.contentRating)}</span>`);
-  const file = d.files?.[0];
-  const badges = file ? badgesFor(file).filter((b) => b !== 'Stream') : [];
-  if (badges.length) meta.push(badges.map((b, i) => `<span class="qbadge${i ? ' dim' : ''}">${esc(b)}</span>`).join(' '));
-  const genres = it.genres?.length ? it.genres : show?.genres || [];
+  if (it.rating) meta.push(`★ ${it.rating.toFixed(1)}`);
+  const genres = (it.genres?.length ? it.genres : show?.genres || []).slice(0, 3);
+  const genreHtml = !genres.length ? '' : top ? `<span class="genres">${genres.map((g) => `<a href="/genre?g=${encodeURIComponent(g)}" title="More ${esc(g)}">${esc(g)}</a>`).join('')}</span>`
+    : `<span class="muted">${genres.map(esc).join(', ')}</span>`;
+  const badges = (f) => (f ? badgesFor(f).filter((b) => b !== 'Stream') : []).map((b) => `<span class="qbadge">${esc(b)}</span>`).join('');
 
   const playable = it.kind === 'movie' || it.kind === 'episode';
   const resumeAt = playable && it.progress && !it.progress.watched && it.progress.position > 30 ? it.progress.position : 0;
+  const left = timeLeft(it.progress);
   let actions = '';
   if (playable) {
     actions += resumeAt
-      ? `<button class="btn primary lg" data-act="resume">▶ Resume ${fmtDuration(resumeAt)}</button><button class="btn lg" data-act="start">Play from start</button>`
+      ? `<button class="btn primary lg" data-act="resume" title="Resume from ${fmtDuration(resumeAt)}">▶ Resume${left ? ` · ${left}` : ''}</button><button class="btn lg" data-act="start">↺ Start Over</button>`
       : `<button class="btn primary lg" data-act="start">▶ Play</button>`;
   } else if (d.nextEpisode) {
     const n = d.nextEpisode;
     actions += `<button class="btn primary lg" data-act="next">▶ ${n.progress?.position > 30 ? 'Resume' : 'Play'} S${n.seasonNumber} · E${n.episodeNumber}</button>`;
   }
-  // More than one file: pick the version before playing ("Auto" lets the
-  // server choose, e.g. 1080p over transcoding 4K at a lower quality setting).
-  if (playable && d.files?.length > 1) {
-    actions += `<select data-version data-caption="Version" class="version-pick"><option value="">Auto</option>${d.files.map((f) => `<option value="${esc(f.id)}">${esc(f.label || f.fileName)}</option>`).join('')}</select>`;
-  }
   actions += `<button class="btn lg" data-act="trailer" hidden>Trailer</button>`;
-  if (playable) actions += `<button class="btn lg ghost" data-act="watched">${it.progress?.watched ? 'Mark unwatched' : 'Mark watched'}</button>`;
-  if (playable && d.canDownload && (d.files?.length || d.streaming)) actions += `<button class="btn lg ghost" data-act="download" title="Save to this device">${icons.download} Download</button>`;
+  actions += `<button class="btn lg${isWatched(it) ? ' on' : ''}" data-act="watched">${isWatched(it) ? '✓ Watched' : 'Mark Watched'}</button>`;
+  if (playable && d.canDownload && (d.files?.length || d.streaming)) actions += `<button class="btn lg" data-act="download" title="Save to this device">${icons.download} Download</button>`;
   if (isAdmin() && d.streaming) {
-    actions += `<button class="btn lg ghost" data-act="serverdl" title="Save as a file in your library">Download to server</button>`;
-    if (it.kind !== 'show' || d.children?.length) actions += `<button class="btn lg ghost" data-act="restream" title="Forget saved streams and look again">Find new streams</button>`;
+    actions += `<button class="btn lg" data-act="serverdl" title="Save as a file in your library">Download to server</button>`;
+    if (it.kind !== 'show' || d.children?.length) actions += `<button class="btn lg" data-act="restream" title="Forget saved streams and look again">Find new streams</button>`;
   }
-  if (isAdmin() && (it.kind === 'movie' || it.kind === 'show')) {
-    actions += `<button class="btn lg ghost" data-act="collect">${icons.plus} Collection</button><button class="btn lg ghost" data-act="match">Fix match</button>`;
+  if (isAdmin() && top) {
+    actions += `<button class="btn lg" data-act="collect">${icons.plus} Collection</button><button class="btn lg" data-act="match">Fix match</button>`;
+  }
+
+  // What will play: version, audio and subtitles, from the viewer's settings
+  // unless they pick another version.
+  let tracks = '';
+  if (playable && d.files?.length) {
+    const best = d.files.reduce((a, f) => ((f.width || 0) > (a.width || 0) ? f : a), d.files[0]);
+    const q = badgesFor(best)[0] || '';
+    const version = d.files.length > 1
+      ? `<select data-version data-caption="Version" class="version-pick"><option value="">${q ? `Auto · ${esc(q)}` : 'Auto'}</option>${d.files.map((f) => `<option value="${esc(f.id)}">${esc(versionName(f))}</option>`).join('')}</select>`
+      : `<span class="track"><b>Version</b>${esc(q || 'Original')}</span>`;
+    tracks = `<div class="tracks" title="Audio and subtitles follow your settings; change them while watching.">${version}
+      <span class="track"><b>Audio</b>${esc(langName(prefs.audioLanguage) || 'Default')}</span>
+      <span class="track"><b>Subtitles</b>${esc(langName(prefs.subtitleLanguage) || 'Off')}</span></div>`;
   }
 
   const crumbs = it.kind === 'season' || it.kind === 'episode'
-    ? `<div class="small" style="margin-bottom:6px"><a href="/item/${it.showId}">${esc(show?.title || '')}</a>${it.kind === 'episode' && it.parentId ? ` › <a href="/item/${it.parentId}">Season ${it.seasonNumber}</a>` : ''}</div>`
+    ? `<div class="crumbs"><a href="/item/${it.showId}">${esc(show?.title || '')}</a>${it.kind === 'episode' && it.parentId ? ` › <a href="/item/${it.parentId}">Season ${it.seasonNumber}</a>` : ''}</div>`
     : '';
 
   let below = '';
-  if (it.kind === 'show' && d.children?.length) below += shelf('Seasons', d.children.map((c) => posterCard(c)).join(''));
-  if (it.kind === 'season') {
-    below += `<div class="episodes">${(d.children || []).map((e) => `<a class="episode" href="/item/${e.id}" data-play="${e.id}">
-      <div class="thumb">${e.stillPath ? lazyImg(img(e.stillPath, 'w300')) : ''}<div class="play-ov"><span></span></div>${progressBar(e)}${e.progress?.watched ? '<div class="watched"></div>' : ''}</div>
-      <div><div style="font-weight:600">${e.episodeNumber}. ${esc(e.title)}</div>
-      <div class="small muted">${[e.airDate, fmtRuntime(e.runtimeMin)].filter(Boolean).map(esc).join(' · ')}</div>
-      <p class="small muted" style="margin:6px 0 0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${esc(e.overview || '')}</p></div></a>`).join('')}</div>`;
+  if (it.kind === 'show' && d.children?.length) {
+    const seasons = d.children;
+    const next = d.nextEpisode && seasons.find((s) => s.id === d.nextEpisode.parentId);
+    const first = next || seasons.find((s) => s.seasonNumber > 0) || seasons[0];
+    below += `<section class="seasons"><div class="season-head"><select id="season" class="season-pick" aria-label="Season">${seasons.map((s) => `<option value="${s.id}" ${s.id === first.id ? 'selected' : ''}>${s.seasonNumber === 0 ? 'Specials' : `Season ${s.seasonNumber}`}</option>`).join('')}</select></div>
+      <div class="episodes" id="eps"><div class="center" style="min-height:120px"><div class="spinner"></div></div></div></section>`;
   }
-  // Cast and "more like this" arrive with the extras; show placeholders.
-  below += `<section class="shelf" id="cast-shelf"><div class="shelf-head"><h2>Cast</h2>${arrows}</div><div class="cast">${Array.from({ length: 8 }, () =>
-    '<div class="person"><div class="face sk"></div><div class="sk sk-line" style="width:70%;margin:0 auto"></div></div>').join('')}</div></section>`;
-  below += skeletonShelf('More Like This', 8, 'more');
+  if (it.kind === 'season') below += `<div class="episodes">${episodeRows(d.children || [])}</div>`;
+  if (top) {
+    // Cast and "more like this" arrive with the extras; show placeholders.
+    below += `<section class="shelf" id="cast-shelf"><div class="shelf-head"><h2>Cast</h2>${arrows}</div><div class="cast">${Array.from({ length: 8 }, () =>
+      '<div class="person"><div class="face sk"></div><div class="sk sk-line" style="width:70%;margin:0 auto"></div></div>').join('')}</div></section>`;
+    below += skeletonShelf('More Like This', 8, 'more');
+  }
   if (d.files?.length) {
-    below += `<div class="files"><h2 style="font-size:16px">Files</h2>${d.files.map((f) => `<div class="file">
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${badgesFor(f).map((b) => `<span class="qbadge dim">${esc(b)}</span>`).join('') || `<b>${esc(f.container)}</b>`}
-      ${f.release ? `<span class="small muted">${esc(f.release)}</span>` : ''}
-      ${f.info?.chapters?.length ? `<span class="small muted">${f.info.chapters.length} chapters</span>` : ''}
-      </div>
-      <code class="muted">${esc(f.fileName)}</code>
-      ${f.info ? `<div class="small muted" style="margin-top:4px">${[f.videoCodec?.toUpperCase(), f.width && `${f.width}×${f.height}`, ...(f.info.audio || []).slice(0, 3).map((a) => [a.codec?.toUpperCase(), a.language].filter(Boolean).join(' '))].filter(Boolean).map(esc).join(' · ')}</div>` : ''}</div>`).join('')}</div>`;
+    const chapters = d.files[0].info?.chapters?.length;
+    below += `<section class="files"><h2>Media</h2>${chapters ? `<div class="small muted">${chapters} chapters</div>` : ''}${d.files.map((f) => `<div class="file">
+      <code>${esc(f.fileName)}</code><div class="small muted">${mediaLine(f).map(esc).join(' · ')}</div></div>`).join('')}</section>`;
   }
 
   const node = el(`<div><div class="hero"><div class="bg" ${backdrop ? `style="background-image:url('${img(backdrop, 'w1280')}')"` : ''}></div>
-    <div class="content">${poster ? `<div class="poster"><img src="${img(poster, 'w500')}" alt=""></div>` : ''}
-    <div>${crumbs}${logo ? `<img class="logo-img" src="${img(logo, 'w500')}" alt="${esc(heading)}">` : `<h1>${esc(heading)}</h1>`}
-    ${it.tagline ? `<div class="muted" style="font-style:italic">${esc(it.tagline)}</div>` : ''}
-    <div class="meta">${meta.join('<span class="muted">·</span>')}</div>
-    <div class="ratings" id="ratings">${ratingsHtml({ tmdb: it.rating || show?.rating })}</div>
-    ${genres.length ? `<div class="genres">${genres.map((g) => `<a href="/genre?g=${encodeURIComponent(g)}">${esc(g)}</a>`).join('')}</div>` : ''}
-    <p class="overview">${esc(it.overview || '')}</p><div class="actions">${actions}</div></div></div></div>${below}</div>`);
+    <div class="content"><div>${crumbs}${logo ? `<img class="logo-img" src="${img(logo, 'w500')}" alt="${esc(heading)}">` : `<h1>${esc(heading)}</h1>`}
+    <div class="meta">${meta.join('<span class="muted">·</span>')}${genreHtml}${badges(d.files?.[0])}</div>
+    ${top ? `<div class="ratings" id="ratings">${ratingsHtml({ tmdb: it.rating })}</div>` : ''}
+    ${it.tagline ? `<div class="tagline">${esc(it.tagline)}</div>` : ''}
+    <p class="overview">${esc(it.overview || '')}</p>${tracks}<div class="actions">${actions}</div></div></div></div>${below}</div>`);
 
   const act = (name, fn) => $(`[data-act=${name}]`, node)?.addEventListener('click', fn);
   const version = () => $('[data-version]', node)?.value || undefined;
@@ -772,7 +856,7 @@ async function viewItem(id) {
   act('collect', () => browse.addToCollection(it));
   act('next', () => openPlayer(d.nextEpisode.id, { resume: true, onClose: () => render() }));
   act('watched', async () => {
-    await api(`/api/items/${it.id}/watched`, { method: 'POST', body: { watched: !it.progress?.watched } });
+    await api(`/api/items/${it.id}/watched`, { method: 'POST', body: { watched: !isWatched(it) } });
     render();
   });
   act('match', () => manage.fixMatch(it));
@@ -792,9 +876,23 @@ async function viewItem(id) {
     toast('Saved streams cleared. The next play looks again.');
     render();
   });
+  const pick = $('#season', node);
+  if (pick) {
+    const loadSeason = async () => {
+      const eps = $('#eps', node);
+      eps.innerHTML = '<div class="center" style="min-height:120px"><div class="spinner"></div></div>';
+      try {
+        const s = await api('/api/items/' + pick.value);
+        eps.innerHTML = episodeRows(s.children || []);
+        bindPlayLinks(eps);
+      } catch (ex) { eps.innerHTML = `<p class="error">${esc(ex.message)}</p>`; }
+    };
+    pick.onchange = loadSeason;
+    loadSeason();
+  }
   bindPlayLinks(node);
   bindShelves(node);
-  loadExtras(it, node);
+  if (top) loadExtras(it, node);
   return node;
 }
 
