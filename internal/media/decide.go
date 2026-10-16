@@ -40,11 +40,14 @@ type Decision struct {
 	Engine string `json:"engine"`
 	Method Method `json:"method"`
 	// AudioCopy is false when the selected audio track is re-encoded during a remux.
-	AudioCopy  bool     `json:"audioCopy"`
-	AudioCodec string   `json:"audioCodec"` // output audio codec
-	VideoCopy  bool     `json:"videoCopy"`
-	AudioIndex int      `json:"audioIndex"` // typeIndex of the chosen audio stream (-1 none)
-	Reasons    []string `json:"reasons"`
+	AudioCopy  bool   `json:"audioCopy"`
+	AudioCodec string `json:"audioCodec"` // output audio codec
+	VideoCopy  bool   `json:"videoCopy"`
+	AudioIndex int    `json:"audioIndex"` // typeIndex of the chosen audio stream (-1 none)
+	// StripDolbyVision drops a profile 7 file's enhancement layer and RPU in
+	// the remux, leaving its HDR10 base layer.
+	StripDolbyVision bool     `json:"stripDolbyVision,omitempty"`
+	Reasons          []string `json:"reasons"`
 }
 
 // Codecs AVPlayer can carry inside fMP4 HLS.
@@ -64,7 +67,20 @@ func Decide(info *Info, caps ClientCaps, audioIdx int) Decision {
 	video := info.PrimaryVideo()
 	has := func(e string) bool { return slices.Contains(caps.Engines, e) }
 
+	tryNative := has("avplayer") && caps.ForceEngine != "mpv"
+	tryMpv := has("mpv") && caps.ForceEngine != "avplayer"
+
 	nativeVideoOK, videoWhy := nativeVideo(video, caps)
+	// No Apple decoder plays dual-layer Dolby Vision (profile 7), but its base
+	// layer is plain HDR10. Without mpv, remux that instead of transcoding.
+	strip := false
+	if !nativeVideoOK && tryNative && !tryMpv && video.DVProfile == 7 && video.Codec == "hevc" {
+		base := *video
+		base.DVProfile = 0
+		if ok, _ := nativeVideo(&base, caps); ok {
+			nativeVideoOK, strip = true, true
+		}
+	}
 	nativeAudioOK := audio == nil || slices.Contains(caps.NativeAudio, audio.Codec)
 	overBudget := caps.MaxKbps > 0 && info.Bitrate > int64(caps.MaxKbps)*1000
 
@@ -79,18 +95,19 @@ func Decide(info *Info, caps ClientCaps, audioIdx int) Decision {
 		return d
 	}
 
-	tryNative := has("avplayer") && caps.ForceEngine != "mpv"
-	tryMpv := has("mpv") && caps.ForceEngine != "avplayer"
-
 	if tryNative && nativeVideoOK {
 		d.Engine = "avplayer"
 		d.VideoCopy = true
+		d.StripDolbyVision = strip
+		if strip {
+			d.Reasons = append(d.Reasons, "Dolby Vision profile 7: HDR10 base layer")
+		}
 		if nativeAudioOK {
 			d.AudioCopy = true
 			if audio != nil {
 				d.AudioCodec = audio.Codec
 			}
-			if slices.Contains(caps.NativeContainers, info.Container) && (audio == nil || audio.TypeIdx == defaultAudio(info.Audio).TypeIdx) {
+			if !strip && slices.Contains(caps.NativeContainers, info.Container) && (audio == nil || audio.TypeIdx == defaultAudio(info.Audio).TypeIdx) {
 				d.Method = MethodDirect
 				d.Reasons = append(d.Reasons, "native container and codecs")
 			} else {

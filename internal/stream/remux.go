@@ -254,6 +254,9 @@ func (r *remuxer) produce(track string, n int) error {
 		if r.tag != "" {
 			args = append(args, "-tag:v", r.tag)
 		}
+		if s.Decision.StripDolbyVision {
+			args = append(args, "-bsf:v", "hevc_metadata=remove_dovi=1")
+		}
 		if !last {
 			// Stop exactly before the next keyframe. -to compares DTS and overshoots
 			// with B-frames, so use a frame count when the rate is constant.
@@ -296,9 +299,11 @@ func (r *remuxer) produce(track string, n int) error {
 
 	out := filepath.Join(r.trackDir(track), strconv.Itoa(n)+".tmp.mp4")
 	args = append(args, "-sn", "-dn", "-map_chapters", "-1", "-map_metadata", "-1",
-		"-output_ts_offset", fmtTS(tsOffset),
-		"-strict", "unofficial", // writes the Dolby Vision configuration box (dvcC/dvvC)
-		"-f", "mp4", "-movflags", "frag_keyframe+delay_moov+default_base_moof+frag_discont",
+		"-output_ts_offset", fmtTS(tsOffset))
+	if !s.Decision.StripDolbyVision {
+		args = append(args, "-strict", "unofficial") // writes the Dolby Vision configuration box (dvcC/dvvC)
+	}
+	args = append(args, "-f", "mp4", "-movflags", "frag_keyframe+delay_moov+default_base_moof+frag_discont",
 		out)
 	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Minute)
 	defer cancel()
