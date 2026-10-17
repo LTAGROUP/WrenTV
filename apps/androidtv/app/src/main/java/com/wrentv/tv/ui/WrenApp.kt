@@ -35,6 +35,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.focusGroup
 import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.Brush
@@ -163,7 +168,7 @@ private fun Main(state: AppState, nav: Navigator) {
                 Box(
                     Modifier.onFocusChanged { bar.focused = it.hasFocus }
                         .graphicsLayer { alpha = shown; translationY = -(1 - shown) * size.height / 2 },
-                ) { TopBar(state, nav) }
+                ) { TopBar(state, nav, page) }
             }
         }
     }
@@ -197,7 +202,7 @@ private fun Page(route: Route) {
 
 /** The floating bar of pages along the top, like the TV app's. */
 @Composable
-private fun TopBar(state: AppState, nav: Navigator) {
+private fun TopBar(state: AppState, nav: Navigator, page: FocusRequester) {
     val tabs = buildList {
         add(Route.Home to "Home")
         if (state.canStream) {
@@ -219,6 +224,11 @@ private fun TopBar(state: AppState, nav: Navigator) {
         Modifier.fillMaxWidth().height(TopBarSpace)
             .background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.65f), 1f to Color.Transparent))
             .focusProperties { onEnter = { runCatching { current.requestFocus() } } }
+            // The page sits behind the bar, so a plain search for something
+            // below finds nothing: Down hands focus to the page outright.
+            .onPreviewKeyEvent {
+                it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown && runCatching { page.requestFocus() }.getOrDefault(false)
+            }
             .focusGroup(),
     ) {
         Image(

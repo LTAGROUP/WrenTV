@@ -19,8 +19,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyListPrefetchStrategy
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -376,6 +379,7 @@ fun Badge(text: String, modifier: Modifier = Modifier) {
 val PageGutter = 56.dp
 
 /** A titled horizontal row of cards. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Shelf(title: String, modifier: Modifier = Modifier, subtitle: String? = null, content: LazyListScope.() -> Unit) {
     Column(modifier.fillMaxWidth()) {
@@ -384,6 +388,9 @@ fun Shelf(title: String, modifier: Modifier = Modifier, subtitle: String? = null
             if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Wren.secondary)
         }
         LazyRow(
+            // When the page scrolls a shelf into view, its first screenful of
+            // cards is composed ahead of time instead of all in one frame.
+            state = rememberLazyListState(prefetchStrategy = remember { LazyListPrefetchStrategy(nestedPrefetchItemCount = 8) }),
             contentPadding = PaddingValues(horizontal = PageGutter, vertical = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             content = content,
