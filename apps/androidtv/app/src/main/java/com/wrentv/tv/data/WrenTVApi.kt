@@ -207,6 +207,10 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
         send("POST", "/api/items/$id/watched", body = buildJsonObject { put("watched", watched) })
     }
 
+    suspend fun liveChannels(): List<LiveChannel> = get<LiveChannelsResponse>("/api/livetv/channels").channels
+
+    suspend fun playChannel(id: String, caps: ClientCaps): LivePlayResponse = post("/api/livetv/channels/$id/play", enc(LivePlayRequest(caps)))
+
     suspend fun stopSession(sid: String) {
         runCatching { send("DELETE", "/api/sessions/$sid") }
     }

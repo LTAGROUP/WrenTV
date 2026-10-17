@@ -54,6 +54,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.wrentv.tv.R
 import com.wrentv.tv.data.AppState
+import com.wrentv.tv.player.LivePlayerScreen
 import com.wrentv.tv.player.PlayerScreen
 import com.wrentv.tv.ui.screens.CatalogScreen
 import com.wrentv.tv.ui.screens.CollectionDetailScreen
@@ -65,6 +66,7 @@ import com.wrentv.tv.ui.screens.GenreItemsScreen
 import com.wrentv.tv.ui.screens.GenresScreen
 import com.wrentv.tv.ui.screens.HomeScreen
 import com.wrentv.tv.ui.screens.LibraryScreen
+import com.wrentv.tv.ui.screens.LiveTvScreen
 import com.wrentv.tv.ui.screens.ManageLibrariesScreen
 import com.wrentv.tv.ui.screens.SearchScreen
 import com.wrentv.tv.ui.screens.ServerDownloadsScreen
@@ -161,7 +163,7 @@ private fun Main(state: AppState, nav: Navigator) {
             Box(Modifier.fillMaxSize().focusRequester(page).focusGroup()) {
                 holder.SaveableStateProvider(route.key) { Page(route) }
             }
-            if (nav.atTop && route !is Route.Player) {
+            if (nav.atTop && route !is Route.Player && route !is Route.LivePlayer) {
                 // Scrolled pages fade the bar out but keep it focusable, so Up
                 // from the first row still reaches it (and brings it back).
                 val shown by animateFloatAsState(if (bar.atTop || bar.focused) 1f else 0f, label = "topbar")
@@ -183,6 +185,7 @@ private fun Page(route: Route) {
         Route.Collections -> CollectionsScreen()
         Route.Genres -> GenresScreen()
         Route.Search -> SearchScreen()
+        Route.LiveTv -> LiveTvScreen()
         Route.Downloads -> DownloadsScreen()
         Route.Settings -> SettingsScreen()
         is Route.Library -> LibraryScreen(route.id)
@@ -197,6 +200,7 @@ private fun Page(route: Route) {
         is Route.StreamTitle -> StreamTitleScreen(route)
         is Route.Trailer -> TrailerScreen(route.youtubeKey, route.title)
         is Route.Player -> PlayerScreen(route.target)
+        is Route.LivePlayer -> LivePlayerScreen(route.channelId)
     }
 }
 
@@ -205,6 +209,7 @@ private fun Page(route: Route) {
 private fun TopBar(state: AppState, nav: Navigator, page: FocusRequester) {
     val tabs = buildList {
         add(Route.Home to "Home")
+        if (state.liveTv) add(Route.LiveTv to "Live TV")
         if (state.canStream) {
             // Everything plays, so there are no libraries to pick from: just movies and shows.
             add(Route.Movies to "Movies")

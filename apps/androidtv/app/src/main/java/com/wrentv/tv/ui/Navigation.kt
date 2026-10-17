@@ -41,6 +41,7 @@ sealed interface Route {
     data object Collections : Route { override val key = "collections" }
     data object Genres : Route { override val key = "genres" }
     data object Search : Route { override val key = "search" }
+    data object LiveTv : Route { override val key = "livetv" }
     data object Downloads : Route { override val key = "downloads" }
     data object Settings : Route { override val key = "settings" }
     data class Library(val id: String) : Route { override val key = "library:$id" }
@@ -59,6 +60,8 @@ sealed interface Route {
     data class StreamTitle(val tmdbId: Int, val mediaType: String, val title: String) : Route { override val key = "stream:$mediaType:$tmdbId" }
     data class Trailer(val youtubeKey: String, val title: String) : Route { override val key = "trailer:$youtubeKey" }
     data class Player(val target: PlayTarget) : Route { override val key = "player:${target.itemId}" }
+    /** Live TV, full screen, starting on a channel; up and down change it. */
+    data class LivePlayer(val channelId: String) : Route { override val key = "live-player" }
 }
 
 class Navigator {

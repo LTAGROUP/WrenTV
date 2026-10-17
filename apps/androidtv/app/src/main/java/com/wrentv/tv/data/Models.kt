@@ -89,6 +89,8 @@ data class ServerInfo(
     /** The server's id in the account service (account servers only). */
     val serverId: String? = null,
     val localUrls: List<String>? = null,
+    /** The admin has set up live TV (IPTV) and it has channels. */
+    val liveTv: Boolean? = null,
 ) {
     /** Signs in with a Wren TV account (email) rather than a server-local username. */
     val usesAccounts: Boolean get() = authMode == "supabase" && supabase != null
@@ -670,4 +672,49 @@ data class StatsResponse(
     val library: LibraryStats = LibraryStats(),
     val nowPlaying: List<NowPlaying>? = null,
     val recent: List<HistoryRow>? = null,
+)
+
+// Live TV
+
+/** A programme in the guide. Times are Unix seconds. */
+@Serializable
+data class LiveProgram(
+    val title: String = "",
+    val start: Long = 0,
+    val end: Long = 0,
+    val description: String? = null,
+    val episode: String? = null,
+) {
+    fun progress(now: Long): Float = if (end > start) ((now - start).toFloat() / (end - start)).coerceIn(0f, 1f) else 0f
+}
+
+@Serializable
+data class LiveChannel(
+    val id: String,
+    val name: String = "",
+    val number: String? = null,
+    /** Absolute, or a path on the server. */
+    val logo: String? = null,
+    val group: String? = null,
+    val now: LiveProgram? = null,
+    val next: LiveProgram? = null,
+)
+
+@Serializable
+data class LiveChannelsResponse(val channels: List<LiveChannel> = emptyList())
+
+@Serializable
+data class LivePlayRequest(val caps: ClientCaps)
+
+/**
+ * How to play a channel. The server proxies (or remuxes) the provider's
+ * stream, so the URL is the server's, session-scoped like a film's.
+ */
+@Serializable
+data class LivePlayResponse(
+    val url: String? = null,
+    /** "hls" or "ts" (a plain MPEG-TS stream). */
+    val type: String? = null,
+    val sessionId: String? = null,
+    val message: String? = null,
 )

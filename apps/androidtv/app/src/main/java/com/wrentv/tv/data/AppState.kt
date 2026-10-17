@@ -36,6 +36,21 @@ class AppState(context: Context) {
 
     var serverUrl by mutableStateOf<HttpUrl?>(null)
         private set
+
+    /** The server's live TV channels, kept for flipping through them in the player. */
+    var liveChannels by mutableStateOf<List<LiveChannel>>(emptyList())
+        private set
+    val liveTv: Boolean get() = server?.liveTv == true
+    /** The channel last watched on this TV, where Live TV starts. */
+    var lastChannel: String?
+        get() = store.string("lastChannel", "").ifEmpty { null }
+        set(v) { store.setString("lastChannel", v ?: "") }
+
+    /** Fetches the channels and what's on them now. */
+    suspend fun loadLiveChannels(): List<LiveChannel> {
+        val api = api ?: return liveChannels
+        return api.liveChannels().also { liveChannels = it }
+    }
     var api by mutableStateOf<WrenTVApi?>(null)
         private set
     var user by mutableStateOf<User?>(null)
@@ -423,7 +438,7 @@ class AppState(context: Context) {
      */
     suspend fun refreshStatus() {
         val api = api ?: return
-        runCatching { api.serverInfo() }.getOrNull()?.let { info -> server = server?.copy(streaming = info.streaming) }
+        runCatching { api.serverInfo() }.getOrNull()?.let { info -> server = server?.copy(streaming = info.streaming, liveTv = info.liveTv) }
         runCatching { api.me() }.getOrNull()?.let { me ->
             limits = me.limits
             downloads.connect(api, me.limits)
