@@ -27,6 +27,7 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 		"authMode":      s.Auth.Mode(),
 		"setupRequired": setup,
 		"streaming":     s.Streaming.Active(),
+		"liveTv":        s.LiveTV.Active(),
 		"localUrls":     s.advertisedLocalURLs(),
 	}
 	if s.Supa != nil {

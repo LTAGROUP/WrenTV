@@ -23,6 +23,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/direct"
 	"github.com/LTAGROUP/wrentv/internal/images"
 	"github.com/LTAGROUP/wrentv/internal/library"
+	"github.com/LTAGROUP/wrentv/internal/livetv"
 	"github.com/LTAGROUP/wrentv/internal/markers"
 	"github.com/LTAGROUP/wrentv/internal/metadata/omdb"
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
@@ -43,6 +44,7 @@ type Server struct {
 	Markers   *markers.Analyzer
 	Streams   *stream.Manager
 	Streaming *streaming.Service
+	LiveTV    *livetv.Service
 	Hub       *library.Hub
 	Hooks     *webhook.Sender
 	Images    *images.Cache
@@ -95,6 +97,14 @@ func (s *Server) Router() http.Handler {
 		}
 		sess.ServeHTTP(w, r, chi.URLParam(r, "*"))
 	})
+	r.HandleFunc("/live/{sid}/*", func(w http.ResponseWriter, r *http.Request) {
+		sess := s.LiveTV.Get(chi.URLParam(r, "sid"))
+		if sess == nil {
+			http.Error(w, "session expired", http.StatusGone)
+			return
+		}
+		sess.ServeHTTP(w, r, chi.URLParam(r, "*"))
+	})
 	r.Get("/internal/stream/{token}", s.serveInternalStream)
 	r.Head("/internal/stream/{token}", s.serveInternalStream)
 	// Device downloads: the ticket is the credential (download managers resume without headers).
@@ -137,6 +147,9 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/items/{id}/watched", s.handleWatched)
 		r.Post("/api/items/{id}/play", s.handlePlay)
 		r.Delete("/api/sessions/{sid}", s.handleStopSession)
+		r.Get("/api/livetv/channels", s.handleLiveChannels)
+		r.Get("/api/livetv/guide", s.handleLiveGuide)
+		r.Post("/api/livetv/channels/{id}/play", s.handleLivePlay)
 		r.Get("/api/me/prefs", s.handleGetPrefs)
 		r.Patch("/api/me/prefs", s.handlePatchPrefs)
 		r.Get("/api/genres", s.handleGenres)
@@ -168,6 +181,9 @@ func (s *Server) Router() http.Handler {
 			r.Get("/api/admin/browse", s.handleBrowse)
 			r.Patch("/api/admin/settings", s.handlePatchSettings)
 			r.Get("/api/admin/stats", s.handleStats)
+			r.Get("/api/admin/livetv", s.handleLiveTVAdmin)
+			r.Post("/api/admin/livetv/refresh", s.handleLiveTVRefresh)
+			r.Post("/api/admin/livetv/check", s.handleLiveTVCheck)
 			r.Get("/api/admin/history", s.handleHistory)
 			r.Post("/api/collections", s.handleCreateCollection)
 			r.Post("/api/collections/auto", s.handleAutoFranchises)
@@ -266,7 +282,7 @@ func requestLog(next http.Handler) http.Handler {
 		start := time.Now()
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(ww, r)
-		if strings.HasPrefix(r.URL.Path, "/stream/") || strings.HasPrefix(r.URL.Path, "/api/images/") || r.URL.Path == "/api/events" {
+		if strings.HasPrefix(r.URL.Path, "/stream/") || strings.HasPrefix(r.URL.Path, "/live/") || strings.HasPrefix(r.URL.Path, "/api/images/") || r.URL.Path == "/api/events" {
 			if ww.Status() < 400 {
 				return
 			}

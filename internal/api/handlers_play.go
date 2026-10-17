@@ -252,6 +252,7 @@ func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
 	if sess := s.Streams.Get(sid); sess != nil && (sess.UserID == principal(r).User.ID || principal(r).IsAdmin()) {
 		s.Streams.Stop(sid)
 	}
+	s.LiveTV.Stop(sid, principal(r).User.ID, principal(r).IsAdmin())
 	w.WriteHeader(http.StatusNoContent)
 }
 

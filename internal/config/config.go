@@ -38,6 +38,7 @@ type Config struct {
 	Metadata     MetadataConfig     `yaml:"metadata"`
 	Transcode    TranscodeConfig    `yaml:"transcode"`
 	Streaming    StreamingConfig    `yaml:"streaming"`
+	LiveTV       LiveTVConfig       `yaml:"live_tv"`
 	Users        UserLimitsConfig   `yaml:"users"`
 	Webhooks     []WebhookConfig    `yaml:"webhooks"`
 	Scanner      ScannerConfig      `yaml:"scanner"`
@@ -120,6 +121,35 @@ type TranscodeConfig struct {
 
 // StreamingConfig turns the server into a shared Stremio-style client:
 // any movie or show can be searched and played, resolved through Stremio
+// LiveTVConfig sets up live TV from IPTV playlists (M3U, or an Xtream Codes
+// login). Channels, numbers and the guide are worked out from the playlist;
+// the owner only picks which groups to show.
+type LiveTVConfig struct {
+	Enabled bool           `yaml:"enabled"`
+	Sources []LiveTVSource `yaml:"sources"`
+	// HiddenGroups are playlist groups left out of the channel list.
+	HiddenGroups []string `yaml:"hidden_groups,omitempty"`
+	// MaxStreams caps channels playing at once, as providers limit
+	// connections. 0 is no limit.
+	MaxStreams int `yaml:"max_streams,omitempty"`
+}
+
+type LiveTVSource struct {
+	ID      string `yaml:"id" json:"id"`
+	Name    string `yaml:"name" json:"name"`
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	// Kind is "m3u" (a playlist URL) or "xtream" (a server with a username and password).
+	Kind string `yaml:"kind" json:"kind"`
+	// URL is the playlist, or the Xtream server's address.
+	URL      string `yaml:"url" json:"url"`
+	Username string `yaml:"username,omitempty" json:"username"`
+	Password string `yaml:"password,omitempty" json:"password"`
+	// EPGURL is the XMLTV guide. Blank finds it on its own: the playlist's
+	// url-tvg header, or the Xtream server's guide.
+	EPGURL    string `yaml:"epg_url,omitempty" json:"epgUrl"`
+	UserAgent string `yaml:"user_agent,omitempty" json:"userAgent"`
+}
+
 // addons to releases that are already cached on the owner's debrid accounts.
 // Only the stream (info hash and file) is stored; bytes are proxied on demand.
 // In download mode the file is also saved into a real library.

@@ -33,6 +33,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/direct"
 	"github.com/LTAGROUP/wrentv/internal/images"
 	"github.com/LTAGROUP/wrentv/internal/library"
+	"github.com/LTAGROUP/wrentv/internal/livetv"
 	"github.com/LTAGROUP/wrentv/internal/markers"
 	"github.com/LTAGROUP/wrentv/internal/metadata/omdb"
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
@@ -242,10 +243,13 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 		slog.Warn("streaming is enabled but needs a debrid API key and a TMDB key to work")
 	}
 
+	live := livetv.New(cfg, dataDir)
+	live.Start(ctx)
+
 	srv := &api.Server{
 		Version: version, Cfg: cfg, DB: d, Scanner: scanner, Watcher: watcher, TMDB: tm, Streams: streams,
 		OMDb: omdb.New(func() string { return cfg.Metadata.OMDbAPIKey }, d), Markers: analyzer,
-		Streaming: streamer, Hub: hub, Hooks: hooks, Images: images.New(filepath.Join(dataDir, "images")),
+		Streaming: streamer, LiveTV: live, Hub: hub, Hooks: hooks, Images: images.New(filepath.Join(dataDir, "images")),
 	}
 	switch cfg.Auth.Mode {
 	case "supabase":

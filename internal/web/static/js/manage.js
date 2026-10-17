@@ -462,12 +462,159 @@ function streamingTab(s, libs) {
   </div>`;
 }
 
+// ---------------------------------------------------------------- live TV
+
+function liveStatusLine(lt) {
+  const st = lt.status || {};
+  if (!lt.enabled) return '<span class="muted">Off</span>';
+  if (st.refreshing && !st.channels) return '<span class="muted">Loading playlists…</span>';
+  if (!lt.sources.length) return '<span class="error">Add a playlist below</span>';
+  if (!st.channels) return '<span class="error">No channels found</span>';
+  const guide = st.guideChannels ? `guide for ${st.guideChannels}` : 'no guide';
+  const when = st.refreshed ? ` · updated ${timeAgo(Date.parse(st.refreshed) / 1000)}` : '';
+  return `<span class="ok">On</span> <span class="small muted">· ${st.visible} of ${st.channels} channels shown · ${guide}${when}${st.refreshing ? ' · refreshing…' : ''}</span>`;
+}
+
+function liveTvTab(lt) {
+  return `<div data-tab="livetv">
+    <div class="panel"><h2>Live TV</h2>
+      <p class="small muted">Watch channels from an IPTV provider on every Wren TV app. Add your playlist and the rest is automatic: channels are numbered,
+        the guide is found and matched to them, and both are refreshed in the background. Streams play through this server, so your login never reaches the apps.</p>
+      <p data-lt-status>${liveStatusLine(lt)}</p>
+      <label class="check"><input type="checkbox" name="ltEnabled" ${lt.enabled ? 'checked' : ''}> Enable live TV</label>
+      <ul class="small error" data-lt-errors ${(lt.status?.errors || []).length ? '' : 'hidden'}>${(lt.status?.errors || []).map((e) => `<li>${esc(e)}</li>`).join('')}</ul>
+      <button type="button" class="btn small" data-lt-refresh ${lt.sources.length ? '' : 'disabled'}>Refresh now</button>
+    </div>
+
+    <div class="panel"><h2>Playlists</h2>
+      <p class="small muted">An M3U playlist link, or an Xtream Codes login (server, username and password) from your provider.
+        The guide is found on its own; only fill in a guide link if your provider gave you a separate one.</p>
+      <div class="lt-sources"></div>
+      <button type="button" class="btn" data-lt-add>Add playlist</button>
+    </div>
+
+    <div class="panel"><h2>Channel groups</h2>
+      <p class="small muted">Untick groups you don't want in the channel list. Big playlists often include whole countries you'll never watch.</p>
+      <div class="lt-groups-bar"><input type="search" data-lt-filter placeholder="Filter groups" autocomplete="off">
+        <button type="button" class="btn small" data-lt-all>Show all</button><button type="button" class="btn small" data-lt-none>Hide all</button></div>
+      <div class="lt-groups"></div>
+    </div>
+
+    <div class="panel"><h2>Limits</h2>
+      <p class="small muted">Most providers allow only a few connections at once. When the limit is reached, someone changing channel still works; a new viewer is told to wait.</p>
+      <div class="form-grid">${numField('ltMaxStreams', 'Channels playing at once', lt.maxStreams, { hint: 'No limit' })}</div>
+    </div>
+  </div>`;
+}
+
+function setupLiveTv(node, lt, groups) {
+  let sources = lt.sources.map((x) => ({ ...x }));
+  const box = $('.lt-sources', node);
+  const draw = () => {
+    box.innerHTML = sources.length ? '' : '<p class="muted small">No playlists yet.</p>';
+    sources.forEach((src) => {
+      const x = src.kind === 'xtream';
+      const r = el(`<div class="lt-source">
+        <div class="form-grid">
+          <div class="field"><label>Name</label><input data-k="name" value="${esc(src.name || '')}" placeholder="My provider"></div>
+          <div class="field"><label>Type</label><select data-k="kind"><option value="m3u" ${x ? '' : 'selected'}>M3U playlist link</option><option value="xtream" ${x ? 'selected' : ''}>Xtream Codes login</option></select></div>
+        </div>
+        <div class="form-grid">
+          <div class="field"><label>${x ? 'Server' : 'Playlist link'}</label><input data-k="url" value="${esc(src.url || '')}" placeholder="${x ? 'http://provider.example:8080' : 'https://…/playlist.m3u'}" autocomplete="off"></div>
+          ${x ? `<div class="field"><label>Username</label><input data-k="username" value="${esc(src.username || '')}" autocomplete="off"></div>
+          <div class="field"><label>Password</label><input data-k="password" type="password" value="${esc(src.password || '')}" autocomplete="new-password"></div>` : ''}
+        </div>
+        <details ${src.epgUrl || src.userAgent ? 'open' : ''}><summary class="small muted">Advanced</summary><div class="form-grid">
+          <div class="field"><label>Guide (XMLTV) link</label><input data-k="epgUrl" value="${esc(src.epgUrl || '')}" placeholder="Found automatically" autocomplete="off"></div>
+          <div class="field"><label>User agent</label><input data-k="userAgent" value="${esc(src.userAgent || '')}" placeholder="VLC (most providers expect it)" autocomplete="off"></div>
+        </div></details>
+        <div class="lt-acts"><label class="check" style="margin:0"><input type="checkbox" data-k="enabled" ${src.enabled !== false ? 'checked' : ''}> Use this playlist</label>
+          <span class="small" data-res></span>
+          <button type="button" class="btn small" data-check>Check</button><button type="button" class="btn small danger" data-del>Remove</button></div>
+      </div>`);
+      for (const inp of $$('[data-k]', r)) {
+        inp.oninput = inp.onchange = () => {
+          src[inp.dataset.k] = inp.type === 'checkbox' ? inp.checked : inp.value;
+          if (inp.dataset.k === 'kind') draw();
+        };
+      }
+      $('[data-del]', r).onclick = () => { sources = sources.filter((y) => y !== src); draw(); };
+      $('[data-check]', r).onclick = async (e) => {
+        const res = $('[data-res]', r);
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        res.innerHTML = '<span class="muted">Checking…</span>';
+        try {
+          const c = await api('/api/admin/livetv/check', { method: 'POST', body: src });
+          res.innerHTML = `<span class="ok">${c.channels} channels</span> <span class="muted">· ${c.guide ? 'guide found' : 'no guide found'}</span>`;
+        } catch (ex) { res.innerHTML = `<span class="error">${esc(ex.message)}</span>`; }
+        btn.disabled = false;
+      };
+      box.append(r);
+    });
+  };
+  draw();
+  $('[data-lt-add]', node).onclick = () => {
+    sources.push({ name: '', kind: 'm3u', url: '', enabled: true });
+    draw();
+    $$('.lt-source [data-k=url]', box).at(-1)?.focus();
+  };
+
+  // Groups
+  const gbox = $('.lt-groups', node);
+  const hidden = new Set(lt.hiddenGroups || []);
+  gbox.innerHTML = groups.length
+    ? groups.map((g) => `<label class="check" data-name="${esc(g.name.toLowerCase())}"><input type="checkbox" value="${esc(g.name)}" ${hidden.has(g.name) ? '' : 'checked'}> ${esc(g.name)} <span class="muted small">${g.channels}</span></label>`).join('')
+    : '<p class="muted small">Groups show here once a playlist has loaded.</p>';
+  const visibleBoxes = () => $$('label', gbox).filter((l) => !l.hidden).map((l) => $('input', l));
+  $('[data-lt-filter]', node).oninput = (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    for (const l of $$('label', gbox)) l.hidden = !!q && !l.dataset.name.includes(q);
+  };
+  $('[data-lt-all]', node).onclick = () => visibleBoxes().forEach((c) => { c.checked = true; });
+  $('[data-lt-none]', node).onclick = () => visibleBoxes().forEach((c) => { c.checked = false; });
+
+  // Refresh, then watch the status until it settles.
+  const statusEl = $('[data-lt-status]', node);
+  const errEl = $('[data-lt-errors]', node);
+  const poll = async (n = 0) => {
+    try {
+      const r = await api('/api/admin/livetv');
+      statusEl.innerHTML = liveStatusLine(r.liveTv);
+      const errs = r.liveTv.status?.errors || [];
+      errEl.innerHTML = errs.map((e) => `<li>${esc(e)}</li>`).join('');
+      errEl.hidden = !errs.length;
+      if (r.liveTv.status?.refreshing && n < 60) setTimeout(() => poll(n + 1), 2000);
+    } catch { /* the page moved on */ }
+  };
+  $('[data-lt-refresh]', node).onclick = async (e) => {
+    e.currentTarget.disabled = true;
+    await api('/api/admin/livetv/refresh', { method: 'POST' });
+    toast('Refreshing playlists and guide');
+    setTimeout(() => poll(), 1000);
+    e.currentTarget.disabled = false;
+  };
+  if (lt.status?.refreshing) setTimeout(() => poll(), 2000);
+
+  // What the save sends.
+  return (v) => {
+    const out = {
+      enabled: !!v.ltEnabled,
+      maxStreams: Math.max(0, Math.floor(Number(v.ltMaxStreams) || 0)),
+      sources: sources.map((x) => ({ ...x, enabled: x.enabled !== false })).filter((x) => (x.url || '').trim()),
+    };
+    // Groups only known once loaded; otherwise leave the hidden ones alone.
+    if (groups.length) out.hiddenGroups = $$('input', gbox).filter((c) => !c.checked).map((c) => c.value);
+    return out;
+  };
+}
+
 export async function viewSettings() {
   setTitle('Settings');
-  const [s, libs] = await Promise.all([api('/api/admin/settings'), api('/api/libraries')]);
+  const [s, libs, live] = await Promise.all([api('/api/admin/settings'), api('/api/libraries'), api('/api/admin/livetv').catch(() => null)]);
   const hw = ['auto', 'videotoolbox', 'nvenc', 'qsv', 'vaapi', 'amf', 'none'];
   const ud = s.userDefaults || {};
-  const tabs = [['general', 'General'], ['streaming', 'Streaming'], ['users', 'Users'], ['integrations', 'Integrations']];
+  const tabs = [['general', 'General'], ['streaming', 'Streaming'], ['livetv', 'Live TV'], ['users', 'Users'], ['integrations', 'Integrations']];
   const node = el(`<form class="settings"><div class="page-head"><h1>Settings</h1><button class="btn primary" data-save>Save changes</button></div>
     <div class="tabs" role="tablist">${tabs.map(([k, label]) => `<button type="button" role="tab" data-tabbtn="${k}">${label}</button>`).join('')}</div>
     <p class="error" data-err hidden></p>
@@ -490,6 +637,8 @@ export async function viewSettings() {
     </div>
 
     ${streamingTab(s, libs)}
+
+    ${liveTvTab(s.liveTv)}
 
     <div data-tab="users">
       <div class="panel"><h2>Defaults for everyone</h2>
@@ -520,6 +669,8 @@ export async function viewSettings() {
   };
   for (const b of $$('[data-tabbtn]', node)) b.onclick = () => show(b.dataset.tabbtn);
   show(location.hash.slice(1));
+
+  const readLiveTv = setupLiveTv(node, s.liveTv, live?.groups || []);
 
   // Webhooks
   const hooks = $('.hooks', node);
@@ -653,6 +804,7 @@ export async function viewSettings() {
       serverName: v.serverName, publicUrl: v.publicUrl, hwaccel: v.hwaccel,
       markerFingerprinting: !!v.markerFingerprinting,
       streaming,
+      liveTv: readLiveTv(v),
       userDefaults: { deviceDownloads: !!v.udDevice, maxStreams: int(v.udStreams), maxDownloads: int(v.udDownloads) },
       webhooks: $$('.hook', node).map((r) => ({
         url: $('[data-k=url]', r).value.trim(), secret: $('[data-k=secret]', r).value,

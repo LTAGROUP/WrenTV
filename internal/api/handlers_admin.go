@@ -64,6 +64,7 @@ type settingsView struct {
 	Webhooks        []config.WebhookConfig  `json:"webhooks"`
 	IntegrationKey  string                  `json:"integrationKey"`
 	RemoteAccess    *remoteAccessView       `json:"remoteAccess,omitempty"`
+	LiveTV          liveTVView              `json:"liveTv"`
 	RestartRequired bool                    `json:"restartRequired,omitempty"`
 }
 
@@ -138,7 +139,7 @@ func (s *Server) settings() settingsView {
 	return settingsView{
 		ServerName: c.ServerName, PublicURL: c.PublicURL, HWAccel: c.Transcode.HWAccel, TMDBKeySet: c.Metadata.TMDBAPIKey != "",
 		OMDbKeySet: c.Metadata.OMDbAPIKey != "", Fingerprint: c.Markers.Fingerprint, Streaming: sv, UserDefaults: c.Users,
-		Webhooks: hooks, IntegrationKey: c.IntegrationKey, RemoteAccess: s.remoteAccess(),
+		Webhooks: hooks, IntegrationKey: c.IntegrationKey, RemoteAccess: s.remoteAccess(), LiveTV: s.liveTVView(),
 	}
 }
 
@@ -289,6 +290,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		OMDbAPIKey   *string                  `json:"omdbApiKey"`
 		Fingerprint  *bool                    `json:"markerFingerprinting"`
 		Streaming    *streamingPatch          `json:"streaming"`
+		LiveTV       *liveTVPatch             `json:"liveTv"`
 		UserDefaults *config.UserLimitsConfig `json:"userDefaults"`
 		Webhooks     *[]config.WebhookConfig  `json:"webhooks"`
 		RemoteAccess *struct {
@@ -335,6 +337,14 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 			_, _ = s.Streaming.Libraries(r.Context())
 		}
 	}
+	var liveRefetch, liveRegroup bool
+	if req.LiveTV != nil {
+		var err error
+		if liveRefetch, liveRegroup, err = s.applyLiveTV(req.LiveTV); err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+	}
 	if u := req.UserDefaults; u != nil {
 		if u.MaxStreams < 0 || u.MaxDownloads < 0 {
 			writeErr(w, 400, "limits can't be negative")
@@ -377,6 +387,11 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	if err := c.Save(); err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	if liveRefetch {
+		s.LiveTV.Refresh(true)
+	} else if liveRegroup {
+		s.LiveTV.Regroup()
 	}
 	v := s.settings()
 	v.RestartRequired = restart
