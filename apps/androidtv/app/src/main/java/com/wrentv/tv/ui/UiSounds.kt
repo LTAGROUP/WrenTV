@@ -7,7 +7,7 @@ import android.os.SystemClock
 import com.wrentv.tv.R
 
 /**
- * Short clicks as focus moves, for selecting and for going back, like the
+ * Light ticks as focus moves, for selecting and for going back, like the
  * sounds Plex and the Apple TV make. Quiet, and silent while a video plays.
  */
 object UiSounds {
@@ -45,9 +45,9 @@ object UiSounds {
             lastMove = now
         }
         val volume = when (kind) {
-            Kind.Move -> 0.3f
-            Kind.Select -> 0.42f
-            Kind.Back -> 0.38f
+            Kind.Move -> 0.25f
+            Kind.Select -> 0.4f
+            Kind.Back -> 0.34f
         }
         p.play(ids[kind.ordinal], volume, volume, 1, 0, 1f)
     }
