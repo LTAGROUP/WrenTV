@@ -34,6 +34,10 @@ import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
@@ -134,6 +138,7 @@ private sealed interface DetailPanel {
     data class Episode(val item: Item) : DetailPanel
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: UserPrefs?) {
     val state = LocalAppState.current
@@ -171,6 +176,11 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
                 .background(Brush.verticalGradient(0f to Color.Transparent, 0.45f to Color.Black.copy(alpha = 0.55f), 0.8f to Wren.background))
                 .background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.85f), 0.6f to Color.Transparent)),
         )
+        // The TV default keeps whatever has focus at a fixed spot, so moving along the
+        // buttons nudged the page up and down. This page scrolls only to bring
+        // something on screen; the rows inside keep the default.
+        val rows = LocalBringIntoViewSpec.current
+        CompositionLocalProvider(LocalBringIntoViewSpec provides OnlyWhenNeeded) {
         LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             item("hero") {
                 // Coming back up shows the whole top of the page, not just the button that took focus.
@@ -212,22 +222,25 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
             }
             when {
                 item.kind == "show" && !detail?.children.isNullOrEmpty() -> item("seasons") {
-                    Seasons(item, detail!!, ::play) { panel = it }
+                    CompositionLocalProvider(LocalBringIntoViewSpec provides rows) { Seasons(item, detail!!, ::play) { panel = it } }
                 }
                 item.kind == "season" && detail != null -> item("episodes") {
-                    EpisodeRow(detail.children.orEmpty(), ::play) { panel = DetailPanel.Episode(it) }
+                    CompositionLocalProvider(LocalBringIntoViewSpec provides rows) { EpisodeRow(detail.children.orEmpty(), ::play) { panel = DetailPanel.Episode(it) } }
                 }
             }
             if (extras != null && (item.kind == "movie" || item.kind == "show")) {
-                if (extras.cast.isNotEmpty()) item("cast") { CastShelf(extras.cast) }
+                if (extras.cast.isNotEmpty()) item("cast") { CompositionLocalProvider(LocalBringIntoViewSpec provides rows) { CastShelf(extras.cast) } }
                 if (extras.moreLikeThis.isNotEmpty()) item("more") {
-                    Shelf("More Like This") {
-                        items(extras.moreLikeThis, key = { it.id }) { t -> TitleCard(t, Modifier.rememberFocus("more:${t.id}")) }
+                    CompositionLocalProvider(LocalBringIntoViewSpec provides rows) {
+                        Shelf("More Like This") {
+                            items(extras.moreLikeThis, key = { it.id }) { t -> TitleCard(t, Modifier.rememberFocus("more:${t.id}")) }
+                        }
                     }
                 }
             }
             val files = detail?.files.orEmpty()
             if (files.isNotEmpty()) item("files") { FileSection(files) }
+        }
         }
     }
 
@@ -282,6 +295,22 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
                     }
                 }
             }
+        }
+    }
+}
+
+/** Scrolls only as far as it takes to show the target, with a margin; doesn't move for what's already on screen. */
+@OptIn(ExperimentalFoundationApi::class)
+private val OnlyWhenNeeded = object : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        val margin = (containerSize * 0.16f).coerceAtMost((containerSize - size).coerceAtLeast(0f) / 2)
+        val end = offset + size
+        return when {
+            offset >= margin && end <= containerSize - margin -> 0f
+            // Taller than the screen: line up its top.
+            size > containerSize -> offset
+            offset < margin -> offset - margin
+            else -> end - (containerSize - margin)
         }
     }
 }
