@@ -183,19 +183,23 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
         CompositionLocalProvider(LocalBringIntoViewSpec provides OnlyWhenNeeded) {
         LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             item("hero") {
-                // Coming back up shows the whole top of the page, not just the button that took focus.
-                // Asked of the list like a focused button's own request, so the two merge instead of one cancelling the other.
+                // Coming back up shows as much of the top of the page as fits above the
+                // buttons, not just the button that took focus. Asked of the list with the
+                // same bands as a button's own request, so the two agree instead of bouncing.
                 val scope = rememberCoroutineScope()
                 val whole = remember { BringIntoViewRequester() }
                 var heroSize by remember { mutableStateOf(IntSize.Zero) }
+                var inHero by remember { mutableStateOf(false) }
                 Column(
                     Modifier.bringIntoViewRequester(whole).onSizeChanged { heroSize = it }
                         .onFocusChanged {
-                            if (!it.hasFocus) return@onFocusChanged
-                            // As much of it as fits, keeping the buttons at the bottom on screen.
+                            val entered = it.hasFocus && !inHero
+                            inHero = it.hasFocus
+                            if (!entered) return@onFocusChanged
                             val h = heroSize.height.toFloat()
-                            val top = (h - list.layoutInfo.viewportSize.height).coerceAtLeast(0f)
-                            scope.launch { whole.bringIntoView(Rect(0f, top, heroSize.width.toFloat(), h)) }
+                            val c = list.layoutInfo.viewportSize.height.toFloat()
+                            val fits = c * (1 - OnlyWhenNeeded.TOP - OnlyWhenNeeded.BOTTOM)
+                            scope.launch { whole.bringIntoView(Rect(0f, (h - fits).coerceAtLeast(0f), heroSize.width.toFloat(), h)) }
                         }
                         .padding(start = PageGutter, end = PageGutter, top = 150.dp).width(820.dp),
                 ) {
@@ -299,18 +303,27 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
     }
 }
 
-/** Scrolls only as far as it takes to show the target, with a margin; doesn't move for what's already on screen. */
+/**
+ * Scrolls only as far as it takes to show the target, keeping a band at the top
+ * and a bigger one at the bottom (for the text under a card); doesn't move for
+ * what's already inside. Something too tall for both bands gets them shrunk.
+ */
 @OptIn(ExperimentalFoundationApi::class)
-private val OnlyWhenNeeded = object : BringIntoViewSpec {
+private object OnlyWhenNeeded : BringIntoViewSpec {
+    const val TOP = 0.06f
+    const val BOTTOM = 0.16f
+
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
-        val margin = (containerSize * 0.16f).coerceAtMost((containerSize - size).coerceAtLeast(0f) / 2)
+        val room = (containerSize - size).coerceAtLeast(0f)
+        val fit = (room / ((TOP + BOTTOM) * containerSize)).coerceAtMost(1f)
+        val top = TOP * containerSize * fit
+        val bottom = containerSize - BOTTOM * containerSize * fit
         val end = offset + size
         return when {
-            offset >= margin && end <= containerSize - margin -> 0f
-            // Taller than the screen: line up its top.
+            offset >= top - 0.5f && end <= bottom + 0.5f -> 0f
             size > containerSize -> offset
-            offset < margin -> offset - margin
-            else -> end - (containerSize - margin)
+            offset < top -> offset - top
+            else -> end - bottom
         }
     }
 }
