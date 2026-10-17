@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -161,6 +162,20 @@ func (s *debridSource) open(ctx context.Context, method, rng string) (*http.Resp
 	}
 }
 
+// redactURL drops a request error's URL down to its host: debrid links
+// carry the account's download token.
+func redactURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		host := ue.URL
+		if u, perr := url.Parse(ue.URL); perr == nil {
+			host = u.Host
+		}
+		return fmt.Errorf("%s %s: %w", ue.Op, host, ue.Err)
+	}
+	return err
+}
+
 // check reads the first byte, refreshing the link once if it fails.
 func (s *debridSource) check(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -204,7 +219,7 @@ func (s *debridSource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.open(r.Context(), r.Method, r.Header.Get("Range"))
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
-			slog.Warn("debrid stream failed", "stream", s.streamID, "range", r.Header.Get("Range"), "err", err)
+			slog.Warn("debrid stream failed", "stream", s.streamID, "range", r.Header.Get("Range"), "err", redactURL(err))
 			http.Error(w, "stream unavailable", http.StatusBadGateway)
 		}
 		return

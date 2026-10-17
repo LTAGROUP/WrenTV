@@ -62,6 +62,9 @@ type Service struct {
 	sources   map[string]*debridSource
 	streaming int // open debrid sources
 	links     map[string]cachedLink
+	// cdnFails counts plays in a row whose link the CDN wouldn't serve. It's
+	// kept here: finding the torrent again resets the stream's own count.
+	cdnFails  map[string]int
 	lookups   map[string]*lookup
 	refreshed map[string]time.Time
 	limKey    string
@@ -90,7 +93,7 @@ type lookup struct {
 
 func New(d Deps) *Service {
 	return &Service{
-		Deps: d, sources: map[string]*debridSource{}, links: map[string]cachedLink{}, lookups: map[string]*lookup{},
+		Deps: d, sources: map[string]*debridSource{}, links: map[string]cachedLink{}, cdnFails: map[string]int{}, lookups: map[string]*lookup{},
 		refreshed: map[string]time.Time{}, prefetchQ: make(chan string, 1000), queued: map[string]bool{},
 		dlKick: make(chan struct{}, 1), dlRunning: map[string]*runningDownload{},
 	}
@@ -725,17 +728,28 @@ func (s *Service) Source(ctx context.Context, f *db.MediaFile) (stream.Source, e
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		slog.Warn("debrid stream failed", "stream", st.ID, "file", st.FileName, "err", err)
+		slog.Warn("debrid stream failed", "stream", st.ID, "file", st.FileName, "err", redactURL(err))
 		s.mu.Lock()
 		delete(s.links, st.ID)
+		s.cdnFails[st.ID]++
+		n := s.cdnFails[st.ID]
+		if n >= 2 {
+			delete(s.cdnFails, st.ID)
+		}
 		s.mu.Unlock()
 		// Twice in a row: drop it, so another version or release plays instead.
-		if n, _ := s.DB.StreamFailed(ctx, st.ID); n >= 2 {
+		if n >= 2 {
+			slog.Info("dropping stream its CDN won't serve", "stream", st.ID, "file", st.FileName)
 			_ = s.DB.DeleteStream(ctx, st.ID)
 			_ = s.DB.PutStreamLookup(ctx, db.StreamLookup{ItemID: st.ItemID, LookedAt: 0})
+		} else {
+			_, _ = s.DB.StreamFailed(ctx, st.ID) // find the torrent again next time
 		}
 		return nil, ErrUnavailable
 	}
+	s.mu.Lock()
+	delete(s.cdnFails, st.ID)
+	s.mu.Unlock()
 	s.mu.Lock()
 	s.sources[src.token] = src
 	s.mu.Unlock()
