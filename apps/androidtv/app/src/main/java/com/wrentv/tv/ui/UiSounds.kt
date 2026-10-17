@@ -45,9 +45,9 @@ object UiSounds {
             lastMove = now
         }
         val volume = when (kind) {
-            Kind.Move -> 0.22f
-            Kind.Select -> 0.35f
-            Kind.Back -> 0.3f
+            Kind.Move -> 0.3f
+            Kind.Select -> 0.42f
+            Kind.Back -> 0.38f
         }
         p.play(ids[kind.ordinal], volume, volume, 1, 0, 1f)
     }

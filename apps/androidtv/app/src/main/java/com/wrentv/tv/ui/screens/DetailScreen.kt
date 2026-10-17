@@ -34,6 +34,11 @@ import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.relocation.BringIntoViewRequester
 import com.wrentv.tv.player.ThemeMusic
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.DisposableEffect
@@ -168,11 +173,21 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
         )
         LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             item("hero") {
-                // Coming back up shows the whole top of the page, not just the buttons.
+                // Coming back up shows the whole top of the page, not just the button that took focus.
+                // Asked of the list like a focused button's own request, so the two merge instead of one cancelling the other.
                 val scope = rememberCoroutineScope()
+                val whole = remember { BringIntoViewRequester() }
+                var heroSize by remember { mutableStateOf(IntSize.Zero) }
                 Column(
-                    Modifier.padding(start = PageGutter, end = PageGutter, top = 150.dp).width(820.dp)
-                        .onFocusChanged { if (it.hasFocus && list.firstVisibleItemScrollOffset + list.firstVisibleItemIndex > 0) scope.launch { list.animateScrollToItem(0) } },
+                    Modifier.bringIntoViewRequester(whole).onSizeChanged { heroSize = it }
+                        .onFocusChanged {
+                            if (!it.hasFocus) return@onFocusChanged
+                            // As much of it as fits, keeping the buttons at the bottom on screen.
+                            val h = heroSize.height.toFloat()
+                            val top = (h - list.layoutInfo.viewportSize.height).coerceAtLeast(0f)
+                            scope.launch { whole.bringIntoView(Rect(0f, top, heroSize.width.toFloat(), h)) }
+                        }
+                        .padding(start = PageGutter, end = PageGutter, top = 150.dp).width(820.dp),
                 ) {
                     TitleBlock(item, detail, nav)
                     Spacer(Modifier.height(14.dp))
@@ -408,7 +423,7 @@ private fun Actions(
     val state = LocalAppState.current
     val nav = LocalNavigator.current
     // Room underneath for the focused button's label.
-    Row(Modifier.padding(bottom = 26.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.padding(bottom = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
         if (item.isPlayable) {
             val resume = item.inProgress
             val left = item.progress?.let(::timeLeft)
