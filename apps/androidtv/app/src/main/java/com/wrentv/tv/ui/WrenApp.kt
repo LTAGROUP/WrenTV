@@ -236,30 +236,35 @@ private fun TopBar(state: AppState, nav: Navigator, page: FocusRequester) {
             }
             .focusGroup(),
     ) {
-        Image(
-            painterResource(R.drawable.lockup), contentDescription = "Wren TV",
-            modifier = Modifier.align(Alignment.CenterStart).padding(start = PageGutter).height(30.dp),
-        )
+        // Logo, pages, avatar side by side: the pages centre in the space between, so they never run into the logo.
         Row(
-            Modifier.align(Alignment.Center).background(Color.White.copy(alpha = 0.08f), CircleShape).padding(5.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            Modifier.fillMaxSize().padding(horizontal = PageGutter),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TabItem(selected = nav.tab == Route.Search, onClick = { nav.select(Route.Search) }, key = "tab:search", modifier = mark(Route.Search)) {
-                Icon(Icons.Rounded.Search, "Search", Modifier.size(22.dp))
-            }
-            tabs.forEach { (r, label) ->
-                TabItem(selected = nav.tab == r, onClick = { nav.select(r) }, key = "tab:${r.key}", modifier = mark(r)) {
-                    Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+            Image(painterResource(R.drawable.lockup), contentDescription = "Wren TV", modifier = Modifier.height(30.dp))
+            Box(Modifier.weight(1f).padding(horizontal = 24.dp), contentAlignment = Alignment.Center) {
+                Row(
+                    Modifier.background(Color.White.copy(alpha = 0.08f), CircleShape).padding(5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TabItem(selected = nav.tab == Route.Search, onClick = { nav.select(Route.Search) }, key = "tab:search", modifier = mark(Route.Search)) {
+                        Icon(Icons.Rounded.Search, "Search", Modifier.size(22.dp))
+                    }
+                    tabs.forEach { (r, label) ->
+                        TabItem(selected = nav.tab == r, onClick = { nav.select(r) }, key = "tab:${r.key}", modifier = mark(r)) {
+                            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+                        }
+                    }
                 }
             }
-        }
-        val name = state.user?.displayName?.ifEmpty { state.user?.username } ?: ""
-        TabItem(
-            selected = nav.tab == Route.Settings, onClick = { nav.select(Route.Settings) }, key = "tab:settings",
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = PageGutter).then(mark(Route.Settings)), circle = true,
-        ) {
-            Text(name.take(1).uppercase().ifEmpty { "?" }, style = MaterialTheme.typography.titleMedium)
+            val name = state.user?.displayName?.ifEmpty { state.user?.username } ?: ""
+            TabItem(
+                selected = nav.tab == Route.Settings, onClick = { nav.select(Route.Settings) }, key = "tab:settings",
+                modifier = mark(Route.Settings), circle = true,
+            ) {
+                Text(name.take(1).uppercase().ifEmpty { "?" }, style = MaterialTheme.typography.titleMedium)
+            }
         }
     }
 }
@@ -287,6 +292,6 @@ private fun TabItem(
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
     ) {
-        Box(Modifier.fillMaxHeight().then(if (circle) Modifier.fillMaxWidth() else Modifier.padding(horizontal = 18.dp)), contentAlignment = Alignment.Center) { content() }
+        Box(Modifier.fillMaxHeight().then(if (circle) Modifier.fillMaxWidth() else Modifier.padding(horizontal = 16.dp)), contentAlignment = Alignment.Center) { content() }
     }
 }

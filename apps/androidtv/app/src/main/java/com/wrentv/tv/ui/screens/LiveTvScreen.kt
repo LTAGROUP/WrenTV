@@ -38,6 +38,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -85,8 +88,8 @@ private const val STEP = 1800L
 /** How far ahead the guide is loaded. */
 private const val GUIDE_HOURS = 6
 
-private val ChannelColumn = 230.dp
-private val RowHeight = 78.dp
+private val ChannelColumn = 260.dp
+private val RowHeight = 66.dp
 
 /**
  * Live TV as a guide, like YouTube TV: what's focused up top, search and the
@@ -140,10 +143,10 @@ fun LiveTvScreen() {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text("Live TV", style = MaterialTheme.typography.headlineLarge)
-            Spacer(Modifier.weight(1f))
+            // The tab above already says Live TV: the header is just search and resume.
             Icon(Icons.Rounded.Search, null, Modifier.size(26.dp), tint = Wren.secondary)
-            TvTextField(query, { query = it }, "", Modifier.rememberFocus("search"), placeholder = "Search channels and shows", width = 380.dp)
+            TvTextField(query, { query = it }, "", Modifier.rememberFocus("search"), placeholder = "Search channels and shows", width = 460.dp)
+            Spacer(Modifier.weight(1f))
             if (last != null) {
                 PillButton(
                     "Watch ${last.name}", { nav.push(Route.LivePlayer(last.id)) },
@@ -155,13 +158,22 @@ fun LiveTvScreen() {
         Details(focused ?: shown.firstOrNull()?.let { it to it.current(programs(it), now) }, state.api, now)
 
         if (groups.size > 1) {
+            // Coming into the row lands on the chosen group, kept in view, not whichever chip is nearest.
+            val chips = rememberLazyListState()
+            val chosen = remember { FocusRequester() }
+            val chosenIndex = group?.let { groups.indexOf(it) + 1 } ?: 0
+            LaunchedEffect(groups.size, chosenIndex) {
+                if (chips.layoutInfo.visibleItemsInfo.none { it.index == chosenIndex }) chips.scrollToItem(chosenIndex)
+            }
             LazyRow(
+                state = chips,
                 contentPadding = PaddingValues(horizontal = PageGutter),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.padding(bottom = 12.dp),
+                modifier = Modifier.padding(bottom = 10.dp).focusProperties { onEnter = { runCatching { chosen.requestFocus() } } },
             ) {
-                item("all") { Chip("All", group == null, { group = null }, Modifier.rememberFocus("chip:all")) }
-                items(groups, key = { "chip:$it" }) { g -> Chip(g, group == g, { group = g }, Modifier.rememberFocus("chip:$g")) }
+                fun Modifier.mark(selected: Boolean) = if (selected) focusRequester(chosen) else this
+                item("all") { Chip("All", group == null, { group = null }, Modifier.mark(group == null).rememberFocus("chip:all")) }
+                items(groups, key = { "chip:$it" }) { g -> Chip(g, group == g, { group = g }, Modifier.mark(group == g).rememberFocus("chip:$g")) }
             }
         }
 
@@ -202,17 +214,18 @@ fun LiveTvScreen() {
 @Composable
 private fun Details(sel: Pair<LiveChannel, LiveProgram?>?, api: WrenTVApi?, now: Long) {
     Row(
-        Modifier.fillMaxWidth().height(156.dp).padding(horizontal = PageGutter, vertical = 14.dp),
+        Modifier.fillMaxWidth().height(124.dp).padding(horizontal = PageGutter, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         if (sel == null) return@Row
         val (ch, p) = sel
-        ChannelLogo(ch, api, Modifier.width(170.dp).fillMaxHeight().background(Wren.surface, RoundedCornerShape(12.dp)))
+        ChannelLogo(ch, api, Modifier.width(150.dp).fillMaxHeight().background(Wren.surface, RoundedCornerShape(12.dp)))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (p != null && p.airing(now)) LiveBadge()
                 Text(
-                    listOfNotNull(ch.number?.takeIf { it.isNotEmpty() }, ch.name).joinToString("  "),
+                    // With no programme the channel's name is the title below: say where it lives instead.
+                    listOfNotNull(ch.number?.takeIf { it.isNotEmpty() }, if (p == null) ch.groupName else ch.name).joinToString("  "),
                     style = MaterialTheme.typography.labelLarge, color = Wren.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -232,7 +245,7 @@ private fun Details(sel: Pair<LiveChannel, LiveProgram?>?, api: WrenTVApi?, now:
                     style = MaterialTheme.typography.bodyMedium, color = Wren.secondary, maxLines = 1, modifier = Modifier.padding(top = 2.dp),
                 )
                 p.description?.takeIf { it.isNotEmpty() }?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, color = Wren.tertiary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                    Text(it, style = MaterialTheme.typography.bodyMedium, color = Wren.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
                 }
             } else {
                 Text("No guide information", style = MaterialTheme.typography.bodyMedium, color = Wren.secondary, modifier = Modifier.padding(top = 2.dp))
@@ -271,6 +284,10 @@ private fun Ruler(start: Long, now: Long, width: Dp) {
                     Modifier.offset(x = width * ((now - start).toFloat() / SPAN) - 4.dp).align(Alignment.BottomStart)
                         .size(8.dp).background(Wren.ember, CircleShape),
                 )
+                Box(
+                    Modifier.offset(x = width * ((now - start).toFloat() / SPAN) - 1.dp).align(Alignment.BottomStart)
+                        .width(2.dp).height(6.dp).background(Wren.ember),
+                )
             }
         }
     }
@@ -298,13 +315,14 @@ private fun GuideRow(
                 .rememberFocus("ch:${ch.id}"),
         ) {
             Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                ChannelLogo(ch, api, Modifier.width(72.dp).height(44.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(ch.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    ChannelLogo(ch, api, Modifier.width(60.dp).height(34.dp))
                     ch.number?.takeIf { it.isNotEmpty() }?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, color = LocalContentColor.current.copy(alpha = 0.6f))
+                        Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 1, color = LocalContentColor.current.copy(alpha = 0.6f))
                     }
                 }
+                // Two lines: provider names are long ("F1 TV 01: Racing …") and the end is what tells them apart.
+                Text(ch.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             }
         }
         Box(Modifier.width(width).fillMaxHeight()) {
@@ -349,9 +367,6 @@ private fun GuideRow(
                     }
                     if (airing) Bar(p.progress(now), Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp))
                 }
-            }
-            if (now in start until end) {
-                Box(Modifier.offset(x = width * ((now - start).toFloat() / SPAN) - 1.dp).width(2.dp).fillMaxHeight().background(Wren.ember.copy(alpha = 0.7f)))
             }
         }
     }

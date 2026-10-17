@@ -1,5 +1,7 @@
 package com.wrentv.tv.ui.screens
 
+import com.wrentv.tv.data.DiscoverHome
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,6 +58,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -384,8 +387,8 @@ private fun CollectionCard(c: WrenCollection, onClick: () -> Unit, modifier: Mod
             }
         }
         Column(Modifier.padding(top = 10.dp).alpha(if (focused) 1f else 0.75f)) {
-            Text(c.name, style = MaterialTheme.typography.titleSmall, color = Wren.text, maxLines = 1)
-            Text("${c.itemCount ?: 0} title${if (c.itemCount == 1) "" else "s"} · ${c.kindLabel}", style = MaterialTheme.typography.bodySmall, color = Wren.secondary, maxLines = 1)
+            Text(c.name, style = MaterialTheme.typography.titleSmall, color = Wren.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("${c.itemCount ?: 0} title${if (c.itemCount == 1) "" else "s"} · ${c.kindLabel}", style = MaterialTheme.typography.bodySmall, color = Wren.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -557,6 +560,11 @@ fun SearchScreen() {
     var searched by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     val field = remember { FocusRequester() }
+    var recent by remember { mutableStateOf(state.recentSearches) }
+    // Before anything is typed: recent searches and what's popular, rather than a blank page.
+    val popular = if (state.canStream) rememberLoaded<DiscoverHome>("home:discover") { state.api?.discoverHome() }.value
+        ?.rows?.firstOrNull()?.items.orEmpty().take(18) else emptyList()
+    fun open(push: () -> Unit) { state.rememberSearch(query); recent = state.recentSearches; push() }
 
     LaunchedEffect(Unit) {
         if (query.isEmpty()) { awaitFrame(); runCatching { field.requestFocus() } }
@@ -589,24 +597,42 @@ fun SearchScreen() {
                 Spacer(Modifier.height(8.dp))
             }
         }
+        if (query.isBlank()) {
+            if (recent.isNotEmpty()) {
+                fullWidth("recent") {
+                    Column {
+                        SectionTitle("Recent Searches")
+                        Row(Modifier.padding(top = 4.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            recent.take(6).forEach { q -> Chip(q, false, { query = q; runCatching { field.requestFocus() } }, Modifier.rememberFocus("recent:$q"), icon = Icons.Rounded.History) }
+                        }
+                    }
+                }
+            }
+            if (popular.isNotEmpty()) {
+                fullWidth("popular") { SectionTitle("Popular Right Now") }
+                items(popular, key = { "p:${it.id}" }) { t -> TitleCard(t, Modifier.rememberFocus("p:${t.id}"), width = CardWidth) }
+            }
+        }
         val episodes = results.filter { it.kind == "episode" }
         val titles = results.filter { it.kind != "episode" }
         if (titles.isNotEmpty()) {
             if (more.isNotEmpty() && !state.canStream) fullWidth("on") { SectionTitle("On This Server") }
             items(titles, key = { it.id }) { item ->
-                PosterCard(item, { nav.push(Route.Detail(item.id, item)) }, Modifier.rememberFocus("r:${item.id}"), width = CardWidth)
+                PosterCard(item, { open { nav.push(Route.Detail(item.id, item)) } }, Modifier.rememberFocus("r:${item.id}"), width = CardWidth)
             }
         }
         if (episodes.isNotEmpty()) {
             fullWidth("eps") { SectionTitle("Episodes", Modifier.padding(top = 8.dp)) }
             items(episodes, key = { it.id }, span = { GridItemSpan(2) }) { item ->
-                LandscapeCard(item, { nav.push(Route.Detail(item.id, item)) }, Modifier.rememberFocus("r:${item.id}"), width = CardWidth * 2 + 20.dp)
+                LandscapeCard(item, { open { nav.push(Route.Detail(item.id, item)) } }, Modifier.rememberFocus("r:${item.id}"), width = CardWidth * 2 + 20.dp)
             }
         }
         if (more.isNotEmpty()) {
             // When streaming everything plays, so it's one list.
             if (!state.canStream) fullWidth("off") { SectionTitle("Not on This Server", Modifier.padding(top = 8.dp)) }
-            items(more, key = { "m:${it.id}" }) { t -> TitleCard(t, Modifier.rememberFocus("m:${t.id}"), width = CardWidth) }
+            items(more, key = { "m:${it.id}" }) { t ->
+                TitleCard(t, Modifier.rememberFocus("m:${t.id}").onFocusChanged { if (it.isFocused) { state.rememberSearch(query); recent = state.recentSearches } }, width = CardWidth)
+            }
         }
         if (searched.isNotEmpty() && searched == query.trim() && results.isEmpty() && more.isEmpty()) {
             fullWidth("none") { EmptyState("No results for “$searched”", "Check the spelling or try a different title.", icon = Icons.Rounded.Search) }

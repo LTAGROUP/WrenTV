@@ -82,9 +82,29 @@ class LiveController(
                     player.prepare()
                     return
                 }
-                reconnect(error.message ?: "Playback failed")
+                reconnect(describe(error))
             }
         })
+    }
+
+    /** ExoPlayer's own messages ("Source error") mean nothing to someone on the couch. */
+    private fun describe(error: PlaybackException): String = when (error.errorCode) {
+        PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+        PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+        PlaybackException.ERROR_CODE_IO_UNSPECIFIED ->
+            "The channel isn't sending anything right now. It may be off the air, or the provider may be busy."
+        PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+        PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
+        PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED ->
+            "The channel's stream couldn't be read."
+        PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
+            "This TV can't play the channel's video format."
+        else -> "Something went wrong playing the channel."
     }
 
     /** Broadcast streams start on any frame and come in odd shapes: start fast, tolerate them. */

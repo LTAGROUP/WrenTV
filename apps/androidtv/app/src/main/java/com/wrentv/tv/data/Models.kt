@@ -183,7 +183,7 @@ data class WrenCollection(
     val kindLabel: String
         get() = when (kind) {
             "smart" -> "Smart"
-            "tmdb" -> "From TMDB"
+            "tmdb" -> "TMDB"
             else -> "Hand-picked"
         }
 }

@@ -1,5 +1,10 @@
 package com.wrentv.tv.ui.screens
 
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -68,14 +73,17 @@ private fun DiscoverHomeScreen(onUnsupported: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when {
             h != null -> {
-                if (h.hero.isNotEmpty()) item("hero") { Hero(h.hero.map { it.heroEntry() }, label = "Trending this week") }
+                if (h.hero.isNotEmpty()) item("hero") { HeroAtTop(list) { Hero(h.hero.map { it.heroEntry() }, label = "Trending this week") } }
                 else item("space") { Spacer(Modifier.height(TopBarSpace)) }
                 continueWatching(h.continueWatching, menu)
+                // What's half-watched is already in Continue Watching.
+                val inProgress = h.continueWatching.map { it.id }.toSet()
+                val recent = h.recentlyWatched.filter { it.id !in inProgress }
                 h.rows.forEachIndexed { i, row ->
-                    if (i == 1) itemShelf("recent", "Recently Watched", h.recentlyWatched, menu)
+                    if (i == 1) itemShelf("recent", "Recently Watched", recent, menu)
                     titleShelf(row.id, row.title, row.items, ranked = row.id == "trending")
                 }
-                if (h.rows.size < 2) itemShelf("recent", "Recently Watched", h.recentlyWatched, menu)
+                if (h.rows.size < 2) itemShelf("recent", "Recently Watched", recent, menu)
                 if (!h.enabled) {
                     item("empty") {
                         EmptyState("Discovery needs TMDB",
@@ -105,7 +113,7 @@ private fun LibraryHomeScreen() {
         when {
             h != null -> {
                 val picks = featured(h)
-                if (picks.isNotEmpty()) item("hero") { Hero(picks.map { it.heroEntry() }) }
+                if (picks.isNotEmpty()) item("hero") { HeroAtTop(list) { Hero(picks.map { it.heroEntry() }) } }
                 else item("space") { Spacer(Modifier.height(TopBarSpace)) }
                 continueWatching(h.continueWatching, menu)
                 trending.value?.takeIf { it.enabled && it.items.isNotEmpty() }?.let { t ->
@@ -185,4 +193,11 @@ private fun LazyListScope.titleShelf(key: String, title: String, items: List<Tit
             }
         }
     }
+}
+
+/** With the hero's buttons focused the whole banner stays in view, rather than scrolling to peek at the next row and cropping the title. */
+@Composable
+private fun HeroAtTop(list: LazyListState, content: @Composable () -> Unit) {
+    val scope = rememberCoroutineScope()
+    Box(Modifier.onFocusChanged { if (it.hasFocus && list.firstVisibleItemScrollOffset > 0) scope.launch { list.animateScrollToItem(0) } }) { content() }
 }

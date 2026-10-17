@@ -205,7 +205,9 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
                 ) {
                     TitleBlock(item, detail, nav)
                     Spacer(Modifier.height(14.dp))
-                    MetaLine(metaParts(item), listOfNotNull(item.contentRating?.takeIf { it.isNotEmpty() }) + currentFile(detail, versionId)?.badges.orEmpty())
+                    // The ratings pills below carry the score; the star would repeat it.
+                    val scored = extras != null && (item.kind == "movie" || item.kind == "show") && extras.ratings.hasAny
+                    MetaLine(metaParts(item, star = !scored), listOfNotNull(item.contentRating?.takeIf { it.isNotEmpty() }) + currentFile(detail, versionId)?.badges.orEmpty())
                     if (extras != null && (item.kind == "movie" || item.kind == "show")) {
                         RatingsRow(extras.ratings, Modifier.padding(top = 12.dp))
                     }
@@ -350,10 +352,10 @@ private fun currentFile(detail: ItemDetail?, versionId: String?): MediaFileView?
     return files.firstOrNull { it.id == versionId } ?: files.maxByOrNull { it.width }
 }
 
-private fun metaParts(item: Item): List<String> = listOfNotNull(
+private fun metaParts(item: Item, star: Boolean = true): List<String> = listOfNotNull(
     item.year?.toString(),
     item.runtimeMin?.takeIf { it > 0 }?.let { formatDuration(it * 60.0) },
-    item.rating?.takeIf { it > 0 }?.let { "★ %.1f".format(it) },
+    item.rating?.takeIf { star && it > 0 }?.let { "★ %.1f".format(it) },
     item.airDate?.takeIf { it.isNotEmpty() && item.kind == "episode" },
 ) + item.genres.orEmpty().take(3)
 
@@ -377,6 +379,9 @@ private fun TitleBlock(item: Item, detail: ItemDetail?, nav: com.wrentv.tv.ui.Na
         Text(item.title, style = MaterialTheme.typography.displayMedium.copy(fontWeight = FontWeight.Bold), color = Wren.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
+
+private val Ratings.hasAny: Boolean
+    get() = (rottenTomatoes ?: 0) > 0 || (imdb ?: 0.0) > 0 || (metacritic ?: 0) > 0 || (tmdb ?: 0.0) > 0
 
 /** IMDb, Rotten Tomatoes, Metacritic and TMDB scores as small pills. */
 @Composable

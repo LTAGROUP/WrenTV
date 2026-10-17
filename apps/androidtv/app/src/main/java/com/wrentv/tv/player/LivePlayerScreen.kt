@@ -126,7 +126,8 @@ private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel, pick: (L
         onDispose { UiSounds.muted = false }
     }
     // Remember where to start next time, once a channel has actually been landed on.
-    LaunchedEffect(c.channel.id) {
+    LaunchedEffect(c.channel.id, c.phase) {
+        if (c.phase != LiveController.Phase.Playing) return@LaunchedEffect
         delay(3_000)
         state.lastChannel = c.channel.id
     }
@@ -170,6 +171,8 @@ private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel, pick: (L
     BackHandler {
         when {
             guide -> guide = false
+            // The banner is hidden behind the error, so Back leaves rather than dismissing it.
+            c.phase is LiveController.Phase.Failed -> nav.back()
             digits.isNotEmpty() -> digits = ""
             banner -> banner = false
             else -> nav.back()

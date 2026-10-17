@@ -212,8 +212,9 @@ fun Chip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifie
         modifier = modifier.height(38.dp),
         shape = ClickableSurfaceDefaults.shape(CircleShape),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (selected) Wren.cream.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.07f),
-            contentColor = if (selected) Wren.text else Wren.secondary,
+            // The chosen filter is ember so it reads apart from the focused one, which is white.
+            containerColor = if (selected) Wren.ember.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.07f),
+            contentColor = if (selected) Color.White else Wren.secondary,
             focusedContainerColor = Color.White,
             focusedContentColor = Color.Black,
         ),
@@ -371,8 +372,9 @@ private fun CountBadge(n: Int, modifier: Modifier) {
 /** Playback progress as a thin bar floating over the bottom of artwork. */
 @Composable
 fun ProgressStrip(fraction: Double, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp).height(5.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.3f))) {
-        Box(Modifier.fillMaxHeight().fillMaxWidth(fraction.toFloat().coerceIn(0.03f, 1f)).background(Color.White))
+    // A dark track and ember fill, so it still shows on bright artwork (white on white disappeared).
+    Box(modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp).height(5.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f))) {
+        Box(Modifier.fillMaxHeight().fillMaxWidth(fraction.toFloat().coerceIn(0.03f, 1f)).background(Wren.ember))
     }
 }
 

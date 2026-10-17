@@ -46,6 +46,16 @@ class AppState(context: Context) {
         get() = store.string("lastChannel", "").ifEmpty { null }
         set(v) { store.setString("lastChannel", v ?: "") }
 
+    /** What was searched for on this TV, newest first. */
+    var recentSearches: List<String>
+        get() = store.string("recentSearches", "").split('\n').filter { it.isNotBlank() }
+        set(v) { store.setString("recentSearches", v.joinToString("\n")) }
+
+    fun rememberSearch(q: String) {
+        val t = q.trim().takeIf { it.length >= 2 } ?: return
+        recentSearches = (listOf(t) + recentSearches.filterNot { it.equals(t, ignoreCase = true) }).take(8)
+    }
+
     /** Fetches the channels and what's on them now. */
     suspend fun loadLiveChannels(): List<LiveChannel> {
         val api = api ?: return liveChannels

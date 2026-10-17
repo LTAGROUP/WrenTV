@@ -97,7 +97,7 @@ fun SettingsScreen() {
                         {}, Modifier.rememberFocus("set:account", default = true),
                         detail = listOfNotNull(state.accountEmail ?: user?.username, roleName(user?.role, user?.isAdmin == true)).joinToString(" · "),
                     )
-                    ListRow(server?.name ?: "Server", {}, detail = state.api?.baseUrl?.toString()?.trimEnd('/'), value = server?.version?.let { "v$it" })
+                    ListRow(server?.name ?: "Server", {}, detail = connectionLabel(state.api?.baseUrl?.toString()), value = server?.version?.let { "v$it" })
                 }
                 FormSection("Playback", "Movies and episodes start with audio and subtitles in these languages when they have them. Saved to your account, so it applies on every device.") {
                     val p = prefs
@@ -132,7 +132,7 @@ fun SettingsScreen() {
                         ListRow("Server Settings", { nav.push(Route.ServerSettings) }, Modifier.rememberFocus("set:server"), detail = "Name, metadata, streaming and defaults")
                     }
                 }
-                FormSection("About", "Wren TV for Android TV $appVersion") {
+                FormSection("This TV", "Wren TV for Android TV $appVersion") {
                     if (state.account != null) {
                         ListRow("Switch Server", { state.switchServer() }, Modifier.rememberFocus("set:switch"),
                             detail = "Your other servers, or ones shared with you")
@@ -162,4 +162,14 @@ private fun roleName(role: String?, admin: Boolean): String? = when {
     role == "owner" -> "Owner"
     admin || role == "admin" -> "Admin"
     else -> null
+}
+
+/** Where the TV reaches the server, in words: the address itself means nothing on the couch. */
+private fun connectionLabel(url: String?): String? {
+    val host = url?.let { runCatching { java.net.URI(it).host }.getOrNull() } ?: return null
+    // Relay-style names carry the LAN address dashed ("192-168-1-5.<id>.wrentv.net").
+    val ip = host.substringBefore('.').replace('-', '.').takeIf { host.contains(".wrentv.net") } ?: host
+    val local = ip.startsWith("192.168.") || ip.startsWith("10.") || ip == "localhost" ||
+        Regex("""^172\.(1[6-9]|2\d|3[01])\.""").containsMatchIn(ip) || host.endsWith(".local")
+    return if (local) "Connected on your home network" else "Connected over the internet"
 }
