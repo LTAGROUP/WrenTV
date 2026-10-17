@@ -60,8 +60,6 @@ sealed interface Route {
     data class StreamTitle(val tmdbId: Int, val mediaType: String, val title: String) : Route { override val key = "stream:$mediaType:$tmdbId" }
     data class Trailer(val youtubeKey: String, val title: String) : Route { override val key = "trailer:$youtubeKey" }
     data class Player(val target: PlayTarget) : Route { override val key = "player:${target.itemId}" }
-    /** One of the provider's channel groups (USA | MiLB, say), on-air channels first. */
-    data class LiveGroup(val group: String) : Route { override val key = "live-group:$group" }
     /** Live TV, full screen, starting on a channel; up and down change it, within [group] when set. */
     data class LivePlayer(val channelId: String, val group: String? = null) : Route { override val key = "live-player" }
 }

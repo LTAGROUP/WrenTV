@@ -208,6 +208,8 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     }
 
     suspend fun liveChannels(): List<LiveChannel> = get<LiveChannelsResponse>("/api/livetv/channels").channels
+    suspend fun liveGuide(hours: Int): List<LiveGuideChannel> =
+        get<LiveGuideResponse>("/api/livetv/guide", mapOf("hours" to hours.toString())).channels
 
     suspend fun playChannel(id: String, caps: ClientCaps): LivePlayResponse = post("/api/livetv/channels/$id/play", enc(LivePlayRequest(caps)))
 

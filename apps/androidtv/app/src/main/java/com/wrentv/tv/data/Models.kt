@@ -703,6 +703,13 @@ data class LiveChannel(
 @Serializable
 data class LiveChannelsResponse(val channels: List<LiveChannel> = emptyList())
 
+/** One channel's programmes over the next few hours. */
+@Serializable
+data class LiveGuideChannel(val id: String, val programs: List<LiveProgram> = emptyList())
+
+@Serializable
+data class LiveGuideResponse(val channels: List<LiveGuideChannel> = emptyList())
+
 @Serializable
 data class LivePlayRequest(val caps: ClientCaps)
 
