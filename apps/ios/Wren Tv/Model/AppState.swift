@@ -392,6 +392,10 @@ final class AppState {
                     for try await ev in api.events() {
                         self?.handle(ev)
                     }
+                } catch let e as WrenTVError where e.status == 401 {
+                    // The sign-in is gone for good: ask for it again rather than retrying.
+                    self?.signOut()
+                    return
                 } catch {}
                 try? await Task.sleep(for: .seconds(3))
             }

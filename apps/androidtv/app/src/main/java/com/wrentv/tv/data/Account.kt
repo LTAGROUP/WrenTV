@@ -241,6 +241,14 @@ class TokenSource private constructor(
     constructor(client: AccountClient, session: AccountSession, store: Store) : this(null, client, session, store)
 
     private val mutex = Mutex()
+    /**
+     * The last failed refresh. A rejected refresh token is never retried, and
+     * other failures wait a while, so a broken sign-in can't hammer the account
+     * service (which rate-limits every device on the same network).
+     */
+    private var failure: Exception? = null
+    private var failedAt = 0L
+    private var spent = false
 
     val accountSession: AccountSession? get() = session
     val email: String? get() = session?.email
@@ -250,7 +258,20 @@ class TokenSource private constructor(
         return mutex.withLock {
             val s = session!!
             if (s.expiresAt - 60 > System.currentTimeMillis() / 1000.0) return@withLock s.accessToken
-            val fresh = client!!.refresh(s)
+            if (spent) throw WrenTVException("Your sign-in expired", 401)
+            failure?.let { if (System.currentTimeMillis() - failedAt < 30_000) throw it }
+            val fresh = try {
+                client!!.refresh(s)
+            } catch (e: WrenTVException) {
+                failure = e
+                failedAt = System.currentTimeMillis()
+                if (e.status == 400 || e.status == 401 || e.status == 403) {
+                    spent = true
+                    throw WrenTVException("Your sign-in expired", 401)
+                }
+                throw e
+            }
+            failure = null
             session = fresh
             store?.setSession(client.storeKey, fresh)
             fresh.accessToken

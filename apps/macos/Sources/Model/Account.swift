@@ -123,6 +123,10 @@ actor TokenSource {
 
     private var kind: Kind
     private var refreshing: Task<AccountSession, Error>?
+    /// The last failed refresh. A rejected refresh token is never retried, and
+    /// other failures wait a while, so a broken sign-in can't hammer the
+    /// account service (which rate-limits every device on the same network).
+    private var failure: (error: Error, at: Date, final: Bool)?
 
     init(localToken: String) { kind = .local(localToken) }
     init(account: AccountClient, session: AccountSession) { kind = .account(account, session) }
@@ -141,15 +145,36 @@ actor TokenSource {
         switch kind {
         case .local(let t):
             return t
-        case .account(let client, let s):
+        case .account(let client, var s):
             if s.expiresAt - 60 > Date().timeIntervalSince1970 { return s.accessToken }
-            let task = refreshing ?? Task { try await client.refresh(s) }
+            // Another part of the app may have refreshed already; its refresh
+            // token replaced ours, which is now spent.
+            if let saved = Keychain.session(for: client.keychainKey), saved.refreshToken != s.refreshToken, saved.expiresAt > s.expiresAt {
+                s = saved
+                kind = .account(client, saved)
+                failure = nil
+                if s.expiresAt - 60 > Date().timeIntervalSince1970 { return s.accessToken }
+            }
+            if let f = failure {
+                if f.final { throw WrenTVError(message: "Your sign-in expired", status: 401) }
+                if Date().timeIntervalSince(f.at) < 30 { throw f.error }
+            }
+            let task = refreshing ?? Task { [s] in try await client.refresh(s) }
             refreshing = task
             defer { refreshing = nil }
-            let fresh = try await task.value
-            kind = .account(client, fresh)
-            Keychain.setSession(fresh, for: client.keychainKey)
-            return fresh.accessToken
+            do {
+                let fresh = try await task.value
+                kind = .account(client, fresh)
+                failure = nil
+                Keychain.setSession(fresh, for: client.keychainKey)
+                return fresh.accessToken
+            } catch {
+                let status = (error as? WrenTVError)?.status ?? 0
+                let final = status == 400 || status == 401 || status == 403
+                failure = (error, Date(), final)
+                if final { throw WrenTVError(message: "Your sign-in expired", status: 401) }
+                throw error
+            }
         }
     }
 }
