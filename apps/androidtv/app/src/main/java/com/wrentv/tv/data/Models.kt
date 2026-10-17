@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 import java.util.Locale
 
 @Serializable
-data class WatchState(val position: Double = 0.0, val duration: Double = 0.0, val watched: Boolean = false) {
+data class WatchState(val position: Double = 0.0, val duration: Double = 0.0, val watched: Boolean = false, val updatedAt: Long = 0) {
     val fraction: Double get() = if (duration > 0) (position / duration).coerceIn(0.0, 1.0) else 0.0
 }
 
@@ -126,6 +126,7 @@ data class HomeResponse(
     val topRated: List<Item>? = null,
     val genres: List<GenreRow>? = null,
     val collections: List<CollectionShelf>? = null,
+    val watchlist: List<Item>? = null,
 ) {
     @Serializable
     data class Shelf(val library: Library, val items: List<Item> = emptyList())
@@ -138,6 +139,7 @@ data class DiscoverHome(
     val streaming: Boolean? = null,
     val continueWatching: List<Item> = emptyList(),
     val recentlyWatched: List<Item> = emptyList(),
+    val watchlist: List<Item>? = null,
     val hero: List<TitleView> = emptyList(),
     val rows: List<Row> = emptyList(),
 ) {
@@ -379,6 +381,8 @@ data class ItemDetail(
     /** The item lives in a streaming library. */
     val streaming: Boolean? = null,
     val canDownload: Boolean? = null,
+    /** Null on servers from before the watchlist. */
+    val onWatchlist: Boolean? = null,
 )
 
 /** A device download link: the original file (or stream) for this device. */
@@ -455,7 +459,13 @@ data class PlayResponse(
     val markers: Markers? = null,
     /** The item's files, when it has more than one, for a version picker. */
     val versions: List<MediaVersion>? = null,
+    /** Seek bar frames, when the server makes them. */
+    val thumbs: SeekThumbs? = null,
 )
+
+/** Frame n (url + n + ".jpg") is the picture at n × interval seconds. */
+@Serializable
+data class SeekThumbs(val url: String, val interval: Double, val width: Int = 320)
 
 @Serializable
 data class MediaVersion(val id: String, val label: String = "", val height: Int = 0)

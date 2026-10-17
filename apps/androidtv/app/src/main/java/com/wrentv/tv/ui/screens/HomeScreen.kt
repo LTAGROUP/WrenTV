@@ -32,6 +32,9 @@ import com.wrentv.tv.data.Item
 import com.wrentv.tv.data.TitleView
 import com.wrentv.tv.data.TrendingResponse
 import com.wrentv.tv.data.WrenTVException
+import com.wrentv.tv.data.WatchNext
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
 import com.wrentv.tv.ui.EmptyState
 import com.wrentv.tv.ui.LandscapeCard
 import com.wrentv.tv.ui.Loading
@@ -70,12 +73,14 @@ private fun DiscoverHomeScreen(onUnsupported: () -> Unit) {
     val list = rememberLazyListState()
     ReportScroll(list)
     val h = home.value
+    PlayNextRow(h?.continueWatching)
     LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when {
             h != null -> {
                 if (h.hero.isNotEmpty()) item("hero") { HeroAtTop(list) { Hero(h.hero.map { it.heroEntry() }, label = "Trending this week") } }
                 else item("space") { Spacer(Modifier.height(TopBarSpace)) }
                 continueWatching(h.continueWatching, menu)
+                watchlist(h.watchlist, menu)
                 // What's half-watched is already in Continue Watching.
                 val inProgress = h.continueWatching.map { it.id }.toSet()
                 val recent = h.recentlyWatched.filter { it.id !in inProgress }
@@ -109,6 +114,7 @@ private fun LibraryHomeScreen() {
     val list = rememberLazyListState()
     ReportScroll(list)
     val h = home.value
+    PlayNextRow(h?.continueWatching)
     LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when {
             h != null -> {
@@ -116,6 +122,7 @@ private fun LibraryHomeScreen() {
                 if (picks.isNotEmpty()) item("hero") { HeroAtTop(list) { Hero(picks.map { it.heroEntry() }) } }
                 else item("space") { Spacer(Modifier.height(TopBarSpace)) }
                 continueWatching(h.continueWatching, menu)
+                watchlist(h.watchlist, menu)
                 trending.value?.takeIf { it.enabled && it.items.isNotEmpty() }?.let { t ->
                     titleShelf("trending", "Trending This Week", t.items, ranked = true,
                         subtitle = "${t.items.count { it.item != null }} in your library")
@@ -172,6 +179,18 @@ private fun LazyListScope.continueWatching(items: List<Item>, menu: ItemMenuStat
     }
 }
 
+private fun LazyListScope.watchlist(items: List<Item>?, menu: ItemMenuState) {
+    if (items.isNullOrEmpty()) return
+    item("watchlist") {
+        val nav = LocalNavigator.current
+        Shelf("My Watchlist") {
+            items(items, key = { it.id }) { item ->
+                PosterCard(item, { nav.push(Route.Detail(item.id, item)) }, Modifier.rememberFocus("wl:${item.id}"), onLongClick = { menu.open(item, onWatchlist = true) })
+            }
+        }
+    }
+}
+
 private fun LazyListScope.itemShelf(key: String, title: String, items: List<Item>, menu: ItemMenuState) {
     if (items.isEmpty()) return
     item(key) {
@@ -192,6 +211,17 @@ private fun LazyListScope.titleShelf(key: String, title: String, items: List<Tit
                 TitleCard(t, Modifier.rememberFocus("$key:${t.id}"), rank = if (ranked && i < 10) i + 1 else null)
             }
         }
+    }
+}
+
+/** Mirrors Continue Watching onto the TV's own Play Next row. */
+@Composable
+private fun PlayNextRow(items: List<Item>?) {
+    val state = LocalAppState.current
+    val context = LocalContext.current
+    LaunchedEffect(items) {
+        val api = state.api ?: return@LaunchedEffect
+        if (items != null) WatchNext.sync(context, api, items)
     }
 }
 

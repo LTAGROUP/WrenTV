@@ -29,6 +29,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 	"github.com/LTAGROUP/wrentv/internal/stream"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
+	"github.com/LTAGROUP/wrentv/internal/thumbs"
 	"github.com/LTAGROUP/wrentv/internal/web"
 	"github.com/LTAGROUP/wrentv/internal/webhook"
 )
@@ -48,6 +49,7 @@ type Server struct {
 	Hub       *library.Hub
 	Hooks     *webhook.Sender
 	Images    *images.Cache
+	Thumbs    *thumbs.Manager // seek thumbnails
 	Direct    *direct.Manager // automatic HTTPS addresses (supabase mode)
 
 	Auth  auth.Provider
@@ -89,6 +91,7 @@ func (s *Server) Router() http.Handler {
 	})
 
 	// Capability URLs: the session id is the credential (players can't send headers reliably).
+	r.Get("/stream/{sid}/thumbs/{n}", s.serveThumb)
 	r.HandleFunc("/stream/{sid}/*", func(w http.ResponseWriter, r *http.Request) {
 		sess := s.Streams.Get(chi.URLParam(r, "sid"))
 		if sess == nil {
@@ -145,6 +148,9 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/items/{id}/download", s.handleDeviceDownload)
 		r.Post("/api/items/{id}/progress", s.handleProgress)
 		r.Post("/api/items/{id}/watched", s.handleWatched)
+		r.Put("/api/items/{id}/watchlist", s.handleWatchlistAdd)
+		r.Delete("/api/items/{id}/watchlist", s.handleWatchlistRemove)
+		r.Get("/api/watchlist", s.handleWatchlist)
 		r.Post("/api/items/{id}/play", s.handlePlay)
 		r.Delete("/api/sessions/{sid}", s.handleStopSession)
 		r.Get("/api/livetv/channels", s.handleLiveChannels)

@@ -20,6 +20,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/media"
 	"github.com/LTAGROUP/wrentv/internal/stream"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
+	"github.com/LTAGROUP/wrentv/internal/thumbs"
 )
 
 type playRequest struct {
@@ -59,6 +60,15 @@ type playResponse struct {
 	Markers  media.Markers   `json:"markers"`
 	// Versions are the item's files; clients offer them as a picker.
 	Versions []versionView `json:"versions,omitempty"`
+	// Thumbs are frames for the seek bar, when the server can make them.
+	Thumbs *thumbsView `json:"thumbs,omitempty"`
+}
+
+// thumbsView: frame n (url + n + ".jpg") shows the picture at n × interval seconds.
+type thumbsView struct {
+	URL      string  `json:"url"`
+	Interval float64 `json:"interval"`
+	Width    int     `json:"width"`
 }
 
 type versionView struct {
@@ -200,6 +210,9 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		resp.Versions = append(resp.Versions, versionView{ID: v.ID, Label: versionLabel(v), Height: fileHeight(v)})
 	}
 	s.recordPlay(r, it, f, sess.ID, dec, info)
+	if iv := s.startThumbs(f, src, info, sess); iv > 0 {
+		resp.Thumbs = &thumbsView{URL: "/stream/" + sess.ID + "/thumbs/", Interval: iv, Width: thumbs.Width}
+	}
 	base := "/stream/" + sess.ID + "/"
 	if dec.Method == media.MethodDirect {
 		resp.URL = base + "file" + extFor(info.Container)
@@ -609,4 +622,62 @@ func contains(list []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// startThumbs makes the file's seek thumbnails in the background. A file on
+// disk is done whether or not anyone keeps watching; a streamed one only
+// while it plays, after a head start for the player's buffer, so it never
+// takes a stream slot of its own.
+func (s *Server) startThumbs(f *db.MediaFile, src stream.Source, info *media.Info, sess *stream.Session) float64 {
+	v := info.PrimaryVideo()
+	if s.Thumbs == nil || v == nil || info.Duration <= 0 {
+		return 0
+	}
+	hw := s.Streams.HW()
+	hdr := v.HDR != ""
+	// Profile 5 Dolby Vision has no HDR10 picture to fall back on, and HDR
+	// without tone mapping comes out grey; no thumbnails beats wrong colours.
+	if (v.HDR == "DV" && v.DVProfile == 5) || (hdr && hw.Tonemap != "zscale") {
+		return 0
+	}
+	sw := stream.HW{Kind: "software", Tonemap: hw.Tonemap}
+	j := thumbs.Job{FileID: f.ID, Duration: info.Duration, Remote: f.StreamID != "",
+		Filter: sw.VideoFilter(v.Width, v.Height, v.BitDepth, thumbs.Width, hdr) + ",format=yuvj420p"}
+	if !j.Remote {
+		j.Input = f.Path
+		return s.Thumbs.Start(context.Background(), j)
+	}
+	j.Input = src.Input()
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-sess.Done(); cancel() }()
+	iv := thumbs.Interval(info.Duration, true)
+	go func() {
+		select {
+		case <-time.After(20 * time.Second):
+			s.Thumbs.Start(ctx, j)
+		case <-ctx.Done():
+		}
+	}()
+	return iv
+}
+
+func (s *Server) serveThumb(w http.ResponseWriter, r *http.Request) {
+	sess := s.Streams.Get(chi.URLParam(r, "sid"))
+	if sess == nil || s.Thumbs == nil {
+		http.Error(w, "session expired", http.StatusGone)
+		return
+	}
+	n, err := strconv.Atoi(strings.TrimSuffix(chi.URLParam(r, "n"), ".jpg"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	p, ok := s.Thumbs.Nearest(sess.FileID, n)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "private, max-age=600")
+	http.ServeFile(w, r, p)
 }

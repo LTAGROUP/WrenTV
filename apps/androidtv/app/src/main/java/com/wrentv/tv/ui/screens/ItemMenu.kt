@@ -26,7 +26,9 @@ import kotlinx.coroutines.launch
 /** Holds the item a long press opened the menu for. */
 class ItemMenuState {
     var item by mutableStateOf<Item?>(null)
-    fun open(item: Item) { this.item = item }
+    /** Opened from the watchlist, so the menu can take it off. */
+    var onWatchlist by mutableStateOf(false)
+    fun open(item: Item, onWatchlist: Boolean = false) { this.item = item; this.onWatchlist = onWatchlist }
 }
 
 @Composable
@@ -63,6 +65,19 @@ private fun ItemMenu(m: ItemMenuState) {
                     state.scope.launch {
                         try {
                             state.api?.setWatched(item.id, !item.isWatched)
+                            state.refreshTick++
+                        } catch (e: Exception) {
+                            notices.show(e.message)
+                        }
+                    }
+                })
+            }
+            if (m.onWatchlist) {
+                ListRow("Remove from Watchlist", {
+                    close()
+                    state.scope.launch {
+                        try {
+                            state.api?.setWatchlist(item.id, false)
                             state.refreshTick++
                         } catch (e: Exception) {
                             notices.show(e.message)

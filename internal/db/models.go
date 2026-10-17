@@ -399,6 +399,7 @@ type ItemQuery struct {
 	MinHeight      int  // movies with a file at least this tall (shows: any episode)
 	HDR            bool
 	CollectionID   string // manual collection members; Sort "custom" keeps their order
+	WatchlistOf    string // this user's watchlist; Sort "watchlist" is newest added first
 }
 
 func (d *DB) QueryItems(ctx context.Context, q ItemQuery) ([]*Item, int, error) {
@@ -503,6 +504,10 @@ func (d *DB) QueryItems(ctx context.Context, q ItemQuery) ([]*Item, int, error) 
 		where = append(where, `i.id IN (SELECT item_id FROM collection_items WHERE collection_id=?)`)
 		args = append(args, q.CollectionID)
 	}
+	if q.WatchlistOf != "" {
+		where = append(where, `i.id IN (SELECT item_id FROM watchlist WHERE user_id=?)`)
+		args = append(args, q.WatchlistOf)
+	}
 	// Hide movies/episodes that have no playable file. Streaming libraries
 	// list titles before their streams are found (they resolve on play), but
 	// a streamed movie gives way once the same movie exists as a real file.
@@ -526,6 +531,11 @@ func (d *DB) QueryItems(ctx context.Context, q ItemQuery) ([]*Item, int, error) 
 		if q.CollectionID != "" {
 			order = "(SELECT ci.position FROM collection_items ci WHERE ci.collection_id=? AND ci.item_id=i.id), i.sort_title"
 			orderArgs = append(orderArgs, q.CollectionID)
+		}
+	case "watchlist":
+		if q.WatchlistOf != "" {
+			order = "(SELECT wl.added_at FROM watchlist wl WHERE wl.user_id=? AND wl.item_id=i.id) DESC"
+			orderArgs = append(orderArgs, q.WatchlistOf)
 		}
 	case "added_asc":
 		order = "i.added_at"
@@ -848,6 +858,22 @@ func (d *DB) NextEpisode(ctx context.Context, userID, showID string) (*Item, err
 		AND NOT EXISTS (SELECT 1 FROM watch_state w WHERE w.item_id=i.id AND w.user_id=? AND w.watched=1)
 		AND EXISTS (SELECT 1 FROM media_files f WHERE f.item_id=i.id)
 		ORDER BY i.season_number, i.episode_number LIMIT 1`, showID, userID))
+}
+
+// SetWatchlist adds an item to (or removes it from) a user's watchlist.
+func (d *DB) SetWatchlist(ctx context.Context, userID, itemID string, on bool) error {
+	if !on {
+		_, err := d.ExecContext(ctx, `DELETE FROM watchlist WHERE user_id=? AND item_id=?`, userID, itemID)
+		return err
+	}
+	_, err := d.ExecContext(ctx, `INSERT INTO watchlist (user_id, item_id, added_at) VALUES (?,?,?) ON CONFLICT DO NOTHING`, userID, itemID, Now())
+	return err
+}
+
+func (d *DB) OnWatchlist(ctx context.Context, userID, itemID string) bool {
+	var n int
+	_ = d.QueryRowContext(ctx, `SELECT COUNT(*) FROM watchlist WHERE user_id=? AND item_id=?`, userID, itemID).Scan(&n)
+	return n > 0
 }
 
 func (d *DB) GetWatchState(ctx context.Context, userID, itemID string) (*WatchState, error) {

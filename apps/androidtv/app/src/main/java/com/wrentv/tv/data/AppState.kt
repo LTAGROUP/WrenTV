@@ -22,6 +22,12 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 class AppState(context: Context) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val store = Store(context)
+    private val appContext: Context = context.applicationContext
+
+    /** A wrentv:// link from the TV's home screen or a voice search, waiting to be opened. */
+    var link by mutableStateOf<android.net.Uri?>(null)
+    /** Text for the search page to start with (from a voice search). */
+    var searchSeed by mutableStateOf<String?>(null)
 
     /** Clicks as focus moves, kept on this TV. */
     private var uiSoundsOn by mutableStateOf(store.bool("uiSounds", true))
@@ -426,6 +432,7 @@ class AppState(context: Context) {
     fun signOut() {
         // Account servers are found again through the account, so forget the address too.
         val viaAccount = account != null || server?.usesAccounts == true
+        scope.launch { WatchNext.clear(appContext) }
         clearCredentials()
         leaveServer()
         if (viaAccount) {

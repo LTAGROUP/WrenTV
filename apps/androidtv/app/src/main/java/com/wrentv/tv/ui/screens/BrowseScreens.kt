@@ -554,7 +554,8 @@ fun GenreItemsScreen(genre: String, libraryId: String?) {
 fun SearchScreen() {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
-    var query by rememberSaveable { mutableStateOf("") }
+    // A voice search arrives with its words already in.
+    var query by rememberSaveable { mutableStateOf(state.searchSeed?.also { state.searchSeed = null } ?: "") }
     var results by remember { mutableStateOf<List<Item>>(emptyList()) }
     var more by remember { mutableStateOf<List<TitleView>>(emptyList()) }
     var searched by remember { mutableStateOf("") }
@@ -568,6 +569,9 @@ fun SearchScreen() {
 
     LaunchedEffect(Unit) {
         if (query.isEmpty()) { awaitFrame(); runCatching { field.requestFocus() } }
+    }
+    LaunchedEffect(state.searchSeed) {
+        state.searchSeed?.let { query = it; state.searchSeed = null }
     }
     LaunchedEffect(query) {
         val q = query.trim()

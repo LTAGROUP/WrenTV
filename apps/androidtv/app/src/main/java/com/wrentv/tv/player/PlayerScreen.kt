@@ -3,6 +3,13 @@
 package com.wrentv.tv.player
 
 import android.view.ViewGroup
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import coil3.compose.AsyncImage
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -111,8 +118,19 @@ fun PlayerScreen(target: PlayTarget) {
     var touched by remember { mutableIntStateOf(0) }
     val root = remember { FocusRequester() }
     val playButton = remember { FocusRequester() }
+    val seekBar = remember { FocusRequester() }
+    // Controls opened by left/right land on the seek bar instead of Play.
+    var toSeek by remember { mutableStateOf(false) }
 
     fun show() { controls = true; touched++ }
+
+    // The jump happens a moment after the last press, so holding left or right
+    // moves the preview rather than stuttering through every point on the way.
+    LaunchedEffect(c.scrub) {
+        if (c.scrub == null) return@LaunchedEffect
+        delay(800)
+        c.commitScrub()
+    }
 
     LaunchedEffect(controls, touched, c.paused, panel) {
         if (controls && panel == null && !c.paused) {
@@ -123,11 +141,13 @@ fun PlayerScreen(target: PlayTarget) {
     LaunchedEffect(controls, c.phase, c.upNext) {
         awaitFrame()
         if (c.upNext != null || c.phase is PlayerController.Phase.Failed) return@LaunchedEffect
-        runCatching { if (controls) playButton.requestFocus() else root.requestFocus() }
+        runCatching { if (controls) (if (toSeek) seekBar else playButton).requestFocus() else root.requestFocus() }
+        toSeek = false
     }
 
     BackHandler {
         when {
+            c.scrub != null -> c.cancelScrub()
             controls -> controls = false
             else -> nav.back()
         }
@@ -150,8 +170,13 @@ fun PlayerScreen(target: PlayTarget) {
                         true
                     }
                     Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> { c.togglePause(); show(); true }
-                    Key.DirectionLeft, Key.MediaRewind -> { c.seekBy(-10.0); true }
-                    Key.DirectionRight, Key.MediaFastForward -> { c.seekBy(10.0); true }
+                    Key.DirectionLeft, Key.MediaRewind, Key.DirectionRight, Key.MediaFastForward -> {
+                        val dir = if (e.key == Key.DirectionLeft || e.key == Key.MediaRewind) -1 else 1
+                        c.scrubBy(dir, e.nativeKeyEvent.repeatCount)
+                        toSeek = true
+                        show()
+                        true
+                    }
                     Key.DirectionUp, Key.DirectionDown, Key.Menu -> { show(); true }
                     else -> false
                 }
@@ -199,7 +224,7 @@ fun PlayerScreen(target: PlayTarget) {
         }
 
         AnimatedVisibility(controls && c.upNext == null, enter = fadeIn(), exit = fadeOut()) {
-            Controls(c, playButton, onPanel = { panel = it }, onSkip = {
+            Controls(c, playButton, seekBar, onPanel = { panel = it }, onSkip = {
                 when (c.skip) {
                     PlayerController.Skip.Intro -> c.skipIntro()
                     PlayerController.Skip.Credits -> c.skipCredits()
@@ -233,7 +258,7 @@ fun PlayerScreen(target: PlayTarget) {
 }
 
 @Composable
-private fun Controls(c: PlayerController, playButton: FocusRequester, onPanel: (PlayerPanel) -> Unit, onSkip: () -> Unit) {
+private fun Controls(c: PlayerController, playButton: FocusRequester, seekBar: FocusRequester, onPanel: (PlayerPanel) -> Unit, onSkip: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         // Scrims keep the text readable over bright scenes.
         Box(Modifier.fillMaxWidth().height(200.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent))))
@@ -257,9 +282,10 @@ private fun Controls(c: PlayerController, playButton: FocusRequester, onPanel: (
             c.currentChapter?.title?.takeIf { it.isNotEmpty() && c.chapters.size > 1 }?.let {
                 Text(it, style = MaterialTheme.typography.labelLarge, color = Wren.secondary, modifier = Modifier.padding(bottom = 8.dp))
             }
-            SeekBar(c)
+            SeekBar(c, Modifier.focusRequester(seekBar))
             Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-                Text(formatClock(c.position), style = MaterialTheme.typography.labelMedium, color = Wren.secondary)
+                val at = c.scrub
+                Text(formatClock(at ?: c.position), style = MaterialTheme.typography.labelMedium, color = if (at != null) Wren.text else Wren.secondary)
                 Spacer(Modifier.weight(1f))
                 Text(if (c.duration > 0) "-" + formatClock(c.duration - c.position) else "", style = MaterialTheme.typography.labelMedium, color = Wren.secondary)
             }
@@ -274,27 +300,61 @@ private fun Controls(c: PlayerController, playButton: FocusRequester, onPanel: (
     }
 }
 
-/** The timeline. Focused, left and right skip 10 seconds. */
+/**
+ * The timeline. Focused, left and right move a preview of where you'll land
+ * (10 seconds a tap, faster while held); OK jumps there at once.
+ */
 @Composable
-private fun SeekBar(c: PlayerController) {
+private fun SeekBar(c: PlayerController, modifier: Modifier = Modifier) {
     var focused by remember { mutableStateOf(false) }
-    val fraction = if (c.duration > 0) (c.position / c.duration).toFloat() else 0f
-    Box(
-        Modifier.fillMaxWidth().height(24.dp)
-            .onFocusChanged { focused = it.isFocused }
-            .onKeyEvent { e ->
-                if (e.type != KeyEventType.KeyDown) return@onKeyEvent false
-                when (e.key) {
-                    Key.DirectionLeft -> { c.seekBy(-10.0); true }
-                    Key.DirectionRight -> { c.seekBy(10.0); true }
-                    Key.DirectionCenter, Key.Enter -> { c.togglePause(); true }
-                    else -> false
+    val at = c.scrub
+    val fraction = if (c.duration > 0) ((at ?: c.position) / c.duration).toFloat() else 0f
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val barWidth = maxWidth
+        Box(
+            modifier.fillMaxWidth().height(24.dp)
+                .onFocusChanged { focused = it.isFocused }
+                .onKeyEvent { e ->
+                    if (e.type != KeyEventType.KeyDown) return@onKeyEvent false
+                    when (e.key) {
+                        Key.DirectionLeft, Key.MediaRewind -> { c.scrubBy(-1, e.nativeKeyEvent.repeatCount); true }
+                        Key.DirectionRight, Key.MediaFastForward -> { c.scrubBy(1, e.nativeKeyEvent.repeatCount); true }
+                        Key.DirectionCenter, Key.Enter -> { if (c.scrub != null) c.commitScrub() else c.togglePause(); true }
+                        else -> false
+                    }
                 }
+                .focusable(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Bar(fraction, Modifier.fillMaxWidth().height(if (focused) 10.dp else 5.dp), color = if (focused) Color.White else Wren.ember)
+        }
+        if (at != null) {
+            // Rides above the bar at the scrub point, kept on screen at the ends.
+            val w = PreviewWidth
+            val x = (barWidth * fraction - w / 2).coerceIn(0.dp, (barWidth - w).coerceAtLeast(0.dp))
+            ScrubPreview(c.thumbUrl(at), at, Modifier.offset(x = x, y = -(PreviewHeight + 44.dp)))
+        }
+    }
+}
+
+private val PreviewWidth = 256.dp
+private val PreviewHeight = 144.dp
+
+/** The frame at the scrub point. The last frame stays up until the next arrives, so holding a direction doesn't flicker. */
+@Composable
+private fun ScrubPreview(url: String?, seconds: Double, modifier: Modifier = Modifier) {
+    var shown by remember { mutableStateOf<String?>(null) }
+    Column(modifier.width(PreviewWidth), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (url != null) {
+            Box(Modifier.size(PreviewWidth, PreviewHeight).clip(RoundedCornerShape(10.dp)).background(Color.Black)
+                .border(2.dp, Color.White.copy(alpha = 0.9f), RoundedCornerShape(10.dp))) {
+                AsyncImage(model = shown, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                AsyncImage(model = url, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize(),
+                    onSuccess = { shown = url })
             }
-            .focusable(),
-        contentAlignment = Alignment.Center,
-    ) {
-        Bar(fraction, Modifier.fillMaxWidth().height(if (focused) 10.dp else 5.dp), color = if (focused) Color.White else Wren.ember)
+        }
+        Text(formatClock(seconds), style = MaterialTheme.typography.titleMedium, color = Wren.text,
+            modifier = Modifier.padding(top = 8.dp).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 3.dp))
     }
 }
 

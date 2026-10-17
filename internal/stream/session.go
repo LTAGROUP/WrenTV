@@ -176,6 +176,9 @@ func (m *Manager) reap() {
 }
 
 // Idle is how long since the client last fetched anything.
+// Done closes when the session ends.
+func (s *Session) Done() <-chan struct{} { return s.ctx.Done() }
+
 func (s *Session) Idle() time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()

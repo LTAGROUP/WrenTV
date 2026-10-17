@@ -140,12 +140,39 @@ private fun SignedOut(nav: Navigator) {
     }
 }
 
+/**
+ * wrentv://play/<id> plays (the Play Next row), wrentv://item/<id> opens the
+ * details page (system search), wrentv://search?q=… searches (voice).
+ * Back from any of them lands on Home.
+ */
+@Composable
+private fun OpenLinks(state: AppState, nav: Navigator) {
+    val notices = LocalNotices.current
+    LaunchedEffect(state.link) {
+        val link = state.link ?: return@LaunchedEffect
+        state.link = null
+        val id = link.lastPathSegment
+        when (link.host) {
+            "play" -> {
+                val d = runCatching { state.api?.item(id ?: return@LaunchedEffect) }.getOrNull()
+                if (d == null) { notices.show("Couldn't open that title."); return@LaunchedEffect }
+                nav.select(Route.Home)
+                nav.push(Route.Detail(d.item.id, d.item))
+                nav.play(d.item.playTarget(d.show?.title))
+            }
+            "item" -> if (id != null) { nav.select(Route.Home); nav.push(Route.Detail(id)) }
+            "search" -> { state.searchSeed = link.getQueryParameter("q"); nav.select(Route.Search) }
+        }
+    }
+}
+
 @Composable
 private fun Main(state: AppState, nav: Navigator) {
     val holder = rememberSaveableStateHolder()
     val bar = remember { TopBarState() }
     val route = nav.current
     BackHandler(enabled = nav.stack.isNotEmpty() || nav.tab != Route.Home) { nav.back() }
+    OpenLinks(state, nav)
     // A new page starts with the bar showing.
     LaunchedEffect(route) { bar.atTop = true }
     // Pages without a default focus (or still loading) would leave the first
@@ -172,6 +199,7 @@ private fun Main(state: AppState, nav: Navigator) {
                         .graphicsLayer { alpha = shown; translationY = -(1 - shown) * size.height / 2 },
                 ) { TopBar(state, nav, page) }
             }
+            Screensaver(allowed = route !is Route.Player && route !is Route.LivePlayer && route !is Route.Trailer)
         }
     }
 }

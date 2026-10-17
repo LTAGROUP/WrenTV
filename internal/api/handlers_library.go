@@ -237,7 +237,45 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 	topRated, genres := s.homeRows(ctx, p.User.ID, ids)
 	writeJSON(w, 200, map[string]any{"continueWatching": nonNil(cont), "recentlyAdded": shelves, "topRated": topRated, "genres": genres,
-		"collections": s.homeCollections(ctx, r)})
+		"collections": s.homeCollections(ctx, r), "watchlist": s.watchlistRow(ctx, p.User.ID, ids)})
+}
+
+// watchlistRow is the home row: what's still to watch, newest added first.
+func (s *Server) watchlistRow(ctx context.Context, userID string, ids []string) []*db.Item {
+	items, _, _ := s.DB.QueryItems(ctx, db.ItemQuery{LibraryIDs: ids, Kind: "movie,show", WatchlistOf: userID, Unwatched: true,
+		Sort: "watchlist", Limit: 20, UserID: userID})
+	return nonNil(items)
+}
+
+func (s *Server) handleWatchlist(w http.ResponseWriter, r *http.Request) {
+	_, ids, err := s.visibleLibraries(r)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	uid := principal(r).User.ID
+	items, _, err := s.DB.QueryItems(r.Context(), db.ItemQuery{LibraryIDs: ids, Kind: "movie,show", WatchlistOf: uid, Sort: "watchlist", UserID: uid})
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, nonNil(items))
+}
+
+func (s *Server) handleWatchlistAdd(w http.ResponseWriter, r *http.Request)    { s.setWatchlist(w, r, true) }
+func (s *Server) handleWatchlistRemove(w http.ResponseWriter, r *http.Request) { s.setWatchlist(w, r, false) }
+
+func (s *Server) setWatchlist(w http.ResponseWriter, r *http.Request, on bool) {
+	it, ok := s.itemFor(r)
+	if !ok || (it.Kind != "movie" && it.Kind != "show") {
+		writeErr(w, 404, "movie or show not found")
+		return
+	}
+	if err := s.DB.SetWatchlist(r.Context(), principal(r).User.ID, it.ID, on); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // continueWatching is in-progress movies and episodes, then the next
@@ -359,6 +397,9 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 		it.Progress = ws
 	}
 	resp := map[string]any{"item": it}
+	if it.Kind == "movie" || it.Kind == "show" {
+		resp["onWatchlist"] = s.DB.OnWatchlist(ctx, p.User.ID, it.ID)
+	}
 	streamed := s.isStreamLibrary(ctx, it.LibraryID)
 	resp["streaming"] = streamed
 	resp["canDownload"] = s.limitsFor(p.User).CanDownload

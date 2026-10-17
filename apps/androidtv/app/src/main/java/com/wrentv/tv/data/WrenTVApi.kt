@@ -207,6 +207,9 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
         send("POST", "/api/items/$id/watched", body = buildJsonObject { put("watched", watched) })
     }
 
+    suspend fun setWatchlist(id: String, on: Boolean) { send(if (on) "PUT" else "DELETE", "/api/items/$id/watchlist") }
+    suspend fun watchlist(): List<Item> = get("/api/watchlist")
+
     suspend fun liveChannels(): List<LiveChannel> = get<LiveChannelsResponse>("/api/livetv/channels").channels
     suspend fun liveGuide(hours: Int): List<LiveGuideChannel> =
         get<LiveGuideResponse>("/api/livetv/guide", mapOf("hours" to hours.toString())).channels

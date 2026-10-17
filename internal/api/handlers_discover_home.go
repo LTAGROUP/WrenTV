@@ -44,6 +44,7 @@ func (s *Server) handleDiscoverHome(w http.ResponseWriter, r *http.Request) {
 		"streaming":        s.Streaming.Active() && s.limitsFor(p.User).CanStream,
 		"continueWatching": s.continueWatching(ctx, r, ids),
 		"recentlyWatched":  s.recentlyWatched(ctx, p.User.ID, ids, 20),
+		"watchlist":        s.watchlistRow(ctx, p.User.ID, ids),
 		"hero":             []titleView{},
 		"rows":             []discoverRow{},
 	}

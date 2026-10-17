@@ -38,6 +38,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/metadata/omdb"
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 	"github.com/LTAGROUP/wrentv/internal/stream"
+	"github.com/LTAGROUP/wrentv/internal/thumbs"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
 	"github.com/LTAGROUP/wrentv/internal/webhook"
 )
@@ -250,6 +251,7 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 		Version: version, Cfg: cfg, DB: d, Scanner: scanner, Watcher: watcher, TMDB: tm, Streams: streams,
 		OMDb: omdb.New(func() string { return cfg.Metadata.OMDbAPIKey }, d), Markers: analyzer,
 		Streaming: streamer, LiveTV: live, Hub: hub, Hooks: hooks, Images: images.New(filepath.Join(dataDir, "images")),
+		Thumbs: thumbs.New(filepath.Join(cfg.DataDir, "cache", "thumbs"), cfg.Transcode.FFmpegPath),
 	}
 	switch cfg.Auth.Mode {
 	case "supabase":

@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Wren TV</string>
+    <string name="search_hint">Movies and shows on your server</string>
 </resources>

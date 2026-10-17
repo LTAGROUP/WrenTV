@@ -314,6 +314,14 @@ var migrations = []string{
 	ALTER TABLE users ADD COLUMN allow_downloads INTEGER NOT NULL DEFAULT -1;
 	ALTER TABLE users ADD COLUMN max_streams INTEGER NOT NULL DEFAULT -1;
 	ALTER TABLE users ADD COLUMN max_downloads INTEGER NOT NULL DEFAULT -1;`,
+	// Titles each user wants to watch later.
+	`CREATE TABLE watchlist (
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+		added_at INTEGER NOT NULL,
+		PRIMARY KEY (user_id, item_id)
+	);
+	CREATE INDEX watchlist_recent ON watchlist(user_id, added_at DESC);`,
 }
 
 // fkOff lists migrations (1-based) that rebuild tables. They run with

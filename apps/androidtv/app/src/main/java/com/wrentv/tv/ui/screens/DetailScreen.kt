@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.BookmarkAdd
+import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.CellTower
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Download
@@ -486,6 +488,28 @@ private fun Actions(
         }
         extras?.trailer?.let { t ->
             RoundButton(Icons.Rounded.Theaters, "Play Trailer", { nav.push(Route.Trailer(t.youtubeKey, item.title)) }, Modifier.rememberFocus("act:trailer"))
+        }
+        if (detail?.onWatchlist != null) {
+            // Flips at once; the server catches up behind it.
+            var listed by remember(item.id, detail.onWatchlist) { mutableStateOf(detail.onWatchlist) }
+            val notices = LocalNotices.current
+            RoundButton(
+                if (listed) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd,
+                if (listed) "On Watchlist · Remove" else "Add to Watchlist", {
+                    val on = !listed
+                    listed = on
+                    state.scope.launch {
+                        try {
+                            state.api?.setWatchlist(item.id, on)
+                            state.refreshTick++
+                        } catch (e: Exception) {
+                            listed = !on
+                            notices.show(e.message)
+                        }
+                    }
+                }, Modifier.rememberFocus("act:watchlist"),
+                tint = if (listed) Wren.ember else null,
+            )
         }
         RoundButton(
             if (item.isWatched) Icons.Rounded.CheckCircle else Icons.Rounded.Visibility,

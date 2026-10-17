@@ -28,8 +28,10 @@ import com.wrentv.tv.data.Markers
 import com.wrentv.tv.data.MediaVersion
 import com.wrentv.tv.data.PlayRequest
 import com.wrentv.tv.data.PlayResponse
+import com.wrentv.tv.data.SeekThumbs
 import com.wrentv.tv.data.WrenTVApi
 import com.wrentv.tv.data.languageName
+import kotlin.math.roundToInt
 import com.wrentv.tv.ui.PlayTarget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -84,6 +86,9 @@ class PlayerController(
     var versions by mutableStateOf<List<MediaVersion>>(emptyList()); private set
     var fileId by mutableStateOf(target.fileId); private set
     var chapters by mutableStateOf<List<Chapter>>(emptyList()); private set
+    private var thumbs: SeekThumbs? = null
+    /** Where the seek bar is headed while left/right are pressed; the jump happens once they let go. */
+    var scrub by mutableStateOf<Double?>(null); private set
     var skip by mutableStateOf<Skip?>(null); private set
     var countdown by mutableStateOf<Int?>(null); private set
     var upNext by mutableStateOf<Item?>(null); private set
@@ -246,6 +251,7 @@ class PlayerController(
         duration = resp.duration ?: 0.0
         chapters = resp.chapters ?: resp.info?.chapters.orEmpty()
         markers = resp.markers ?: Markers()
+        thumbs = resp.thumbs
         methodLabel = describe(resp)
 
         val item = MediaItem.Builder().setUri(api.absolute(path))
@@ -302,6 +308,39 @@ class PlayerController(
     }
 
     fun seekBy(seconds: Double) = seekTo(position + seconds)
+
+    /**
+     * Moves the scrub point. A tap is 10 seconds; holding the button picks up
+     * speed, the way Plex and YouTube do, so crossing a film doesn't take a minute.
+     */
+    fun scrubBy(direction: Int, repeat: Int) {
+        if (phase != Phase.Playing || duration <= 0) return
+        val step = when {
+            repeat < 6 -> 10.0
+            repeat < 16 -> 30.0
+            repeat < 30 -> 60.0
+            else -> 120.0
+        }
+        scrub = ((scrub ?: position) + direction * step).coerceIn(0.0, duration - 1)
+    }
+
+    /** Jumps to the scrub point. */
+    fun commitScrub() {
+        val t = scrub ?: return
+        scrub = null
+        seekTo(t)
+    }
+
+    fun cancelScrub() { scrub = null }
+
+    /** The seek bar frame nearest a time, or null when the server has none. */
+    fun thumbUrl(seconds: Double): String? {
+        val t = thumbs ?: return null
+        val a = api ?: return null
+        if (isOffline) return null
+        val n = (seconds / t.interval).roundToInt().coerceAtLeast(0)
+        return a.absolute(t.url + n + ".jpg")
+    }
 
     fun seekTo(seconds: Double) {
         val t = seconds.coerceIn(0.0, if (duration > 0) duration - 1 else Double.MAX_VALUE)
@@ -549,6 +588,8 @@ class PlayerController(
         skip = null
         chapters = emptyList()
         markers = Markers()
+        thumbs = null
+        scrub = null
         fromStart = false
         fileId = null
         versions = emptyList()
