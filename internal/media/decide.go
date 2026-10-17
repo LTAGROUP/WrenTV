@@ -302,6 +302,10 @@ func AudioCodecString(codec string) string {
 		return "mp4a.40.34"
 	case "opus":
 		return "Opus"
+	case "dts":
+		return "dtsc"
+	case "truehd":
+		return "mlpa"
 	}
 	return ""
 }

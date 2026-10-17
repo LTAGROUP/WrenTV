@@ -306,7 +306,10 @@ func (r *remuxer) produce(track string, n int) error {
 	out := filepath.Join(r.trackDir(track), strconv.Itoa(n)+".tmp.mp4")
 	args = append(args, "-sn", "-dn", "-map_chapters", "-1", "-map_metadata", "-1",
 		"-output_ts_offset", fmtTS(tsOffset))
-	if !s.Decision.StripDolbyVision {
+	switch {
+	case track == "a":
+		args = append(args, "-strict", "experimental") // TrueHD in MP4 is still marked experimental
+	case !s.Decision.StripDolbyVision:
 		args = append(args, "-strict", "unofficial") // writes the Dolby Vision configuration box (dvcC/dvvC)
 	}
 	args = append(args, "-f", "mp4", "-movflags", "frag_keyframe+delay_moov+default_base_moof+frag_discont",

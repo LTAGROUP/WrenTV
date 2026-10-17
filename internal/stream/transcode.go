@@ -161,7 +161,8 @@ func (t *transcoder) launch(n int) {
 	}
 	if s.Decision.AudioIndex >= 0 {
 		if s.Decision.AudioCopy {
-			args = append(args, "-c:a", "copy")
+			// TrueHD in MP4 is still marked experimental.
+			args = append(args, "-c:a", "copy", "-strict", "experimental")
 		} else {
 			args = append(args, "-c:a", "aac", "-b:a", "256k", "-ac", "2")
 		}

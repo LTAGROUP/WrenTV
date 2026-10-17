@@ -124,6 +124,9 @@ class PlayerController(
     private var countdownJob: Job? = null
     private var subtitlePending = false
     private var stopped = false
+    /** Audio codecs the server sent that didn't play here; they're converted to AAC instead. */
+    private val failedAudio = mutableSetOf<String>()
+    private var startedAt = 0.0
 
     val isOffline: Boolean get() = localFile != null
     val currentChapter: Chapter? get() = chapters.lastOrNull { it.start <= position + 0.01 }
@@ -142,6 +145,10 @@ class PlayerController(
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                // The TV took the format but its audio output didn't (passthrough that isn't really there).
+                val audioOutput = error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+                    error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED
+                if (audioOutput && fallBackFromAudio()) return
                 phase = Phase.Failed(error.message ?: "Playback failed")
             }
 
@@ -155,6 +162,7 @@ class PlayerController(
                     subtitleOptions = groups(C.TRACK_TYPE_TEXT).mapIndexed { i, g -> TrackOption("t$i", formatLabel(g, "Subtitles ${i + 1}")) }
                     audioKey = groups(C.TRACK_TYPE_AUDIO).indexOfFirst { it.isSelected }.takeIf { it >= 0 }?.let { "t$it" }
                 }
+                checkAudio(tracks)
                 if (subtitlePending && groups(C.TRACK_TYPE_TEXT).isNotEmpty()) {
                     subtitlePending = false
                     applySubtitle()
@@ -200,7 +208,7 @@ class PlayerController(
         while (true) {
             if (stopped) return
             resp = try {
-                api.play(itemId, PlayRequest(fileId = fileId, audioIndex = audioIndex, caps = DeviceCaps.current(context)))
+                api.play(itemId, PlayRequest(fileId = fileId, audioIndex = audioIndex, caps = DeviceCaps.current(context, failedAudio)))
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 phase = Phase.Failed(e.message ?: "Couldn't start playback")
@@ -256,6 +264,7 @@ class PlayerController(
     }
 
     private fun play(item: MediaItem, start: Double) {
+        startedAt = start
         player.setMediaItem(item, (start * 1000).toLong().coerceAtLeast(0))
         player.prepare()
         player.playWhenReady = true
@@ -337,7 +346,8 @@ class PlayerController(
     }
 
     private fun restart() {
-        val pos = position
+        // Before the clock first ticks, position is still 0: keep where playback began.
+        val pos = position.takeIf { it > 0 } ?: startedAt
         val old = sessionId
         sessionId = null
         player.stop()
@@ -347,6 +357,27 @@ class PlayerController(
 
     fun retry() {
         start(position.takeIf { it > 0 })
+    }
+
+    /**
+     * A stream whose audio the player can't use plays silently, so ask the
+     * server again with that codec ruled out and it converts the audio.
+     */
+    private fun checkAudio(tracks: Tracks) {
+        if (isOffline || phase != Phase.Playing) return
+        // Until the video shows up the tracks aren't known yet.
+        if (tracks.groups.none { it.type == C.TRACK_TYPE_VIDEO }) return
+        if (tracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSupported }) return
+        fallBackFromAudio()
+    }
+
+    private fun fallBackFromAudio(): Boolean {
+        val decision = response?.decision ?: return false
+        val codec = decision.audioCodec ?: return false
+        if ((decision.audioIndex ?: -1) < 0 || codec == "aac" || codec in failedAudio) return false
+        failedAudio += codec
+        restart()
+        return true
     }
 
     private fun groups(type: Int): List<Tracks.Group> = player.currentTracks.groups.filter { it.type == type }

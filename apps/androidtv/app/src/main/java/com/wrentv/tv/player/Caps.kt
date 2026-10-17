@@ -45,18 +45,23 @@ object DeviceCaps {
         C.ENCODING_DOLBY_TRUEHD to "truehd",
     )
 
-    private var cached: ClientCaps? = null
+    private var decoders: Set<String>? = null
 
-    fun current(context: Context): ClientCaps {
-        cached?.let { return it }
-        val decoders = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { !it.isEncoder }
-        val types = decoders.flatMap { it.supportedTypes.map(String::lowercase) }.toSet()
+    /**
+     * Passthrough is checked on every call, not cached: it follows the audio
+     * output, so turning a receiver off or switching inputs changes it.
+     * [exclude] drops audio codecs that already failed to play here.
+     */
+    fun current(context: Context, exclude: Set<String> = emptySet()): ClientCaps {
+        val types = decoders ?: MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { !it.isEncoder }
+            .flatMap { it.supportedTypes.map(String::lowercase) }.toSet().also { decoders = it }
         val video = videoTypes.filterKeys { it in types }.values.distinct()
         val audio = audioTypes.filterKeys { it in types }.values.toMutableSet()
         runCatching {
             val caps = AudioCapabilities.getCapabilities(context, AudioAttributes.DEFAULT, null)
             passthrough.forEach { (encoding, codec) -> if (caps.supportsEncoding(encoding)) audio += codec }
         }
+        audio -= exclude
 
         @Suppress("DEPRECATION")
         val hdrTypes = context.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)
@@ -78,6 +83,6 @@ object DeviceCaps {
             // Not FLAC: Android's decoder fails where each HLS segment's
             // separately encoded FLAC stream restarts its frame numbers.
             audioFallback = "aac",
-        ).also { cached = it }
+        )
     }
 }

@@ -11,20 +11,25 @@ import kotlin.math.roundToInt
  * Switches the TV to a refresh rate the video plays evenly on (23.976 fps at
  * 23.976 Hz, not 59.94), like Plex and Kodi do. Fitting film to a 60 Hz output
  * makes the player nudge frames against the audio clock every few seconds,
- * which shows as small, regular stutters. The resolution is left as it is.
+ * which shows as small, regular stutters. The resolution is left as it is,
+ * and the rate is never dropped lower than it needs to be.
  */
 object DisplayMode {
-    /** The mode to use for [fps], or null when the current one is already right (or nothing fits). */
+    /**
+     * The mode to use for [fps], or null when the current one is already right
+     * (or nothing fits). Of the rates the video divides evenly into, the highest
+     * wins: 25 fps goes to 50 Hz and 30 to 60, not down to 25 or 30 Hz. Film has
+     * no multiple a TV usually offers below 120 Hz, so it still gets 24 Hz.
+     */
     fun pick(display: Display, fps: Float): Display.Mode? {
         val current = display.mode
-        val same = display.supportedModes.filter {
-            it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight
-        }
-        fun fits(rate: Float, multiple: Int) = abs(rate - fps * multiple) < 0.01f * multiple
-        if ((1..3).any { fits(current.refreshRate, it) }) return null
-        val best = same.firstOrNull { fits(it.refreshRate, 1) }
-            ?: (2..3).firstNotNullOfOrNull { k -> same.firstOrNull { fits(it.refreshRate, k) } }
+        fun multiple(rate: Float) = (1..5).any { k -> abs(rate - fps * k) < 0.01f * k }
+        val best = display.supportedModes
+            .filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
+            .filter { multiple(it.refreshRate) }
+            .maxByOrNull { it.refreshRate }
             ?: return null
+        if (multiple(current.refreshRate) && current.refreshRate >= best.refreshRate - 0.5f) return null
         return best.takeIf { it.modeId != current.modeId }
     }
 
