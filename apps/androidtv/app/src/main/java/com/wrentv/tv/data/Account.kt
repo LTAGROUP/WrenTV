@@ -61,6 +61,8 @@ class Store(context: Context) {
     fun setString(key: String, v: String) = prefs.edit().putString(key, v).apply()
     fun int(key: String, def: Int): Int = prefs.getInt(key, def)
     fun setInt(key: String, v: Int) = prefs.edit().putInt(key, v).apply()
+    fun bool(key: String, def: Boolean): Boolean = prefs.getBoolean(key, def)
+    fun setBool(key: String, v: Boolean) = prefs.edit().putBoolean(key, v).apply()
 }
 
 /** The Wren TV account service. The publishable key is public: every account server hands it to its clients in /api/server. */

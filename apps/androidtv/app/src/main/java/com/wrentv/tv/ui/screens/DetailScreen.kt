@@ -29,11 +29,14 @@ import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Replay
-import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Theaters
+import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import com.wrentv.tv.player.ThemeMusic
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -136,6 +139,7 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
     val list = rememberLazyListState()
     val show = detail?.show ?: if (item.kind == "show") item else null
     val backdrop = item.backdropPath ?: detail?.show?.backdropPath ?: item.stillPath
+    ThemeEffect(item, show)
 
     fun play(target: Item, fromStart: Boolean = false) {
         val showTitle = if (target.kind == "episode") detail?.show?.title ?: (if (item.kind == "show") item.title else null) ?: target.showTitle else null
@@ -164,7 +168,12 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
         )
         LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             item("hero") {
-                Column(Modifier.padding(start = PageGutter, end = PageGutter, top = 150.dp).width(820.dp)) {
+                // Coming back up shows the whole top of the page, not just the buttons.
+                val scope = rememberCoroutineScope()
+                Column(
+                    Modifier.padding(start = PageGutter, end = PageGutter, top = 150.dp).width(820.dp)
+                        .onFocusChanged { if (it.hasFocus && list.firstVisibleItemScrollOffset + list.firstVisibleItemIndex > 0) scope.launch { list.animateScrollToItem(0) } },
+                ) {
                     TitleBlock(item, detail, nav)
                     Spacer(Modifier.height(14.dp))
                     MetaLine(metaParts(item), listOfNotNull(item.contentRating?.takeIf { it.isNotEmpty() }) + currentFile(detail, versionId)?.badges.orEmpty())
@@ -259,6 +268,23 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
                 }
             }
         }
+    }
+}
+
+/** The movie's or show's theme while its page (or a season's) is open. */
+@Composable
+private fun ThemeEffect(item: Item, show: Item?) {
+    val state = LocalAppState.current
+    val context = LocalContext.current
+    val key = when (item.kind) {
+        "movie" -> item.id
+        "show", "season" -> show?.id ?: item.parentId?.takeIf { item.kind == "season" }
+        else -> null
+    }
+    val api = state.api
+    DisposableEffect(key, api, state.themeMusic) {
+        if (key != null && api != null && state.themeMusic) ThemeMusic.play(context.applicationContext, api, key, item.id)
+        onDispose { ThemeMusic.leave() }
     }
 }
 
@@ -381,7 +407,8 @@ private fun Actions(
 ) {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
-    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+    // Room underneath for the focused button's label.
+    Row(Modifier.padding(bottom = 26.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
         if (item.isPlayable) {
             val resume = item.inProgress
             val left = item.progress?.let(::timeLeft)
@@ -396,11 +423,11 @@ private fun Actions(
             }
         }
         extras?.trailer?.let { t ->
-            RoundButton(Icons.Rounded.Theaters, "Trailer", { nav.push(Route.Trailer(t.youtubeKey, item.title)) }, Modifier.rememberFocus("act:trailer"))
+            RoundButton(Icons.Rounded.Theaters, "Play Trailer", { nav.push(Route.Trailer(t.youtubeKey, item.title)) }, Modifier.rememberFocus("act:trailer"))
         }
         RoundButton(
-            if (item.isWatched) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
-            if (item.isWatched) "Watched" else "Mark Watched", { toggleWatched(item) }, Modifier.rememberFocus("act:watched"),
+            if (item.isWatched) Icons.Rounded.CheckCircle else Icons.Rounded.Visibility,
+            if (item.isWatched) "Watched · Mark Unwatched" else "Mark as Watched", { toggleWatched(item) }, Modifier.rememberFocus("act:watched"),
             tint = if (item.isWatched) Wren.ember else null,
         )
         if (item.isPlayable && detail?.canDownload == true && (!detail.files.isNullOrEmpty() || detail.streaming == true)) {
@@ -414,10 +441,10 @@ private fun Actions(
             }
         }
         if (state.isAdmin && (item.kind == "movie" || item.kind == "show")) {
-            RoundButton(Icons.Rounded.Add, "Collections", { open(DetailPanel.Collections) }, Modifier.rememberFocus("act:collections"))
+            RoundButton(Icons.Rounded.Add, "Add to Collection", { open(DetailPanel.Collections) }, Modifier.rememberFocus("act:collections"))
         }
         if (state.isAdmin && detail?.streaming == true) {
-            RoundButton(Icons.Rounded.CellTower, "Streaming", { open(DetailPanel.StreamAdmin) }, Modifier.rememberFocus("act:stream"))
+            RoundButton(Icons.Rounded.CellTower, "Streaming Options", { open(DetailPanel.StreamAdmin) }, Modifier.rememberFocus("act:stream"))
         }
     }
 }

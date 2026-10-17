@@ -2,6 +2,7 @@ package com.wrentv.tv
 
 import android.app.Application
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.lifecycle.lifecycleScope
@@ -11,6 +12,8 @@ import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import coil3.request.crossfade
 import com.wrentv.tv.data.AppState
+import com.wrentv.tv.player.ThemeMusic
+import com.wrentv.tv.ui.UiSounds
 import com.wrentv.tv.ui.WrenApp
 import kotlinx.coroutines.launch
 import okio.Path.Companion.toOkioPath
@@ -31,7 +34,29 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        UiSounds.load(this)
         setContent { WrenApp(state) }
+    }
+
+    /** Clicks for keys the app acted on: no sound when focus is already at an edge. */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val handled = super.dispatchKeyEvent(event)
+        if (!handled) return false
+        UiSounds.enabled = state.uiSounds
+        when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT ->
+                if (event.action == KeyEvent.ACTION_DOWN) UiSounds.play(UiSounds.Kind.Move)
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER ->
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) UiSounds.play(UiSounds.Kind.Select)
+            KeyEvent.KEYCODE_BACK ->
+                if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) UiSounds.play(UiSounds.Kind.Back)
+        }
+        return true
+    }
+
+    override fun onStop() {
+        super.onStop()
+        ThemeMusic.stop()
     }
 
     override fun onResume() {

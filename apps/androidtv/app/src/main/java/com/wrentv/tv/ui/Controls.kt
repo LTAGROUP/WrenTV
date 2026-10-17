@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -201,8 +202,18 @@ fun TvTextField(
 @Composable
 fun Panel(onDismiss: () -> Unit, title: String, width: Dp = 560.dp, content: @Composable () -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        // A panel opened by holding OK gets that press's release: it isn't a click on whatever has focus here.
+        var armed by remember { mutableStateOf(false) }
         Column(
-            Modifier.width(width).heightIn(max = 620.dp).background(Wren.surface, RoundedCornerShape(20.dp))
+            Modifier
+                .onPreviewKeyEvent {
+                    val k = it.nativeKeyEvent
+                    if (k.keyCode != android.view.KeyEvent.KEYCODE_DPAD_CENTER && k.keyCode != android.view.KeyEvent.KEYCODE_ENTER &&
+                        k.keyCode != android.view.KeyEvent.KEYCODE_NUMPAD_ENTER) return@onPreviewKeyEvent false
+                    if (k.action == android.view.KeyEvent.ACTION_DOWN && k.repeatCount == 0) armed = true
+                    !armed
+                }
+                .width(width).heightIn(max = 620.dp).background(Wren.surface, RoundedCornerShape(20.dp))
                 .border(1.dp, Wren.line, RoundedCornerShape(20.dp)).padding(28.dp),
         ) {
             Text(title, style = MaterialTheme.typography.headlineMedium, color = Wren.text)

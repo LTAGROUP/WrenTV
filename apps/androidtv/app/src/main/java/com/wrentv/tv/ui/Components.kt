@@ -37,6 +37,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -176,20 +178,29 @@ fun PillButton(
     }
 }
 
-/** A round icon button, for secondary actions next to Play. */
+/** A round icon button, for secondary actions next to Play. Its label shows underneath while it has focus. */
 @Composable
 fun RoundButton(icon: ImageVector, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, tint: Color? = null) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier.size(48.dp),
-        shape = ClickableSurfaceDefaults.shape(CircleShape),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Wren.glass, contentColor = tint ?: Wren.text,
-            focusedContainerColor = Color.White, focusedContentColor = Color.Black,
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
-    ) {
-        Icon(icon, contentDescription = label, modifier = Modifier.align(Alignment.Center).size(24.dp))
+    var focused by remember { mutableStateOf(false) }
+    val shown by animateFloatAsState(if (focused) 1f else 0f, label = "roundLabel")
+    Box(Modifier.size(48.dp)) {
+        Surface(
+            onClick = onClick,
+            modifier = modifier.size(48.dp).onFocusChanged { focused = it.isFocused },
+            shape = ClickableSurfaceDefaults.shape(CircleShape),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = Wren.glass, contentColor = tint ?: Wren.text,
+                focusedContainerColor = Color.White, focusedContentColor = Color.Black,
+            ),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
+        ) {
+            Icon(icon, contentDescription = label, modifier = Modifier.align(Alignment.Center).size(24.dp))
+        }
+        // Takes no room in the row, so the buttons stay evenly spaced.
+        Text(
+            label, style = MaterialTheme.typography.labelMedium, color = Wren.text, maxLines = 1,
+            modifier = Modifier.align(Alignment.BottomCenter).wrapContentSize(unbounded = true).offset(y = 32.dp).alpha(shown),
+        )
     }
 }
 

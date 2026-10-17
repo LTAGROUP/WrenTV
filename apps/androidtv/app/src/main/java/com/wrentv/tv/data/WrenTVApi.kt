@@ -172,6 +172,22 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
 
     suspend fun item(id: String): ItemDetail = get("/api/items/$id")
     suspend fun extras(id: String): Extras = get("/api/items/$id/extras")
+
+    /** The theme for a movie or show (a season or episode gets its show's), saved to [into]; null when it has none. */
+    suspend fun theme(id: String, into: java.io.File): java.io.File? {
+        val b = Request.Builder().url(url("/api/items/$id/theme")).header("X-WrenTV-Client", CLIENT_NAME)
+        auth?.let { b.header("Authorization", "Bearer ${it.token()}") }
+        val resp = Http.client.newCall(b.build()).await()
+        return resp.use { r ->
+            if (!r.isSuccessful) return@use null
+            withContext(Dispatchers.IO) {
+                into.parentFile?.mkdirs()
+                val tmp = java.io.File(into.path + ".part")
+                r.body?.byteStream()?.use { input -> tmp.outputStream().use { input.copyTo(it) } } ?: return@withContext null
+                if (tmp.renameTo(into)) into else null
+            }
+        }
+    }
     suspend fun discoverHome(): DiscoverHome = get("/api/discover/home")
     suspend fun catalog(type: String, sort: String, genre: Int?, page: Int): CatalogPage =
         get("/api/discover/browse", mapOf("type" to type, "sort" to sort, "genre" to (genre?.toString() ?: ""), "page" to page.toString()))

@@ -23,6 +23,17 @@ class AppState(context: Context) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val store = Store(context)
 
+    /** Clicks as focus moves, kept on this TV. */
+    private var uiSoundsOn by mutableStateOf(store.bool("uiSounds", true))
+    var uiSounds: Boolean
+        get() = uiSoundsOn
+        set(v) { uiSoundsOn = v; store.setBool("uiSounds", v) }
+    /** A show's or movie's theme on its details page, kept on this TV. */
+    private var themeMusicOn by mutableStateOf(store.bool("themeMusic", true))
+    var themeMusic: Boolean
+        get() = themeMusicOn
+        set(v) { themeMusicOn = v; store.setBool("themeMusic", v) }
+
     var serverUrl by mutableStateOf<HttpUrl?>(null)
         private set
     var api by mutableStateOf<WrenTVApi?>(null)

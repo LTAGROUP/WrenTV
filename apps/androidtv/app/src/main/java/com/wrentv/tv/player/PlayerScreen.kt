@@ -33,6 +33,7 @@ import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.Toc
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import com.wrentv.tv.ui.UiSounds
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -97,6 +98,11 @@ fun PlayerScreen(target: PlayTarget) {
     // Play film at a matching refresh rate; give the TV back its own mode on the way out.
     LaunchedEffect(c.frameRate) { DisplayMode.apply(context, c.frameRate) }
     DisposableEffect(Unit) { onDispose { DisplayMode.apply(context, 0f) } }
+    DisposableEffect(Unit) {
+        UiSounds.muted = true
+        ThemeMusic.stop()
+        onDispose { UiSounds.muted = false }
+    }
     LaunchedEffect(c.closeRequested) { if (c.closeRequested) nav.back() }
 
     var controls by remember { mutableStateOf(false) }
