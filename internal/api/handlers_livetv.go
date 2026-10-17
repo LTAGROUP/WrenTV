@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
@@ -33,7 +34,12 @@ func (s *Server) handleLivePlay(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "live TV is off")
 		return
 	}
-	sess, err := s.LiveTV.Play(r.Context(), principal(r).User.ID, chi.URLParam(r, "id"))
+	// Apple's players ask for HLS: they can't read a plain TS stream.
+	var req struct {
+		HLS bool `json:"hls"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+	sess, err := s.LiveTV.Play(r.Context(), principal(r).User.ID, chi.URLParam(r, "id"), req.HLS)
 	switch {
 	case errors.Is(err, livetv.ErrBusy):
 		writeErr(w, 429, err.Error())
@@ -42,7 +48,7 @@ func (s *Server) handleLivePlay(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"url": sess.URL(), "type": sess.Kind, "sessionId": sess.ID})
+	writeJSON(w, 200, map[string]any{"url": sess.URL(), "type": sess.Type(), "sessionId": sess.ID})
 }
 
 // ---------- admins ----------

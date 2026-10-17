@@ -46,6 +46,16 @@ struct WrenTVApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 720)
 
+        WindowGroup("Live TV", id: "live", for: LiveTarget.self) { $target in
+            if let target {
+                LivePlayerWindow(target: target)
+                    .environment(state)
+                    .preferredColorScheme(.dark)
+            }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1280, height: 720)
+
         Window("Downloads", id: "downloads") {
             NavigationStack { DownloadsView() }
                 .environment(state)

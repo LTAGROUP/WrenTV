@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,7 +34,8 @@ type Session struct {
 	Kind      string
 	upstream  string
 	userAgent string
-	key       []byte // signs the upstream URLs in rewritten playlists
+	key       []byte   // signs the upstream URLs in rewritten playlists
+	remux     *remuxer // a TS channel repackaged as HLS, for players that need it
 	ctx       context.Context
 	cancel    context.CancelFunc
 	last      atomic.Int64 // Unix seconds of the last request
@@ -60,7 +62,8 @@ var streamClient = &http.Client{
 
 // Play starts a session on a channel for a user. A user's other sessions
 // make room when the provider's limit is reached (the same TV flipping).
-func (s *Service) Play(ctx context.Context, userID, channelID string) (*Session, error) {
+// wantHLS asks for a TS channel to be repackaged as HLS (Apple's players).
+func (s *Service) Play(ctx context.Context, userID, channelID string, wantHLS bool) (*Session, error) {
 	c := s.Channel(channelID)
 	if c == nil {
 		return nil, errors.New("channel not found")
@@ -96,6 +99,9 @@ func (s *Service) Play(ctx context.Context, userID, channelID string) (*Session,
 		ID: randomHex(16), UserID: userID, ChannelID: channelID, Kind: kind,
 		upstream: c.URL, userAgent: c.UserAgent, key: []byte(randomHex(16)), ctx: sctx, cancel: cancel,
 	}
+	if kind == "ts" && wantHLS && s.FFmpeg != "" {
+		sess.remux = &remuxer{ffmpeg: s.FFmpeg, dir: filepath.Join(s.dir, "remux", sess.ID)}
+	}
 	sess.last.Store(time.Now().Unix())
 	ss.mu.Lock()
 	ss.byID[sess.ID] = sess
@@ -104,8 +110,19 @@ func (s *Service) Play(ctx context.Context, userID, channelID string) (*Session,
 	return sess, nil
 }
 
+// Type is what the player gets: "hls" or "ts".
+func (x *Session) Type() string {
+	if x.remux != nil {
+		return "hls"
+	}
+	return x.Kind
+}
+
 // URL is the session's stream, relative to the server.
 func (x *Session) URL() string {
+	if x.remux != nil {
+		return "/live/" + x.ID + "/hls/index.m3u8"
+	}
 	if x.Kind == "hls" {
 		return "/live/" + x.ID + "/index.m3u8"
 	}
@@ -210,6 +227,8 @@ func (x *Session) ServeHTTP(w http.ResponseWriter, r *http.Request, file string)
 	defer stop()
 
 	switch {
+	case x.remux != nil && strings.HasPrefix(file, "hls/"):
+		x.remux.serve(ctx, x, w, r, strings.TrimPrefix(file, "hls/"))
 	case file == "stream.ts" && x.Kind == "ts":
 		x.serveTS(ctx, w)
 	case file == "index.m3u8" && x.Kind == "hls":

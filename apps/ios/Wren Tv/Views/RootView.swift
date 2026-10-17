@@ -20,6 +20,11 @@ struct RootView: View {
                 .environment(state)
                 .preferredColorScheme(.dark)
         }
+        .fullScreenCover(item: $state.playingLive) { target in
+            LivePlayerView(target: target)
+                .environment(state)
+                .preferredColorScheme(.dark)
+        }
     }
 }
 

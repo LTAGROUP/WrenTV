@@ -168,6 +168,9 @@ struct ItemDetailView: View {
                     .buttonStyle(.glassCapsule)
                     .help(t.name)
             }
+            if let listed = detail?.onWatchlist {
+                WatchlistButton(item: item, listed: listed)
+            }
             Button {
                 Task {
                     try? await state.api?.setWatched(item.id, !item.isWatched)

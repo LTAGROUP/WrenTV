@@ -408,7 +408,7 @@ private struct UpNextCard: View {
 
 /// The video itself, on an AVPlayerLayer so Picture in Picture works with
 /// the app's own controls.
-private struct VideoLayerView: UIViewRepresentable {
+struct VideoLayerView: UIViewRepresentable {
     let player: AVPlayer
     let fill: Bool
     @Binding var pip: AVPictureInPictureController?
@@ -436,7 +436,7 @@ private struct VideoLayerView: UIViewRepresentable {
     }
 }
 
-private struct AirPlayButton: UIViewRepresentable {
+struct AirPlayButton: UIViewRepresentable {
     func makeUIView(context: Context) -> AVRoutePickerView {
         let v = AVRoutePickerView()
         v.tintColor = .white

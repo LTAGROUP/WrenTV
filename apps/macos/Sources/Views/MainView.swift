@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum SidebarItem: Hashable {
-    case home, collections, genres, movies, shows
+    case home, watchlist, liveTV, collections, genres, movies, shows
     case library(String)
     case downloads
     case stats, serverDownloads, users, manageLibraries, settings
@@ -18,6 +18,10 @@ struct MainView: View {
             List(selection: $selection) {
                 Section {
                     Label("Home", systemImage: "house").tag(SidebarItem.home)
+                    Label("Watchlist", systemImage: "bookmark").tag(SidebarItem.watchlist)
+                    if state.server?.liveTv == true {
+                        Label("Live TV", systemImage: "antenna.radiowaves.left.and.right").tag(SidebarItem.liveTV)
+                    }
                     if state.canStream {
                         // Everything plays, so there are no libraries to pick from:
                         // just movies and shows.
@@ -102,6 +106,8 @@ struct MainView: View {
     private var page: some View {
         switch selection ?? .home {
         case .home: HomeView()
+        case .watchlist: WatchlistView()
+        case .liveTV: LiveTVView()
         case .collections: CollectionsView()
         case .genres: GenresView()
         case .movies: CatalogView(type: "movie")

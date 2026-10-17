@@ -47,6 +47,9 @@ type Group struct {
 }
 
 type Service struct {
+	// FFmpeg repackages TS channels as HLS for Apple players; empty turns that off.
+	FFmpeg string
+
 	cfg    *config.Config
 	dir    string
 	client *http.Client

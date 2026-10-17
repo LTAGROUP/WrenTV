@@ -27,6 +27,7 @@ struct DiscoverHomeView: View {
                             }
                         }
                     }
+                    WatchlistShelf(items: home.watchlist)
                     ForEach(Array(home.rows.enumerated()), id: \.element.id) { i, row in
                         if i == 1 { recentlyWatched(home) }
                         Shelf(title: row.title) {

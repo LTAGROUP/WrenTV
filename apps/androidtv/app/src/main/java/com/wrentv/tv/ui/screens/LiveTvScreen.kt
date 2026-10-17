@@ -128,7 +128,8 @@ fun LiveTvScreen() {
     val shown = remember(channels, guide, query, group, now) {
         val q = query.trim().lowercase()
         channels.orEmpty()
-            .filter { group == null || it.groupName == group }
+            // A search looks across every channel, whatever group is picked.
+            .filter { q.isNotEmpty() || group == null || it.groupName == group }
             .filter { ch ->
                 q.isEmpty() || ch.name.lowercase().contains(q) || ch.number == q || ch.groupName.lowercase().contains(q) ||
                     programs(ch).any { it.title.lowercase().contains(q) }
@@ -145,7 +146,7 @@ fun LiveTvScreen() {
         ) {
             // The tab above already says Live TV: the header is just search and resume.
             Icon(Icons.Rounded.Search, null, Modifier.size(26.dp), tint = Wren.secondary)
-            TvTextField(query, { query = it }, "", Modifier.rememberFocus("search"), placeholder = "Search channels and shows", width = 460.dp)
+            TvTextField(query, { query = it }, "", Modifier.rememberFocus("search"), placeholder = "Search all channels and shows", width = 460.dp)
             Spacer(Modifier.weight(1f))
             if (last != null) {
                 PillButton(
@@ -200,7 +201,7 @@ fun LiveTvScreen() {
                                     val next = (windowStart + delta).coerceIn(base, maxOf(base, lastStart))
                                     if (next != windowStart) { paged = next; true } else false
                                 },
-                                onClick = { nav.push(Route.LivePlayer(ch.id, group)) },
+                                onClick = { nav.push(Route.LivePlayer(ch.id, group.takeIf { query.isBlank() })) },
                             )
                         }
                     }

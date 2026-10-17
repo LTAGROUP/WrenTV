@@ -31,6 +31,7 @@ struct LibraryHomeView: View {
                             }
                         }
                     }
+                    WatchlistShelf(items: home.watchlist)
                     if let t = trending {
                         if t.enabled && !t.items.isEmpty {
                             Shelf(title: "Trending This Week", subtitle: "\(t.items.filter { $0.item != nil }.count) in your library") {
@@ -58,7 +59,7 @@ struct LibraryHomeView: View {
                     ForEach(home.genres ?? [], id: \.genre) { row in
                         itemShelf(row.genre, row.items)
                     }
-                    if home.continueWatching.isEmpty && home.recentlyAdded.isEmpty {
+                    if home.continueWatching.isEmpty && home.recentlyAdded.isEmpty && (home.watchlist ?? []).isEmpty {
                         ContentUnavailableView("Nothing here yet", systemImage: "film.stack",
                                                description: Text(state.isAdmin ? "Add a library under Server → Libraries." : "Ask the server owner to share a library."))
                             .padding(.top, 120)
@@ -115,14 +116,30 @@ struct LibraryHomeView: View {
 struct ItemContextMenu: View {
     @Environment(AppState.self) private var state
     let item: Item
+    /// Opened from the watchlist, so the menu can take it off.
+    var onWatchlist = false
 
     var body: some View {
         if item.isPlayable || item.kind == "show" || item.kind == "season" {
             if item.isWatched {
-                Button("Mark as Unwatched") { set(false) }
+                Button("Mark as Unwatched", systemImage: "eye.slash") { set(false) }
             } else {
-                Button("Mark as Watched") { set(true) }
+                Button("Mark as Watched", systemImage: "checkmark.circle") { set(true) }
             }
+        }
+        if item.kind == "movie" || item.kind == "show" {
+            if onWatchlist {
+                Button("Remove from Watchlist", systemImage: "bookmark.slash") { watchlist(false) }
+            } else {
+                Button("Add to Watchlist", systemImage: "bookmark") { watchlist(true) }
+            }
+        }
+    }
+
+    private func watchlist(_ on: Bool) {
+        Task {
+            try? await state.api?.setWatchlist(item.id, on)
+            state.refreshTick += 1
         }
     }
 

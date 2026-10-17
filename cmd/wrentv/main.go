@@ -245,6 +245,7 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	}
 
 	live := livetv.New(cfg, dataDir)
+	live.FFmpeg = cfg.Transcode.FFmpegPath
 	live.Start(ctx)
 
 	srv := &api.Server{

@@ -158,6 +158,31 @@ struct WrenTVAPI: Sendable {
         try await send("POST", "/api/items/\(id)/watched", body: ["watched": watched])
     }
 
+    // Watchlist
+    func watchlist() async throws -> [Item] { try await get("/api/watchlist") }
+    func setWatchlist(_ id: String, _ on: Bool) async throws {
+        try await send(on ? "PUT" : "DELETE", "/api/items/\(id)/watchlist")
+    }
+
+    // Live TV
+    func liveChannels() async throws -> [LiveChannel] {
+        let r: LiveChannelsResponse = try await get("/api/livetv/channels")
+        return r.channels
+    }
+    func liveGuide(hours: Int) async throws -> [LiveGuideChannel] {
+        let r: LiveGuideResponse = try await get("/api/livetv/guide", query: [.init(name: "hours", value: String(hours))])
+        return r.channels
+    }
+    /// hls asks the server to repackage plain TS channels as HLS, for AVPlayer.
+    func playChannel(_ id: String, hls: Bool) async throws -> LivePlayResponse {
+        try await post("/api/livetv/channels/\(id)/play", ["hls": hls])
+    }
+    func liveLogoURL(_ logo: String?) -> URL? {
+        guard let logo, !logo.isEmpty else { return nil }
+        if logo.hasPrefix("http://") || logo.hasPrefix("https://") { return URL(string: logo) }
+        return absolute(logo)
+    }
+
     func stopSession(_ sid: String) async {
         _ = try? await send("DELETE", "/api/sessions/\(sid)")
     }

@@ -90,6 +90,8 @@ struct ServerInfo: Codable {
     /// The server's id in the account service (account servers only).
     var serverId: String?
     var localUrls: [String]?
+    /// The owner has set up live TV (IPTV) and it has channels.
+    var liveTv: Bool?
 
     /// Signs in with a Wren TV account (email) rather than a server-local username.
     var usesAccounts: Bool { authMode == "supabase" && supabase != nil }
@@ -123,6 +125,8 @@ struct HomeResponse: Codable {
     var topRated: [Item]?
     var genres: [GenreRow]?
     var collections: [CollectionShelf]?
+    /// Still to watch, newest added first. Nil on servers from before the watchlist.
+    var watchlist: [Item]?
 }
 
 /// The streaming home page: rows of TMDB titles.
@@ -136,6 +140,7 @@ struct DiscoverHome: Codable {
     var streaming: Bool?
     var continueWatching: [Item]
     var recentlyWatched: [Item]
+    var watchlist: [Item]?
     var hero: [TitleView]
     var rows: [Row]
 }
@@ -379,6 +384,8 @@ struct ItemDetail: Codable {
     /// The item lives in a streaming library.
     var streaming: Bool?
     var canDownload: Bool?
+    /// Movies and shows only; nil on servers from before the watchlist.
+    var onWatchlist: Bool?
 }
 
 /// A device download link: the original file (or stream) for this device.
@@ -724,4 +731,63 @@ struct StatsResponse: Codable {
     var library: LibraryStats
     var nowPlaying: [NowPlaying]?
     var recent: [HistoryRow]?
+}
+
+// MARK: Live TV
+
+/// A programme in the guide. Times are Unix seconds.
+struct LiveProgram: Codable, Hashable {
+    var title: String
+    var start: Int64
+    var end: Int64
+    var description: String?
+    var episode: String?
+
+    var startDate: Date { Date(timeIntervalSince1970: TimeInterval(start)) }
+    var endDate: Date { Date(timeIntervalSince1970: TimeInterval(end)) }
+
+    func progress(at now: Date) -> Double {
+        guard end > start else { return 0 }
+        return min(max((now.timeIntervalSince1970 - TimeInterval(start)) / TimeInterval(end - start), 0), 1)
+    }
+
+    /// "8:00 – 9:30 PM"
+    var timeRange: String {
+        let f = Date.FormatStyle(date: .omitted, time: .shortened)
+        return "\(startDate.formatted(f)) – \(endDate.formatted(f))"
+    }
+}
+
+struct LiveChannel: Codable, Hashable, Identifiable {
+    var id: String
+    var name: String
+    var number: String?
+    /// Absolute, or a path on the server.
+    var logo: String?
+    var group: String?
+    var now: LiveProgram?
+    var next: LiveProgram?
+}
+
+struct LiveChannelsResponse: Codable {
+    var channels: [LiveChannel]
+}
+
+/// One channel's programmes over the next few hours.
+struct LiveGuideChannel: Codable {
+    var id: String
+    var programs: [LiveProgram]
+}
+
+struct LiveGuideResponse: Codable {
+    var channels: [LiveGuideChannel]
+}
+
+/// How to play a channel: the server proxies the provider's stream, so the
+/// URL is the server's, session-scoped like a film's.
+struct LivePlayResponse: Codable {
+    var url: String
+    /// "hls" or "ts" (a plain MPEG-TS stream).
+    var type: String
+    var sessionId: String
 }

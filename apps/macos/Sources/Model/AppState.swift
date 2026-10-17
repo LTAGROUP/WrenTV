@@ -13,6 +13,8 @@ final class AppState {
     var libraries: [Library] = []
     /// Bumped when the server reports library changes; views reload on change.
     var refreshTick = 0
+    /// The server's live TV channels, kept for flipping through them in the player.
+    var liveChannels: [LiveChannel] = []
     var restoring = true
     /// What this user may do: stream, download to this Mac, how many at once.
     var limits: UserLimitsInfo?
@@ -239,7 +241,10 @@ final class AppState {
     /// reconnect and whenever the app comes to the front.
     func refreshStatus() async {
         guard let api else { return }
-        if let info = try? await api.serverInfo() { server?.streaming = info.streaming }
+        if let info = try? await api.serverInfo() {
+            server?.streaming = info.streaming
+            server?.liveTv = info.liveTv
+        }
         if let me = try? await api.me() {
             limits = me.limits
             downloads.connect(api: api, limits: me.limits)

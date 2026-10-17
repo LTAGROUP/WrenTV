@@ -1,13 +1,18 @@
 import SwiftUI
 
 enum AppTab: Hashable {
-    case home, movies, shows, library, downloads, more, search
+    case home, movies, shows, library, liveTV, downloads, more, search
 }
 
 /// Tabs on iPhone, a sidebar on iPad.
 struct MainView: View {
     @Environment(AppState.self) private var state
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var tab: AppTab = .home
+
+    /// Live TV gets a tab unless the iPhone's bar is already full (Movies
+    /// and TV Shows); then it's the first row under More.
+    private var liveTab: Bool { state.hasLiveTV && (sizeClass != .compact || !state.canStream) }
 
     var body: some View {
         TabView(selection: $tab) {
@@ -28,8 +33,13 @@ struct MainView: View {
                     TabStack { LibrariesView() }
                 }
             }
-            // iPhone fits five tabs: with Movies and TV Shows, Downloads moves into More.
-            if state.showsDownloads && !state.canStream {
+            if liveTab {
+                Tab("Live TV", systemImage: "antenna.radiowaves.left.and.right", value: AppTab.liveTV) {
+                    TabStack { LiveTVView() }
+                }
+            }
+            // iPhone fits five tabs: with Movies and TV Shows, or Live TV, Downloads moves into More.
+            if state.showsDownloads && !state.canStream && !(liveTab && sizeClass == .compact) {
                 Tab("Downloads", systemImage: "arrow.down.circle", value: AppTab.downloads) {
                     TabStack { DownloadsView() }
                 }
@@ -74,6 +84,7 @@ struct LibrariesView: View {
     var body: some View {
         List {
             Section {
+                NavigationLink { WatchlistView() } label: { Label("Watchlist", systemImage: "bookmark") }
                 NavigationLink { CollectionsView() } label: { Label("Collections", systemImage: "square.stack") }
                 NavigationLink { GenresView() } label: { Label("Genres", systemImage: "tag") }
             }
@@ -91,17 +102,26 @@ struct LibrariesView: View {
 /// Collections, your settings, the server's admin pages and the account.
 struct MoreView: View {
     @Environment(AppState.self) private var state
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var confirmSignOut = false
 
     var body: some View {
         List {
-            if state.canStream {
+            if state.canStream || (state.hasLiveTV && sizeClass == .compact) {
                 Section {
-                    if state.showsDownloads {
+                    if state.hasLiveTV && state.canStream && sizeClass == .compact {
+                        NavigationLink { LiveTVView() } label: { Label("Live TV", systemImage: "antenna.radiowaves.left.and.right") }
+                    }
+                    if state.canStream {
+                        NavigationLink { WatchlistView() } label: { Label("Watchlist", systemImage: "bookmark") }
+                    }
+                    if state.showsDownloads && (state.canStream || (state.hasLiveTV && sizeClass == .compact)) {
                         NavigationLink { DownloadsView() } label: { Label("Downloads", systemImage: "arrow.down.circle") }
                             .badge(state.downloads.items.filter(\.active).count)
                     }
-                    NavigationLink { CollectionsView() } label: { Label("Collections", systemImage: "square.stack") }
+                    if state.canStream {
+                        NavigationLink { CollectionsView() } label: { Label("Collections", systemImage: "square.stack") }
+                    }
                 }
             }
             Section {
@@ -170,6 +190,9 @@ struct SearchTab: View {
 }
 
 extension AppState {
+    /// The server has live TV channels.
+    var hasLiveTV: Bool { server?.liveTv == true }
+
     /// Downloads exist on this device or this user may make them.
     var showsDownloads: Bool { !downloads.items.isEmpty || limits?.canDownload == true }
 }
