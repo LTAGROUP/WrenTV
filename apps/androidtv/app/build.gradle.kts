@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -18,13 +20,28 @@ android {
         versionName = "0.1.0"
     }
 
+    // The release key lives beside the project, uncommitted (see keystore.properties).
+    // Without it, release builds fall back to the debug key.
+    val keystore = rootProject.file("keystore.properties").takeIf { it.exists() }?.let { f ->
+        Properties().apply { f.inputStream().use { load(it) } }
+    }
+    signingConfigs {
+        if (keystore != null) {
+            create("release") {
+                storeFile = rootProject.file(keystore.getProperty("storeFile"))
+                storePassword = keystore.getProperty("storePassword")
+                keyAlias = keystore.getProperty("keyAlias")
+                keyPassword = keystore.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             optimization {
                 enable = true
             }
-            // Signed with the debug key until a release key is set up.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
     compileOptions {
