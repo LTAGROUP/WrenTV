@@ -183,8 +183,12 @@ final class PlayerModel {
         if resp.method != "direct" {
             // Wait for the server's first segments here: AVPlayer gives up on them after 6 seconds.
             phase = .pending("Starting the stream…")
-            await StreamWarmup.prepare(api.absolute(path), start: start)
+            let ready = await StreamWarmup.prepare(api.absolute(path), start: start)
             if Task.isCancelled || stopped { return }
+            guard ready else {
+                phase = .error("The server couldn't read this stream from its source. Try again, or pick another version.")
+                return
+            }
         }
         startAV(api.absolute(path), start: start, subtitle: resp.subtitleIndex.flatMap { $0 >= 0 ? $0 : nil }, direct: resp.method == "direct")
         phase = .playing
@@ -330,6 +334,16 @@ final class PlayerModel {
         audioIndex = nil
         keptSubtitle = nil
         restartStream(at: position)
+    }
+
+    /// Starts over after a failure. The failed stream is closed on the server
+    /// first, or it keeps reading the source (and holding a stream slot).
+    func retry() {
+        let old = sessionId
+        sessionId = nil
+        teardown()
+        if let old { Task { await api.stopSession(old) } }
+        start(at: position > 0 ? position : nil)
     }
 
     private func restartStream(at pos: Double) {

@@ -394,7 +394,12 @@ class PlayerController(
         start(pos)
     }
 
+    /** Starts over after a failure, closing the failed stream on the server first. */
     fun retry() {
+        val old = sessionId
+        sessionId = null
+        player.stop()
+        old?.let { sid -> api?.let { a -> appScope.launch { runCatching { a.stopSession(sid) } } } }
         start(position.takeIf { it > 0 })
     }
 

@@ -250,7 +250,7 @@ func (r *remuxer) produce(track string, n int) error {
 		if seg.start > 0 {
 			args = append(args, "-ss", fmtTS(seg.start+seekNudge))
 		}
-		args = append(args, "-i", s.Src.Input(), "-map", fmt.Sprintf("0:v:%d", v.TypeIdx), "-c:v", "copy")
+		args = append(append(args, s.inputArgs()...), "-map", fmt.Sprintf("0:v:%d", v.TypeIdx), "-c:v", "copy")
 		if r.tag != "" {
 			args = append(args, "-tag:v", r.tag)
 		}
@@ -282,7 +282,7 @@ func (r *remuxer) produce(track string, n int) error {
 		if seg.start > 0 {
 			args = append(args, "-ss", fmtTS(seg.start))
 		}
-		args = append(args, "-i", s.Src.Input(), "-map", fmt.Sprintf("0:a:%d", a.TypeIdx))
+		args = append(append(args, s.inputArgs()...), "-map", fmt.Sprintf("0:a:%d", a.TypeIdx))
 		if s.Decision.AudioCopy {
 			// Drop packets before the start; the previous segment owns them.
 			args = append(args, "-c:a", "copy", "-copypriorss", "0")
@@ -324,6 +324,17 @@ func (r *remuxer) produce(track string, n int) error {
 		return fmt.Errorf("ffmpeg remux %s segment %d: %v: %s", track, n, err, strings.TrimSpace(stderr.String()))
 	}
 	return splitFragment(out, filepath.Join(r.trackDir(track), "init.mp4"), filepath.Join(r.trackDir(track), strconv.Itoa(n)+".m4s"))
+}
+
+// inputArgs opens the source for one segment. A network read that stalls
+// fails after 20 seconds instead of holding the segment, and the player
+// waiting on it, for the whole two-minute limit.
+func (s *Session) inputArgs() []string {
+	in := s.Src.Input()
+	if strings.HasPrefix(in, "http://") || strings.HasPrefix(in, "https://") {
+		return []string{"-rw_timeout", "20000000", "-i", in}
+	}
+	return []string{"-i", in}
 }
 
 // aacFrame is the length of an AAC frame in samples.
@@ -372,7 +383,7 @@ func (r *remuxer) encodeAAC(a *media.Stream, n int, out string) error {
 	if from > 0 {
 		args = append(args, "-ss", strconv.FormatFloat(timeOf(from), 'f', 6, 64))
 	}
-	args = append(args, "-i", s.Src.Input(), "-map", fmt.Sprintf("0:a:%d", a.TypeIdx), "-vn", "-sn", "-dn")
+	args = append(append(args, s.inputArgs()...), "-map", fmt.Sprintf("0:a:%d", a.TypeIdx), "-vn", "-sn", "-dn")
 	if end >= 0 {
 		// A couple of frames past the end, so the last kept one isn't the padded tail.
 		args = append(args, "-t", strconv.FormatFloat(timeOf(end+2-from), 'f', 6, 64))

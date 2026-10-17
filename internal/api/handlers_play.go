@@ -199,6 +199,12 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	// The player was closed while this was set up: it will never learn the
+	// session's id to stop it, so don't leave it reading the source.
+	if ctx.Err() != nil {
+		s.Streams.Stop(sess.ID)
+		return
+	}
 
 	resp := playResponse{
 		Status: "ready", SessionID: sess.ID, Engine: dec.Engine, Method: dec.Method, Decision: &dec,

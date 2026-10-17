@@ -717,6 +717,25 @@ func (s *Service) Source(ctx context.Context, f *db.MediaFile) (stream.Source, e
 	global, _ := s.limiters()
 	src := &debridSource{svc: s, streamID: st.ID, token: randToken(), size: size, name: st.FileName, url: u, release: release,
 		t: throttle{global, newLimiter(s.cfg().Limits.PerStreamMbps)}}
+	// The provider can hand out a link whose CDN only returns errors. Find out
+	// now, so the stream is replaced instead of the player waiting on
+	// segments that never come.
+	if err := src.check(ctx); err != nil {
+		release()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		slog.Warn("debrid stream failed", "stream", st.ID, "file", st.FileName, "err", err)
+		s.mu.Lock()
+		delete(s.links, st.ID)
+		s.mu.Unlock()
+		// Twice in a row: drop it, so another version or release plays instead.
+		if n, _ := s.DB.StreamFailed(ctx, st.ID); n >= 2 {
+			_ = s.DB.DeleteStream(ctx, st.ID)
+			_ = s.DB.PutStreamLookup(ctx, db.StreamLookup{ItemID: st.ItemID, LookedAt: 0})
+		}
+		return nil, ErrUnavailable
+	}
 	s.mu.Lock()
 	s.sources[src.token] = src
 	s.mu.Unlock()

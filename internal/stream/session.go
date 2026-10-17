@@ -276,7 +276,10 @@ func (s *Session) serveInit(w http.ResponseWriter, r *http.Request, track string
 		return
 	}
 	if err != nil {
-		slog.Warn("init segment failed", "session", s.ID, "err", err)
+		// A stopped session kills its ffmpeg runs; that isn't a failure.
+		if s.ctx.Err() == nil {
+			slog.Warn("init segment failed", "session", s.ID, "err", err)
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -298,7 +301,9 @@ func (s *Session) serveSegment(w http.ResponseWriter, r *http.Request, track str
 	}
 	if err != nil {
 		if r.Context().Err() == nil {
-			slog.Warn("segment failed", "session", s.ID, "track", track, "n", n, "err", err)
+			if s.ctx.Err() == nil { // a stopped session kills its ffmpeg runs
+				slog.Warn("segment failed", "session", s.ID, "track", track, "n", n, "err", err)
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 		return

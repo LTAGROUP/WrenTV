@@ -339,6 +339,16 @@ final class PlayerModel {
         mpvTracks = mpvTracks.map { var x = $0; if x.type == (t?.type ?? "sub") { x.selected = x.id == t?.id }; return x }
     }
 
+    /// Starts over after a failure. The failed stream is closed on the server
+    /// first, or it keeps reading the source (and holding a stream slot).
+    func retry() {
+        let old = sessionId
+        sessionId = nil
+        teardownEngines()
+        if let old { Task { await api.stopSession(old) } }
+        start(at: position > 0 ? position : nil)
+    }
+
     private func restartStream(at pos: Double) {
         if let item = avPlayer?.currentItem, let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible) {
             keptSubtitle = item.currentMediaSelection.selectedMediaOption(in: group)?.displayName

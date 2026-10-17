@@ -18,20 +18,30 @@ enum StreamWarmup {
     }()
 
     /// Fetches every rendition's init segment and the segment holding `start`.
-    /// Errors are ignored: AVPlayer then tries on its own, as before.
-    static func prepare(_ master: URL, start: Double) async {
-        guard let text = await fetchText(master) else { return }
+    /// Returns false when the server answered one of them with an error (it
+    /// couldn't read the source), so the player can say so instead of waiting.
+    /// A request that only fails to connect or times out isn't counted:
+    /// AVPlayer then tries on its own, as before.
+    static func prepare(_ master: URL, start: Double) async -> Bool {
+        guard let text = await fetchText(master) else { return true }
         let playlists = renditions(in: text, base: master)
-        await withTaskGroup(of: Void.self) { group in
+        return await withTaskGroup(of: Bool.self) { group in
             for playlist in playlists {
                 group.addTask {
-                    guard let media = await fetchText(playlist) else { return }
+                    guard let media = await fetchText(playlist) else { return true }
                     let urls = firstFetches(in: media, base: playlist, start: start)
-                    await withTaskGroup(of: Void.self) { inner in
-                        for u in urls { inner.addTask { _ = try? await session.data(from: u) } }
+                    return await withTaskGroup(of: Bool.self) { inner in
+                        for u in urls {
+                            inner.addTask {
+                                guard let (_, resp) = try? await session.data(from: u) else { return true }
+                                return ((resp as? HTTPURLResponse)?.statusCode ?? 200) < 500
+                            }
+                        }
+                        return await inner.allSatisfy { $0 }
                     }
                 }
             }
+            return await group.allSatisfy { $0 }
         }
     }
 

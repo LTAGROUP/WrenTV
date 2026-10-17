@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
@@ -160,6 +161,22 @@ func (s *debridSource) open(ctx context.Context, method, rng string) (*http.Resp
 	}
 }
 
+// check reads the first byte, refreshing the link once if it fails.
+func (s *debridSource) check(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	resp, err := s.open(ctx, http.MethodGet, "bytes=0-0")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("debrid CDN: %s", resp.Status)
+	}
+	_, err = io.ReadFull(resp.Body, make([]byte, 1))
+	return err
+}
+
 func (s *debridSource) ReadAt(p []byte, off int64) (int, error) {
 	if off >= s.size {
 		return 0, io.EOF
@@ -187,6 +204,7 @@ func (s *debridSource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.open(r.Context(), r.Method, r.Header.Get("Range"))
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
+			slog.Warn("debrid stream failed", "stream", s.streamID, "range", r.Header.Get("Range"), "err", err)
 			http.Error(w, "stream unavailable", http.StatusBadGateway)
 		}
 		return

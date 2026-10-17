@@ -83,7 +83,7 @@ private struct PlayerContent: View {
                 Text("Can't play this right now").font(.title2.bold())
                 Text(msg).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 480)
                 HStack {
-                    Button("Try Again") { model.start(at: model.position > 0 ? model.position : nil) }
+                    Button("Try Again") { model.retry() }
                     Button("Close", action: close)
                 }
             }
