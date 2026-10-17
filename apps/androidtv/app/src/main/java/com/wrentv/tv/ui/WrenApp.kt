@@ -66,6 +66,7 @@ import com.wrentv.tv.ui.screens.GenreItemsScreen
 import com.wrentv.tv.ui.screens.GenresScreen
 import com.wrentv.tv.ui.screens.HomeScreen
 import com.wrentv.tv.ui.screens.LibraryScreen
+import com.wrentv.tv.ui.screens.LiveGroupScreen
 import com.wrentv.tv.ui.screens.LiveTvScreen
 import com.wrentv.tv.ui.screens.ManageLibrariesScreen
 import com.wrentv.tv.ui.screens.SearchScreen
@@ -200,7 +201,8 @@ private fun Page(route: Route) {
         is Route.StreamTitle -> StreamTitleScreen(route)
         is Route.Trailer -> TrailerScreen(route.youtubeKey, route.title)
         is Route.Player -> PlayerScreen(route.target)
-        is Route.LivePlayer -> LivePlayerScreen(route.channelId)
+        is Route.LiveGroup -> LiveGroupScreen(route.group)
+        is Route.LivePlayer -> LivePlayerScreen(route.channelId, route.group)
     }
 }
 

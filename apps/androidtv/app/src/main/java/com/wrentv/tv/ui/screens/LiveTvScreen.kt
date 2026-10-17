@@ -49,7 +49,6 @@ import com.wrentv.tv.ui.PillButton
 import com.wrentv.tv.ui.RemoteImage
 import com.wrentv.tv.ui.ReportScroll
 import com.wrentv.tv.ui.Route
-import com.wrentv.tv.ui.SectionTitle
 import com.wrentv.tv.ui.TopBarSpace
 import com.wrentv.tv.ui.Wren
 import com.wrentv.tv.ui.rememberFocus
@@ -58,7 +57,7 @@ import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
 
-/** The server's live channels, in the provider's groups, with what's on now. */
+/** The server's live channels: the provider's groups, or the channels themselves when there's only one. */
 @Composable
 fun LiveTvScreen() {
     val state = LocalAppState.current
@@ -72,6 +71,7 @@ fun LiveTvScreen() {
     val channels = loaded.value
     val now = System.currentTimeMillis() / 1000
     val last = state.lastChannel?.let { id -> channels?.firstOrNull { it.id == id } }
+    val groups = channels?.groupBy { it.groupName }.orEmpty()
 
     LazyColumn(
         Modifier.fillMaxSize(), state = list,
@@ -79,7 +79,10 @@ fun LiveTvScreen() {
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         item("header") {
-            PageHeader("Live TV", channels?.takeIf { it.isNotEmpty() }?.let { "${it.size} channels" }) {
+            val subtitle = channels?.takeIf { it.isNotEmpty() }?.let {
+                if (groups.size > 1) "${groups.size} groups · ${it.size} channels" else "${it.size} channels"
+            }
+            PageHeader("Live TV", subtitle) {
                 if (last != null) {
                     PillButton(
                         "Watch ${last.name}", { nav.push(Route.LivePlayer(last.id)) },
@@ -94,20 +97,101 @@ fun LiveTvScreen() {
             channels.isEmpty() -> item("empty") {
                 EmptyState("No channels yet", "Your server's admin can add an IPTV playlist in the web dashboard.", icon = Icons.Rounded.LiveTv)
             }
-            else -> {
-                val groups = channels.groupBy { it.group?.takeIf { g -> g.isNotBlank() } ?: "Channels" }
-                groups.entries.forEachIndexed { gi, (group, inGroup) ->
-                    if (groups.size > 1) item("group:$group") { SectionTitle(group, Modifier.padding(start = PageGutter, top = if (gi == 0) 8.dp else 24.dp, bottom = 6.dp)) }
-                    items(inGroup, key = { "ch:${it.id}" }) { ch ->
-                        ChannelRow(
-                            ch, state.api, now,
-                            onClick = { nav.push(Route.LivePlayer(ch.id)) },
-                            modifier = Modifier.padding(horizontal = PageGutter)
-                                .rememberFocus("ch:${ch.id}", default = last == null && ch === channels.first()),
-                        )
-                    }
+            groups.size == 1 -> {
+                val sorted = channels.inGroup(groups.keys.first(), now)
+                items(sorted, key = { "ch:${it.id}" }) { ch ->
+                    ChannelRow(
+                        ch, state.api, now,
+                        onClick = { nav.push(Route.LivePlayer(ch.id)) },
+                        modifier = Modifier.padding(horizontal = PageGutter)
+                            .rememberFocus("ch:${ch.id}", default = last == null && ch === sorted.first()),
+                    )
                 }
             }
+            else -> {
+                val names = groups.keys.toList()
+                items(names, key = { "group:$it" }) { name ->
+                    val inGroup = groups.getValue(name)
+                    GroupRow(
+                        name, inGroup.size, inGroup.count { it.onAir(now) },
+                        onClick = { nav.push(Route.LiveGroup(name)) },
+                        modifier = Modifier.padding(horizontal = PageGutter)
+                            .rememberFocus("group:$name", default = last == null && name == names.first()),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** One provider group's channels, the ones with something on right now first. */
+@Composable
+fun LiveGroupScreen(group: String) {
+    val state = LocalAppState.current
+    val nav = LocalNavigator.current
+    val list = rememberLazyListState()
+    ReportScroll(list)
+    var tick by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) { while (true) { delay(60_000); tick++ } }
+    val loaded = rememberLoaded("livetv", refresh = tick) { state.loadLiveChannels() }
+    val now = System.currentTimeMillis() / 1000
+    val channels = loaded.value?.inGroup(group, now)
+
+    LazyColumn(
+        Modifier.fillMaxSize(), state = list,
+        contentPadding = PaddingValues(top = TopBarSpace, bottom = 48.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        item("header") {
+            PageHeader(group, channels?.takeIf { it.isNotEmpty() }?.let { onAirLabel(it.size, it.count { c -> c.onAir(now) }) })
+        }
+        when {
+            channels == null && loaded.error != null -> item("error") { EmptyState("Couldn't load channels", loaded.error, icon = Icons.Rounded.LiveTv) }
+            channels == null -> item("loading") { Loading() }
+            channels.isEmpty() -> item("empty") { EmptyState("No channels in $group", icon = Icons.Rounded.LiveTv) }
+            else -> items(channels, key = { "ch:${it.id}" }) { ch ->
+                ChannelRow(
+                    ch, state.api, now,
+                    onClick = { nav.push(Route.LivePlayer(ch.id, group)) },
+                    modifier = Modifier.padding(horizontal = PageGutter)
+                        .rememberFocus("ch:${ch.id}", default = ch === channels.first()),
+                )
+            }
+        }
+    }
+}
+
+private val LiveChannel.groupName: String get() = group?.takeIf { it.isNotBlank() } ?: "Channels"
+
+/** The guide has a programme airing on it now. */
+fun LiveChannel.onAir(at: Long): Boolean = now?.let { at >= it.start && at < it.end } == true
+
+/** [group]'s channels, those on air first, otherwise in the provider's order. */
+fun List<LiveChannel>.inGroup(group: String, now: Long): List<LiveChannel> =
+    filter { it.groupName == group }.sortedBy { !it.onAir(now) }
+
+private fun onAirLabel(total: Int, live: Int): String =
+    (if (total == 1) "1 channel" else "$total channels") + if (live > 0) " · $live on now" else ""
+
+@Composable
+private fun GroupRow(name: String, total: Int, live: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Wren.surface, contentColor = Wren.text,
+            focusedContainerColor = Color.White, focusedContentColor = Color.Black,
+        ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().height(72.dp).padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Text(name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(onAirLabel(total, live), style = MaterialTheme.typography.bodyMedium, maxLines = 1, color = LocalContentColor.current.copy(alpha = 0.6f))
         }
     }
 }

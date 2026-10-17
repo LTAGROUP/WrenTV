@@ -73,6 +73,7 @@ import com.wrentv.tv.ui.Spinner
 import com.wrentv.tv.ui.UiSounds
 import com.wrentv.tv.ui.Wren
 import com.wrentv.tv.ui.screens.ChannelLogo
+import com.wrentv.tv.ui.screens.inGroup
 import com.wrentv.tv.ui.screens.timeOf
 import com.wrentv.tv.ui.screens.timeRange
 import kotlinx.coroutines.android.awaitFrame
@@ -84,22 +85,24 @@ import kotlinx.coroutines.delay
  * Back closes whatever is showing, then leaves.
  */
 @Composable
-fun LivePlayerScreen(channelId: String) {
+fun LivePlayerScreen(channelId: String, group: String? = null) {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
-    var channels by remember { mutableStateOf(state.liveChannels) }
+    // Opened from a group, flipping stays in it, in the order the group page shows.
+    val pick = { all: List<LiveChannel> -> if (group == null) all else all.inGroup(group, System.currentTimeMillis() / 1000) }
+    var channels by remember { mutableStateOf(pick(state.liveChannels)) }
     var error by remember { mutableStateOf<String?>(null) }
     // Opened without the list loaded (straight from Home, say): fetch it first.
     LaunchedEffect(Unit) {
         if (channels.none { it.id == channelId }) {
             runCatching { state.loadLiveChannels() }
-                .onSuccess { channels = it; if (it.none { c -> c.id == channelId }) error = "That channel isn't available any more." }
+                .onSuccess { channels = pick(it); if (it.none { c -> c.id == channelId }) error = "That channel isn't available any more." }
                 .onFailure { error = it.message ?: "Couldn't load channels" }
         }
     }
     val start = channels.firstOrNull { it.id == channelId }
     when {
-        start != null -> LivePlayer(channels, start)
+        start != null -> LivePlayer(channels, start, pick)
         error != null -> Box(Modifier.fillMaxSize().background(Color.Black)) {
             Failed(error!!, retry = null, back = { nav.back() })
         }
@@ -108,7 +111,7 @@ fun LivePlayerScreen(channelId: String) {
 }
 
 @Composable
-private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel) {
+private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel, pick: (List<LiveChannel>) -> List<LiveChannel>) {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
     val context = LocalContext.current
@@ -131,7 +134,7 @@ private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel) {
     LaunchedEffect(c) {
         while (true) {
             delay(60_000)
-            runCatching { state.loadLiveChannels() }.onSuccess { c.update(it) }
+            runCatching { state.loadLiveChannels() }.onSuccess { c.update(pick(it)) }
         }
     }
 
