@@ -77,6 +77,7 @@ struct LibraryHomeView: View {
         .navigationTitle("Home")
         .toolbar(.hidden, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
+        .homeSearchBar()
         .task(id: state.refreshTick) { await load() }
         .task { trending = (try? await state.api?.trending()) ?? TrendingResponse(enabled: false, items: []) }
     }

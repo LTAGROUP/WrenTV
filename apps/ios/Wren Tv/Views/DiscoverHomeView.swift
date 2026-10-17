@@ -59,6 +59,7 @@ struct DiscoverHomeView: View {
         .navigationTitle("Home")
         .toolbar(.hidden, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
+        .homeSearchBar()
         .task(id: state.refreshTick) {
             do {
                 home = try await state.api?.discoverHome()

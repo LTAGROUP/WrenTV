@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum AppTab: Hashable {
-    case home, movies, shows, library, liveTV, downloads, more, search
+    case home, movies, shows, library, liveTV, downloads, more
 }
 
 /// Tabs on iPhone, a sidebar on iPad.
@@ -48,9 +48,6 @@ struct MainView: View {
             Tab("More", systemImage: "ellipsis.circle", value: AppTab.more) {
                 TabStack { MoreView() }
             }
-            Tab(value: AppTab.search, role: .search) {
-                TabStack { SearchTab() }
-            }
         }
         .tabViewStyle(.sidebarAdaptable)
         .minimizesTabBarOnScroll()
@@ -74,6 +71,7 @@ extension View {
             .navigationDestination(for: WrenCollection.self) { CollectionDetailView(seed: $0) }
             .navigationDestination(for: GenreRoute.self) { GenreItemsView(route: $0) }
             .navigationDestination(for: StreamTitleRoute.self) { StreamTitleView(route: $0) }
+            .navigationDestination(for: SearchRoute.self) { _ in SearchTab() }
     }
 }
 
@@ -171,9 +169,53 @@ struct MoreView: View {
     }
 }
 
-/// The search tab: library matches first, then everything else TMDB knows.
+/// Opens the search page.
+struct SearchRoute: Hashable {}
+
+/// The search bar floating over the top of the home page. Tapping it opens
+/// the search page with the keyboard up.
+private struct HomeSearchBar: View {
+    var body: some View {
+        NavigationLink(value: SearchRoute()) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                Text("Search movies and shows")
+                Spacer(minLength: 0)
+            }
+            .font(.body)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: 560, minHeight: 42)
+            .searchCapsuleBackground()
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func searchCapsuleBackground() -> some View {
+        if #available(iOS 26, *) {
+            glassEffect(.regular.interactive(), in: Capsule())
+        } else {
+            background(.ultraThinMaterial, in: Capsule())
+        }
+    }
+}
+
+extension View {
+    func homeSearchBar() -> some View {
+        overlay(alignment: .top) { HomeSearchBar() }
+    }
+}
+
+/// The search page: library matches first, then everything else TMDB knows.
 struct SearchTab: View {
     @State private var query = ""
+    @FocusState private var focused: Bool
 
     var body: some View {
         Group {
@@ -185,7 +227,9 @@ struct SearchTab: View {
             }
         }
         .navigationTitle("Search")
-        .searchable(text: $query, prompt: "Movies and shows")
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Movies and shows")
+        .searchFocused($focused)
+        .onAppear { if query.isEmpty { focused = true } }
     }
 }
 
