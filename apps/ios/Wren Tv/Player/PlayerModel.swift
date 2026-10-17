@@ -102,6 +102,10 @@ final class PlayerModel {
     @ObservationIgnored private var dismissed: Set<Skip> = []
     @ObservationIgnored private var countdownTask: Task<Void, Never>?
     @ObservationIgnored private var remoteTargets: [Any] = []
+    /// Paused by the viewer, as opposed to by the system (a screen recording
+    /// starting, Control Center, a call), which shouldn't keep it paused.
+    @ObservationIgnored private var userPaused = false
+    @ObservationIgnored private var resumeObservers: [NSObjectProtocol] = []
 
     init(target: PlayTarget, api: WrenTVAPI, online: Bool) {
         self.api = api
@@ -219,6 +223,8 @@ final class PlayerModel {
         subs = []
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         endObserver = nil
+        resumeObservers.forEach(NotificationCenter.default.removeObserver)
+        resumeObservers = []
         if let avPlayer {
             avPlayer.pause()
             if let timeObserver { avPlayer.removeTimeObserver(timeObserver) }
@@ -257,6 +263,8 @@ final class PlayerModel {
         endObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.finished() }
         }
+        userPaused = false
+        observeInterruptions()
         player.play()
         // The server lists its text tracks in the stream, next to any captions
         // in the video. They start off unless the viewer's language setting
@@ -298,7 +306,53 @@ final class PlayerModel {
 
     func togglePause() {
         guard let p = avPlayer else { return }
-        p.rate == 0 ? p.play() : p.pause()
+        p.rate == 0 ? play() : pause()
+    }
+
+    private func play() {
+        userPaused = false
+        avPlayer?.play()
+    }
+
+    private func pause() {
+        userPaused = true
+        avPlayer?.pause()
+    }
+
+    /// Starting a screen recording (and opening Control Center to do it)
+    /// interrupts the audio session, and AVPlayer stays paused afterwards.
+    /// Pick up again once the app is back, unless the viewer paused.
+    private func observeInterruptions() {
+        let nc = NotificationCenter.default
+        resumeObservers = [
+            // Pauses from the PiP window or AirPlay controls count as the viewer's.
+            nc.addObserver(forName: AVPlayer.rateDidChangeNotification, object: avPlayer, queue: .main) { [weak self] n in
+                guard let p = n.object as? AVPlayer else { return }
+                let reason = n.userInfo?[AVPlayer.rateDidChangeReasonKey] as? AVPlayer.RateDidChangeReason
+                MainActor.assumeIsolated {
+                    if p.rate > 0 { self?.userPaused = false } else if reason == .setRateCalled, self?.stopped == false { self?.userPaused = true }
+                }
+            },
+            nc.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] n in
+                guard let raw = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                      AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
+                let opts = (n.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt).map(AVAudioSession.InterruptionOptions.init) ?? []
+                guard opts.contains(.shouldResume) else { return }
+                MainActor.assumeIsolated { self?.resumeIfSystemPaused() }
+            },
+            nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.resumeIfSystemPaused() }
+            },
+            nc.addObserver(forName: UIScreen.capturedDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.resumeIfSystemPaused() }
+            },
+        ]
+    }
+
+    private func resumeIfSystemPaused() {
+        guard !userPaused, !stopped, phase == .playing, let p = avPlayer, p.rate == 0 else { return }
+        try? AVAudioSession.sharedInstance().setActive(true)
+        p.play()
     }
 
     func seek(by d: Double) { seek(to: max(0, position + d)) }
@@ -361,8 +415,8 @@ final class PlayerModel {
         guard remoteTargets.isEmpty else { return }
         let c = MPRemoteCommandCenter.shared()
         remoteTargets = [
-            c.playCommand.addTarget { [weak self] _ in self?.avPlayer?.play(); return .success },
-            c.pauseCommand.addTarget { [weak self] _ in self?.avPlayer?.pause(); return .success },
+            c.playCommand.addTarget { [weak self] _ in self?.play(); return .success },
+            c.pauseCommand.addTarget { [weak self] _ in self?.pause(); return .success },
             c.togglePlayPauseCommand.addTarget { [weak self] _ in self?.togglePause(); return .success },
             c.skipForwardCommand.addTarget { [weak self] _ in self?.seek(by: 10); return .success },
             c.skipBackwardCommand.addTarget { [weak self] _ in self?.seek(by: -10); return .success },

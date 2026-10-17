@@ -83,6 +83,9 @@ type Service struct {
 type cachedLink struct {
 	url string
 	at  time.Time
+	// checked is when the CDN last answered for url; opening the item
+	// warms the link, so play right after needn't ask again.
+	checked time.Time
 }
 
 type lookup struct {
@@ -723,6 +726,15 @@ func (s *Service) Source(ctx context.Context, f *db.MediaFile) (stream.Source, e
 	// The provider can hand out a link whose CDN only returns errors. Find out
 	// now, so the stream is replaced instead of the player waiting on
 	// segments that never come.
+	s.mu.Lock()
+	c := s.links[st.ID]
+	s.mu.Unlock()
+	if c.url == u && time.Since(c.checked) < 2*time.Minute {
+		s.mu.Lock()
+		s.sources[src.token] = src
+		s.mu.Unlock()
+		return src, nil
+	}
 	if err := src.check(ctx); err != nil {
 		release()
 		if ctx.Err() != nil {
@@ -749,8 +761,10 @@ func (s *Service) Source(ctx context.Context, f *db.MediaFile) (stream.Source, e
 	}
 	s.mu.Lock()
 	delete(s.cdnFails, st.ID)
-	s.mu.Unlock()
-	s.mu.Lock()
+	if c, ok := s.links[st.ID]; ok && c.url == u {
+		c.checked = time.Now()
+		s.links[st.ID] = c
+	}
 	s.sources[src.token] = src
 	s.mu.Unlock()
 	return src, nil

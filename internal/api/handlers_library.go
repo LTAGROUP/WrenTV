@@ -415,6 +415,9 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 				next.Progress = ws
 			}
 			resp["nextEpisode"] = next
+			if streamed {
+				s.warmItem(next, p.User)
+			}
 		}
 	case "season":
 		eps, _, _ := s.DB.QueryItems(ctx, db.ItemQuery{ParentID: it.ID, Kind: "episode", Sort: "episode", UserID: p.User.ID})
@@ -428,6 +431,9 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 		}
 		fallthrough
 	case "movie":
+		if streamed {
+			s.warmItem(it, p.User)
+		}
 		files, _ := s.playableFiles(ctx, it)
 		views := []FileView{}
 		for _, f := range files {
