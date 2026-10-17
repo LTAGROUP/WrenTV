@@ -126,6 +126,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/items/{id}", s.handleItem)
 		r.Get("/api/items/{id}/children", s.handleChildren)
 		r.Get("/api/items/{id}/extras", s.handleExtras)
+		r.Get("/api/items/{id}/theme", s.handleTheme)
 		r.Get("/api/discover/home", s.handleDiscoverHome)
 		r.Get("/api/discover/browse", s.handleDiscoverBrowse)
 		r.Get("/api/discover/trending", s.handleTrending)

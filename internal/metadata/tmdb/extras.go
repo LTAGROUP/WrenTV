@@ -86,6 +86,7 @@ type Extras struct {
 	} `json:"similar"`
 	ExternalIDs struct {
 		IMDBID string `json:"imdb_id"`
+		TVDBID int    `json:"tvdb_id"`
 	} `json:"external_ids"`
 }
 
