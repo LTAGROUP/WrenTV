@@ -369,6 +369,21 @@ func TestStoredRARVolumes(t *testing.T) {
 // they're laid out differently (as RAR5 headers grow at volume 128), and
 // where that starts has to be found.
 func TestManyRARVolumes(t *testing.T) {
+	// "x.rar, x.r00, ..." and "x.part01.rar, ..." number their first
+	// volume differently.
+	old := func(i int) string {
+		if i == 0 {
+			return "Movie.rar"
+		}
+		return fmt.Sprintf("Movie.r%02d", i-1)
+	}
+	parts := func(i int) string { return fmt.Sprintf("Movie.part%03d.rar", i+1) }
+	for _, name := range []func(int) string{old, parts} {
+		testManyRARVolumes(t, name)
+	}
+}
+
+func testManyRARVolumes(t *testing.T, volName func(int) string) {
 	s := newFakeServer(t)
 	const vols, per = 40, 50_000
 	var video []byte
@@ -386,10 +401,7 @@ func TestManyRARVolumes(t *testing.T) {
 			chunk = chunk[:per/3]
 		}
 		video = append(video, chunk...)
-		name := "Movie.rar"
-		if i > 0 {
-			name = fmt.Sprintf("Movie.r%02d", i-1)
-		}
+		name := volName(i)
 		vol := rar4Volume("Movie.2160p.mkv", chunk, i > 0, i < vols-1, i == 0)
 		files = append(files, s.post(name, vol, 20_000, fmt.Sprintf(`"%s" yEnc`, name)))
 	}

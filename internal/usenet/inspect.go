@@ -73,18 +73,23 @@ func Inspect(ctx context.Context, pool *Pool, nzb *NZB, keep func(name string) b
 	// The first volume of a named RAR set says whether the archive can be
 	// streamed at all; the rest are read only if it can. A big post has
 	// a hundred or more volumes.
-	first := map[string]int{}
+	// The first is the lowest numbered: "a.rar" before "a.r00" is 0, but
+	// "a.part01.rar" is 1.
+	first, low := map[string]int{}, map[string]int{}
 	for _, i := range idx {
 		name := nzb.Files[i].Name()
-		if n, ok := rarVolume(name); ok && n == 0 {
-			first[rarSet(name)] = i
+		if n, ok := rarVolume(name); ok {
+			set := rarSet(name)
+			if l, seen := low[set]; !seen || n < l {
+				first[set], low[set] = i, n
+			}
 		}
 	}
 	var now, later []int
 	for _, i := range idx {
 		name := nzb.Files[i].Name()
-		if n, ok := rarVolume(name); ok && n > 0 {
-			if _, has := first[rarSet(name)]; has {
+		if _, ok := rarVolume(name); ok {
+			if f, has := first[rarSet(name)]; has && f != i {
 				later = append(later, i)
 				continue
 			}

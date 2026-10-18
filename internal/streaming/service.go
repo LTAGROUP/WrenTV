@@ -192,6 +192,12 @@ const orderWait = 3 * time.Second
 // nothing yet before they're tried alongside.
 var torrentAfter = 10 * time.Second
 
+// postSpare is how many more posts than wanted are tried per quality.
+// New releases lose most of their posts to takedowns within days; those
+// fail in a second or two, so a few dead ones at the top shouldn't use
+// up the tries before a live one is reached (postTime still bounds it).
+const postSpare = 10
+
 // soloPosts is how many of the best quality's top posts are read one at a
 // time, with all connections, while someone waits to play.
 const soloPosts = 3
@@ -785,7 +791,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 				for _, r := range Rank(nzbs, q, maxSize, season) {
 					slots <- struct{}{}
 					qmu.Lock()
-					stop := need <= 0 || ctx.Err() != nil || len(tried) >= need+2 || time.Since(started) > postTime
+					stop := need <= 0 || ctx.Err() != nil || len(tried) >= need+postSpare || time.Since(started) > postTime
 					dup := !stop && seen(r)
 					k := len(tried)
 					if !stop && !dup {

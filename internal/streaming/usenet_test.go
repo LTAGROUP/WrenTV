@@ -183,7 +183,7 @@ func TestDeadPostsStillTryTorrents(t *testing.T) {
 	if len(sts) != 1 || sts[0].InfoHash != hash {
 		t.Fatalf("streams = %+v", sts)
 	}
-	if n := fetched.Load(); n > 3 {
+	if n := fetched.Load(); n > 1+postSpare {
 		t.Fatalf("fetched %d NZBs for one stream", n)
 	}
 }
