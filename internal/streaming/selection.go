@@ -105,7 +105,8 @@ func isJunk(name string) bool {
 	if isVideoName(name) {
 		name = strings.TrimSuffix(name, path.Ext(name))
 	}
-	return junkRE.MatchString(name)
+	// \b counts "_" as part of a word, so "Movie_TS_" would get through.
+	return junkRE.MatchString(strings.ReplaceAll(name, "_", " "))
 }
 
 // isPack reports whether a release name looks like a whole season (or more).

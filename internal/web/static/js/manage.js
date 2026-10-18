@@ -427,6 +427,12 @@ function streamingTab(s, libs) {
       <button type="button" class="btn small" data-ix-add>Add indexer</button>
       <div style="margin-top:14px"><button type="button" class="btn" data-usenet-check>Check Usenet</button> <span class="small" data-usenet-res></span></div>
       <label class="check"><input type="checkbox" name="stUsenet" ${st.usenet !== false ? 'checked' : ''}> Play Usenet posts before torrents</label>
+      <h3 class="sub-h">Article cache</h3>
+      <div class="form-grid">
+        ${numField('stCacheMB', 'In memory', st.usenetCacheMB, { unit: 'MB', hint: '256' })}
+        ${numField('stDiskGB', 'On disk', st.usenetDiskCacheGB, { unit: 'GB', step: 0.5, hint: 'Off' })}
+      </div>
+      <p class="small muted">Articles already read are kept for rewinds and other viewers, so they aren't fetched again.</p>
     </div>
 
     <div class="panel"><h2>Addons</h2>
@@ -455,6 +461,11 @@ function streamingTab(s, libs) {
         <div class="field"><label>Versions per quality</label><select name="stPerQuality">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${n === (st.perQuality || 3) ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
       </div>
       <p class="small muted">Each title gets this many 4K and 1080p versions to choose from. The best one plays unless the viewer picks another.</p>
+    </div>
+
+    <div class="panel"><h2>Release filters</h2>
+      <div class="field"><label>Skip releases containing</label><textarea name="stExclude" rows="3" placeholder="One per line: HDTS, korean dub, /\\b3d\\b/i">${esc((st.excludeWords || []).join('\n'))}</textarea></div>
+      <p class="small muted">Whole words only, so TS won't skip DTS-HD. Phrases match across dots, dashes and underscores. Put a regular expression between slashes.</p>
     </div>
 
     <div class="panel"><h2>Limits</h2>
@@ -764,6 +775,7 @@ export async function viewSettings() {
         <div class="field"><label>Username</label><input type="text" data-f="username" value="${esc(n.username || '')}" autocomplete="off"></div>
         <div class="field"><label>Password</label><input type="password" data-f="password" placeholder="${n.passwordSet ? 'Saved; type to replace' : ''}" autocomplete="new-password"></div>
         <div class="field"><label class="check" style="margin-top:26px"><input type="checkbox" data-f="tls" ${n.tls !== false ? 'checked' : ''}> SSL</label></div>
+        <div class="field"><label class="check" style="margin-top:26px" title="Only asked for articles the other servers don't have"><input type="checkbox" data-f="backup" ${n.backup ? 'checked' : ''}> Backup only</label></div>
       </div>
       <div class="acts"><button type="button" class="btn small danger" data-del>Remove</button></div></div>`).join('')
       : '<p class="muted small">No news server.</p>';
@@ -882,6 +894,9 @@ export async function viewSettings() {
       showLibrary: v.stShowLib,
       downloadQuality: v.stDlQuality,
       perQuality: int(v.stPerQuality),
+      excludeWords: String(v.stExclude || '').split('\n').map((w) => w.trim()).filter(Boolean),
+      usenetCacheMB: int(v.stCacheMB),
+      usenetDiskCacheGB: num(v.stDiskGB),
       usenet: !!v.stUsenet,
       ...usenetBody(),
       limits: {

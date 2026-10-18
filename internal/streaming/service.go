@@ -641,7 +641,7 @@ func (s *Service) checkCached(ctx context.Context, rels []Release, qualities []s
 	var hashes []string
 	seen := map[string]bool{}
 	for _, q := range qualities {
-		cands := Rank(rels, q, s.maxSize(q), season)
+		cands := s.rank(rels, q, s.maxSize(q), season)
 		for _, r := range cands[:min(len(cands), 40)] {
 			if r.InfoHash != "" && r.Link == "" && !seen[r.InfoHash] {
 				seen[r.InfoHash] = true
@@ -826,7 +826,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 				if q == best {
 					defer unlead()
 				}
-				for _, r := range newestToo(Rank(nzbs, q, maxSize, season)) {
+				for _, r := range newestToo(s.rank(nzbs, q, maxSize, season)) {
 					slots <- struct{}{}
 					qmu.Lock()
 					stop := need <= 0 || ctx.Err() != nil || len(tried) >= need+postSpare || time.Since(started) > postTime
@@ -899,7 +899,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 			defer func() { <-postsDone }()
 
 			tries, standIn, counted := 0, false, false
-			for _, r := range Rank(rels, q, maxSize, season) {
+			for _, r := range s.rank(rels, q, maxSize, season) {
 				if standIn && !counted {
 					// One stand-in is enough; the posts may fill the rest.
 					// What they leave, it takes a place of.

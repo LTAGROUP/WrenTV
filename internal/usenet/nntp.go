@@ -34,6 +34,9 @@ type Server struct {
 	User     string
 	Pass     string
 	MaxConns int
+	// Backup servers are asked only for articles the others lack or
+	// can't serve: a block account kept for gaps.
+	Backup bool
 }
 
 func (s Server) addr() string {
@@ -50,7 +53,20 @@ type conn struct {
 	r    *bufio.Reader
 	w    *bufio.Writer
 	used time.Time
+
+	// dl guards the deadline: a read in progress pushes it on, a
+	// cancelled one pulls it in, and a cancel must win.
+	dl     sync.Mutex
+	hard   time.Time // the latest the current command may run to
+	cut    bool
+	stall  time.Duration
+	stallT time.Time // when the read deadline was last pushed on
 }
+
+// stallFor is how long an article may go without a byte arriving before
+// the connection is given up: a server that stops sending mid-article
+// would otherwise hold the read (and a connection) for a minute.
+var stallFor = 20 * time.Second
 
 func dial(ctx context.Context, s Server) (*conn, error) {
 	d := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
@@ -105,21 +121,65 @@ func (c *conn) login(user, pass string) error {
 }
 
 // deadline bounds the connection by ctx and an idle timeout; stop clears it.
+// Reads also fail once nothing has arrived for stallFor (see progress).
 func (c *conn) deadline(ctx context.Context, d time.Duration) (stop func()) {
 	t := time.Now().Add(d)
 	if dl, ok := ctx.Deadline(); ok && dl.Before(t) {
 		t = dl
 	}
-	_ = c.nc.SetDeadline(t)
+	c.dl.Lock()
+	c.hard, c.cut, c.stall = t, false, stallFor
+	c.stallT = time.Time{}
+	_ = c.nc.SetDeadline(c.soon(time.Now()))
+	c.dl.Unlock()
 	done := make(chan struct{})
 	go func() {
 		select {
 		case <-ctx.Done():
+			c.dl.Lock()
+			c.cut = true
 			_ = c.nc.SetDeadline(time.Unix(1, 0)) // unblock reads now
+			c.dl.Unlock()
 		case <-done:
 		}
 	}()
-	return func() { close(done); _ = c.nc.SetDeadline(time.Time{}) }
+	return func() {
+		close(done)
+		c.dl.Lock()
+		c.hard, c.cut, c.stall = time.Time{}, false, 0
+		_ = c.nc.SetDeadline(time.Time{})
+		c.dl.Unlock()
+	}
+}
+
+// soon is the read deadline from now: a stall's worth, never past hard.
+func (c *conn) soon(now time.Time) time.Time {
+	if c.stall <= 0 || c.hard.IsZero() {
+		return c.hard
+	}
+	return minTime(now.Add(c.stall), c.hard)
+}
+
+// progress notes that bytes arrived, so the stall deadline moves on. It's
+// pushed at most once a second; a deadline per line would be wasted work.
+func (c *conn) progress() {
+	now := time.Now()
+	if now.Sub(c.stallT) < time.Second {
+		return
+	}
+	c.dl.Lock()
+	if !c.cut && !c.hard.IsZero() {
+		c.stallT = now
+		_ = c.nc.SetDeadline(c.soon(now))
+	}
+	c.dl.Unlock()
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 func (c *conn) status() (int, string, error) {
@@ -127,6 +187,7 @@ func (c *conn) status() (int, string, error) {
 	if err != nil {
 		return 0, "", err
 	}
+	c.progress()
 	line = strings.TrimRight(line, "\r\n")
 	if len(line) < 3 {
 		return 0, "", fmt.Errorf("news server: bad reply %q", line)
@@ -167,11 +228,13 @@ func (c *conn) body(id string) ([]byte, error) {
 		if err == bufio.ErrBufferFull {
 			// A line longer than the buffer: keep reading it.
 			out = append(out, line...)
+			c.progress()
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
+		c.progress()
 		if len(line) >= 2 && line[0] == '.' {
 			if len(line) == 3 && line[1] == '\r' || len(line) == 2 && line[1] == '\n' {
 				return out, nil
@@ -210,18 +273,22 @@ func (c *conn) stats(ids []string) (missing []string, err error) {
 }
 
 // Pool shares a few connections per server among every stream. Servers
-// are tried in order; a later one is asked only for articles the earlier
-// ones lack.
+// are tried in order, backups last; a later one is asked only for articles
+// the earlier ones lack.
 type Pool struct {
 	servers []*server
 	stop    chan struct{}
 	once    sync.Once
+	// cache keeps decoded articles for every stream; see Cache.
+	cache *Cache
 }
 
 type server struct {
 	Server
-	slots chan struct{}
-	mu    sync.Mutex
+	mu sync.Mutex
+	// busy counts requests on (or getting) a connection, at most MaxConns;
+	// urgent counts urgent requests waiting, which go first.
+	busy, urgent int
 	// bgBusy counts connections lookups are using; they get half, so
 	// playback that starts while a lookup goes on isn't starved.
 	bgBusy int
@@ -270,12 +337,14 @@ func (s *server) drop(c *conn, polite bool) {
 
 func NewPool(servers []Server) *Pool {
 	p := &Pool{}
-	for _, s := range servers {
-		if s.Host == "" {
-			continue
+	for _, backup := range []bool{false, true} {
+		for _, s := range servers {
+			if s.Host == "" || s.Backup != backup {
+				continue
+			}
+			s.MaxConns = max(s.MaxConns, 1)
+			p.servers = append(p.servers, &server{Server: s, freed: make(chan struct{})})
 		}
-		s.MaxConns = max(s.MaxConns, 1)
-		p.servers = append(p.servers, &server{Server: s, slots: make(chan struct{}, s.MaxConns), freed: make(chan struct{})})
 	}
 	p.stop = make(chan struct{})
 	go p.reap()
@@ -320,6 +389,28 @@ func Background(ctx context.Context) context.Context {
 	return context.WithValue(ctx, bgKey{}, true)
 }
 
+type urgentKey struct{}
+
+// Urgent marks a fetch a reader is stuck waiting on: it takes the next
+// free connection ahead of read-ahead.
+func Urgent(ctx context.Context) context.Context {
+	return context.WithValue(ctx, urgentKey{}, true)
+}
+
+type abortKey struct{}
+
+// abortable lets a finishing read be cut off after all, when another
+// request for the same article has already brought it.
+func abortable(ctx, abort context.Context) context.Context {
+	return context.WithValue(ctx, abortKey{}, abort)
+}
+
+// stopped reports whether ctx is done or its read was aborted.
+func stopped(ctx context.Context) bool {
+	abort, _ := ctx.Value(abortKey{}).(context.Context)
+	return ctx.Err() != nil || abort != nil && abort.Err() != nil
+}
+
 type finishKey struct{}
 
 // finishing marks reads that may be dropped while they wait for a
@@ -338,6 +429,12 @@ func (c *conn) quit() {
 }
 
 func (p *Pool) Empty() bool { return p == nil || len(p.servers) == 0 }
+
+// WithCache shares c's articles with every stream read through p.
+func (p *Pool) WithCache(c *Cache) *Pool {
+	p.cache = c
+	return p
+}
 
 // Close drops the idle connections and stops reaping.
 func (p *Pool) Close() {
@@ -380,12 +477,22 @@ func (s *server) with(ctx context.Context, f func(*conn) error) error {
 			s.mu.Unlock()
 		}()
 	}
-	select {
-	case s.slots <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
+	abort, _ := ctx.Value(abortKey{}).(context.Context)
+	if abort != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		defer context.AfterFunc(abort, cancel)()
+		defer cancel()
 	}
-	defer func() { <-s.slots }()
+	if err := s.acquire(ctx); err != nil {
+		return err
+	}
+	defer func() {
+		s.mu.Lock()
+		s.busy--
+		s.release()
+		s.mu.Unlock()
+	}()
 	for attempt := 0; ; attempt++ {
 		c, fresh, err := s.get(ctx)
 		if err != nil {
@@ -394,6 +501,12 @@ func (s *server) with(ctx context.Context, f func(*conn) error) error {
 		run := ctx
 		if ctx.Value(finishKey{}) != nil {
 			run = context.WithoutCancel(ctx)
+			if abort != nil {
+				var cancel context.CancelFunc
+				run, cancel = context.WithCancel(run)
+				stopAF := context.AfterFunc(abort, cancel)
+				defer func() { stopAF(); cancel() }()
+			}
 		}
 		stop := c.deadline(run, 60*time.Second)
 		err = f(c)
@@ -411,6 +524,40 @@ func (s *server) with(ctx context.Context, f func(*conn) error) error {
 		s.mu.Unlock()
 		if fresh || attempt > 0 || ctx.Err() != nil {
 			return err
+		}
+	}
+}
+
+// acquire takes one of the server's MaxConns request slots. Urgent
+// requests take the next one free; others wait while any are waiting.
+func (s *server) acquire(ctx context.Context) error {
+	urgent := ctx.Value(urgentKey{}) != nil
+	waiting := false
+	defer func() {
+		if waiting {
+			s.mu.Lock()
+			s.urgent--
+			s.release()
+			s.mu.Unlock()
+		}
+	}()
+	for {
+		s.mu.Lock()
+		if s.busy < s.MaxConns && (urgent || s.urgent == 0) {
+			s.busy++
+			s.mu.Unlock()
+			return nil
+		}
+		if urgent && !waiting {
+			waiting = true
+			s.urgent++
+		}
+		ch := s.freed
+		s.mu.Unlock()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }
@@ -511,6 +658,9 @@ func (p *Pool) Body(ctx context.Context, id string) ([]byte, error) {
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
+		}
+		if stopped(ctx) {
+			return nil, err
 		}
 		if !errors.Is(err, ErrMissing) || errors.Is(last, ErrMissing) {
 			last = err

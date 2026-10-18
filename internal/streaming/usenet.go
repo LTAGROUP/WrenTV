@@ -35,6 +35,9 @@ type usenetState struct {
 	mu   sync.Mutex
 	key  string
 	pool *usenet.Pool
+	// cache outlives pools, so changing servers keeps what's been read.
+	cache    *usenet.Cache
+	cacheKey string
 	// nzbs keeps parsed NZBs of recent plays.
 	nzbs map[string]*usenet.NZB
 	// dead are stored streams that failed a play or turned out not to be
@@ -104,17 +107,25 @@ func (s *Service) newsPool() *usenet.Pool {
 			continue
 		}
 		servers = append(servers, usenet.Server{Host: ns.Host, Port: ns.Port, TLS: ns.TLS, User: ns.Username, Pass: ns.Password,
-			MaxConns: max(ns.Connections, 1)})
-		fmt.Fprintf(&key, "%s|%d|%v|%s|%s|%d;", ns.Host, ns.Port, ns.TLS, ns.Username, ns.Password, ns.Connections)
+			MaxConns: max(ns.Connections, 1), Backup: ns.Backup})
+		fmt.Fprintf(&key, "%s|%d|%v|%s|%s|%d|%v;", ns.Host, ns.Port, ns.TLS, ns.Username, ns.Password, ns.Connections, ns.Backup)
+	}
+	memMB, diskGB := s.cfg().UsenetCacheMB, s.cfg().UsenetDiskCacheGB
+	if memMB <= 0 {
+		memMB = 256
 	}
 	u := &s.usenet
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if ck := fmt.Sprintf("%d|%g", memMB, diskGB); u.cache == nil || u.cacheKey != ck {
+		u.cache = usenet.NewCache(int64(memMB)<<20, filepath.Join(s.Cfg.DataDir, "cache", "articles"), int64(diskGB*(1<<30)))
+		u.cacheKey, u.key = ck, "" // the pool picks up the new cache
+	}
 	if u.pool == nil || u.key != key.String() {
 		if u.pool != nil {
 			u.pool.Close()
 		}
-		u.key, u.pool = key.String(), usenet.NewPool(servers)
+		u.key, u.pool = key.String(), usenet.NewPool(servers).WithCache(u.cache)
 	}
 	return u.pool
 }

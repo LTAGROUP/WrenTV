@@ -55,15 +55,41 @@ type File struct {
 	order []segKey // least recently used first
 	max   int
 	holes map[segKey]*hole
+	// took is how long recent articles took, for telling a stuck fetch
+	// from a normal one; hedges counts duplicate requests out now.
+	took   [32]time.Duration
+	tookN  int
+	hedges int
 }
 
 type segKey struct{ file, seg int }
 
 type segEntry struct {
-	done chan struct{}
-	data []byte
-	err  error
+	done    chan struct{}
+	data    []byte
+	err     error
+	started time.Time
+	// running counts requests out for the article: the first, and a
+	// hedge. The first to bring it wins; stop then cuts the other off.
+	running int
+	hedged  bool
+	stop    context.Context
+	abort   context.CancelFunc
 }
+
+// Hedging: a read waits on articles in order, so one article that's slow
+// to come (a server's occasional multi-second tail, or a request queued
+// behind read-ahead) stalls the stream however far ahead the rest is.
+// Once the article a reader is waiting on has taken hedgeFactor times the
+// recent median, and at least hedgeFloor, it's asked for a second time,
+// ahead of read-ahead, and whichever copy arrives first is used. An
+// article a server says is missing is never asked for twice.
+const (
+	hedgeFloor  = 1500 * time.Millisecond
+	hedgeFactor = 4
+	// maxHedges bounds the extra requests one file has out at once.
+	maxHedges = 2
+)
 
 func NewFile(pool *Pool, nzb *NZB, lay *Layout) *File {
 	return &File{pool: pool, nzb: nzb, lay: lay, Ahead: 64, cache: map[segKey]*segEntry{}, max: 256}
@@ -117,16 +143,93 @@ func (f *File) spans(off, n int64) ([]span, error) {
 func (f *File) segment(ctx context.Context, k segKey) ([]byte, error) {
 	for {
 		e := f.start(ctx, k)
-		select {
-		case <-e.done:
-			// Whoever started the fetch went away first; fetch it again.
-			if e.err != nil && ctx.Err() == nil && (errors.Is(e.err, context.Canceled) || errors.Is(e.err, context.DeadlineExceeded)) {
-				continue
-			}
-			return e.data, e.err
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		var hedge <-chan time.Time
+		if ctx.Value(bgKey{}) == nil {
+			t := time.NewTimer(max(f.hedgeAfter()-time.Since(e.started), 250*time.Millisecond))
+			hedge = t.C
+			defer t.Stop()
 		}
+	wait:
+		for {
+			select {
+			case <-e.done:
+				break wait
+			case <-hedge:
+				hedge = nil
+				f.hedge(ctx, k, e)
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		// Whoever started the fetch went away first; fetch it again.
+		if e.err != nil && ctx.Err() == nil && (errors.Is(e.err, context.Canceled) || errors.Is(e.err, context.DeadlineExceeded)) {
+			continue
+		}
+		return e.data, e.err
+	}
+}
+
+// hedgeAfter is how long an article may take before it's asked for again.
+func (f *File) hedgeAfter() time.Duration {
+	f.mu.Lock()
+	n := min(f.tookN, len(f.took))
+	ds := slices.Clone(f.took[:n])
+	f.mu.Unlock()
+	if n < 8 {
+		return hedgeFloor
+	}
+	slices.Sort(ds)
+	return max(hedgeFloor, hedgeFactor*ds[n/2])
+}
+
+// hedge asks for an article a second time, urgently, unless it has come,
+// is already hedged, or the file has its share of hedges out.
+func (f *File) hedge(ctx context.Context, k segKey, e *segEntry) {
+	f.mu.Lock()
+	select {
+	case <-e.done:
+		f.mu.Unlock()
+		return
+	default:
+	}
+	if e.hedged || f.hedges >= maxHedges {
+		f.mu.Unlock()
+		return
+	}
+	e.hedged, e.running = true, e.running+1
+	f.hedges++
+	f.mu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(abortable(finishing(Urgent(ctx)), e.stop), 2*time.Minute)
+		defer cancel()
+		data, err := f.fetch(ctx, k, false)
+		f.mu.Lock()
+		f.hedges--
+		f.mu.Unlock()
+		f.finish(k, e, data, err)
+	}()
+}
+
+// finish settles an article with one request's result: the first success
+// wins and stops the other request; a failure counts only once no other
+// request is still out.
+func (f *File) finish(k segKey, e *segEntry, data []byte, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e.running--
+	select {
+	case <-e.done:
+		return
+	default:
+	}
+	if err != nil && e.running > 0 {
+		return
+	}
+	e.data, e.err = data, err
+	close(e.done)
+	e.abort()
+	if err != nil && f.cache[k] == e {
+		delete(f.cache, k) // let a later read try again
 	}
 }
 
@@ -146,7 +249,8 @@ func (f *File) start(ctx context.Context, k segKey) *segEntry {
 		}
 		return e
 	}
-	e := &segEntry{done: make(chan struct{})}
+	e := &segEntry{done: make(chan struct{}), started: time.Now(), running: 1}
+	e.stop, e.abort = context.WithCancel(context.Background())
 	f.cache[k] = e
 	f.order = append(f.order, k)
 	// Drop the oldest finished articles; ones still in flight stay.
@@ -172,38 +276,41 @@ func (f *File) start(ctx context.Context, k segKey) *segEntry {
 		f.order = keep
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(finishing(ctx), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(abortable(finishing(ctx), e.stop), 2*time.Minute)
 		defer cancel()
-		e.data, e.err = f.fetch(ctx, k)
-		close(e.done)
-		if e.err != nil {
-			f.mu.Lock()
-			if f.cache[k] == e {
-				delete(f.cache, k) // let a later read try again
-			}
-			f.mu.Unlock()
-		}
+		data, err := f.fetch(ctx, k, true)
+		f.finish(k, e, data, err)
 	}()
 	return e
 }
 
-func (f *File) fetch(ctx context.Context, k segKey) ([]byte, error) {
+// fetch brings an article from the shared cache or the news servers; fill
+// zero-fills it if it's missing (see holes.go).
+func (f *File) fetch(ctx context.Context, k segKey, fill bool) ([]byte, error) {
 	fl := f.lay.Files[k.file]
 	nf := f.nzb.Files[fl.Index]
 	if k.seg >= len(nf.Segments) {
 		return nil, fmt.Errorf("usenet: article %d of %d", k.seg+1, len(nf.Segments))
 	}
+	id := nf.Segments[k.seg].ID
+	if data, ok := f.pool.cache.Get(id); ok {
+		return data, nil
+	}
 	var last error
 	for attempt := 0; attempt < 2; attempt++ {
-		body, err := f.pool.Body(ctx, nf.Segments[k.seg].ID)
+		t := time.Now()
+		body, err := f.pool.Body(ctx, id)
 		if err != nil {
 			if errors.Is(err, ErrMissing) {
+				if !fill {
+					return nil, err
+				}
 				if zeros, ok := f.fillHole(k); ok {
 					return zeros, nil
 				}
 				return nil, err
 			}
-			if ctx.Err() != nil {
+			if stopped(ctx) {
 				return nil, err
 			}
 			last = err
@@ -218,6 +325,11 @@ func (f *File) fetch(ctx context.Context, k segKey) ([]byte, error) {
 		if p.Begin != want {
 			return nil, fmt.Errorf("usenet: article %d starts at %d, not %d", k.seg+1, p.Begin, want)
 		}
+		f.mu.Lock()
+		f.took[f.tookN%len(f.took)] = time.Since(t)
+		f.tookN++
+		f.mu.Unlock()
+		f.pool.cache.Put(id, p.Data)
 		return p.Data, nil
 	}
 	return nil, last

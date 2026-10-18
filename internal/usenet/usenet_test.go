@@ -30,6 +30,11 @@ type fakeServer struct {
 	peak     atomic.Int32
 	bodies   atomic.Int32
 	addr     string
+	// hang holds how many more BODY requests for an article go unanswered;
+	// asked counts the requests for each.
+	hang    map[string]int
+	asked   map[string]int
+	release chan struct{}
 }
 
 func newFakeServer(t *testing.T) *fakeServer {
@@ -38,7 +43,9 @@ func newFakeServer(t *testing.T) *fakeServer {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	s := &fakeServer{articles: map[string][]byte{}, addr: ln.Addr().String()}
+	s := &fakeServer{articles: map[string][]byte{}, addr: ln.Addr().String(), hang: map[string]int{}, asked: map[string]int{},
+		release: make(chan struct{})}
+	t.Cleanup(func() { close(s.release) })
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -100,7 +107,18 @@ func (s *fakeServer) serve(c net.Conn) {
 			s.mu.Lock()
 			body, ok := s.articles[id]
 			gone := s.gone[id]
+			hang := cmd == "BODY" && s.hang[id] > 0
+			if cmd == "BODY" {
+				s.asked[id]++
+				if hang {
+					s.hang[id]--
+				}
+			}
 			s.mu.Unlock()
+			if hang {
+				<-s.release // never answers; the client gives up on the connection
+				return
+			}
 			switch {
 			case gone:
 				fmt.Fprintf(w, "451 0 <%s>\r\n", id)

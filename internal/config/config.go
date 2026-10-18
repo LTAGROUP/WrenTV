@@ -175,6 +175,14 @@ type StreamingConfig struct {
 	// NewsServers: articles are fetched as the player reads them.
 	Indexers    []IndexerConfig    `yaml:"indexers"`
 	NewsServers []NewsServerConfig `yaml:"news_servers"`
+	// UsenetCacheMB keeps recently read articles in memory for every stream
+	// (0 = 256 MB); UsenetDiskCacheGB keeps more on disk (0 = none).
+	UsenetCacheMB     int     `yaml:"usenet_cache_mb"`
+	UsenetDiskCacheGB float64 `yaml:"usenet_disk_cache_gb"`
+	// ExcludeWords skips releases whose name has any of these: whole words
+	// ("TS" doesn't match "DTS"), phrases ("korean dub" matches
+	// "Korean.Dub"), or /regular expressions/.
+	ExcludeWords []string `yaml:"exclude_words"`
 	// MaxSizeGB skips releases larger than this per quality (0 = no limit).
 	MaxSizeGB map[string]float64 `yaml:"max_size_gb"`
 	// Prefetch looks streams up ahead of play: the rest of the season after
@@ -208,6 +216,8 @@ type NewsServerConfig struct {
 	// Connections is the most this server opens at once (the plan's limit).
 	Connections int  `yaml:"connections" json:"connections"`
 	Enabled     bool `yaml:"enabled" json:"enabled"`
+	// Backup servers are only asked for articles the others don't have.
+	Backup bool `yaml:"backup" json:"backup"`
 }
 
 type AddonConfig struct {

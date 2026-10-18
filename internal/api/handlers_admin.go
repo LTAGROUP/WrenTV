@@ -89,6 +89,9 @@ type streamingView struct {
 	Limits          config.StreamingLimits `json:"limits"`
 	Indexers        []indexerView          `json:"indexers"`
 	NewsServers     []newsServerView       `json:"newsServers"`
+	UsenetCacheMB   int                    `json:"usenetCacheMB"`
+	UsenetDiskGB    float64                `json:"usenetDiskCacheGB"`
+	ExcludeWords    []string               `json:"excludeWords"`
 }
 
 // indexerView is a Newznab indexer without its API key.
@@ -143,7 +146,8 @@ func (s *Server) settings() settingsView {
 	st := c.Streaming
 	sv := streamingView{Enabled: st.Enabled, Active: s.Streaming.Active(), Addons: nonNil(st.Addons), Qualities: nonNil(st.Qualities),
 		PerQuality: max(st.PerQuality, 1), Usenet: st.Usenet, MaxSizeGB: st.MaxSizeGB, Prefetch: st.Prefetch, Mode: st.Mode, MovieLibrary: st.MovieLibrary, ShowLibrary: st.ShowLibrary,
-		DownloadQuality: st.DownloadQuality, Limits: st.Limits, Debrid: []debridView{}}
+		DownloadQuality: st.DownloadQuality, Limits: st.Limits, Debrid: []debridView{},
+		UsenetCacheMB: st.UsenetCacheMB, UsenetDiskGB: st.UsenetDiskCacheGB, ExcludeWords: nonNil(st.ExcludeWords)}
 	if sv.MaxSizeGB == nil {
 		sv.MaxSizeGB = map[string]float64{}
 	}
@@ -220,6 +224,9 @@ type streamingPatch struct {
 	Limits          *config.StreamingLimits `json:"limits"`
 	Indexers        *[]indexerPatch         `json:"indexers"`
 	NewsServers     *[]newsServerPatch      `json:"newsServers"`
+	UsenetCacheMB   *int                    `json:"usenetCacheMB"`
+	UsenetDiskGB    *float64                `json:"usenetDiskCacheGB"`
+	ExcludeWords    *[]string               `json:"excludeWords"`
 }
 
 // indexerPatch and newsServerPatch leave the saved key or password alone
@@ -364,6 +371,30 @@ func (s *Server) applyStreaming(r *http.Request, p *streamingPatch) error {
 			return err
 		}
 		c.Indexers, c.NewsServers = ixs, nss
+	}
+	if p.UsenetCacheMB != nil {
+		if *p.UsenetCacheMB < 0 || *p.UsenetCacheMB > 16384 {
+			return fmt.Errorf("keep the article memory cache between 0 and 16384 MB")
+		}
+		c.UsenetCacheMB = *p.UsenetCacheMB
+	}
+	if p.UsenetDiskGB != nil {
+		if *p.UsenetDiskGB < 0 {
+			return fmt.Errorf("the article disk cache can't be negative")
+		}
+		c.UsenetDiskCacheGB = *p.UsenetDiskGB
+	}
+	if p.ExcludeWords != nil {
+		var ws []string
+		for _, w := range *p.ExcludeWords {
+			if w = strings.TrimSpace(w); w != "" {
+				if _, err := streaming.ExcludeMatcher([]string{w}); err != nil {
+					return err
+				}
+				ws = append(ws, w)
+			}
+		}
+		c.ExcludeWords = ws
 	}
 	if p.Prefetch != nil {
 		c.Prefetch = *p.Prefetch
