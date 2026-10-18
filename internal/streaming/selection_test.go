@@ -50,6 +50,26 @@ func TestRankPrefersPacksAndDropsJunk(t *testing.T) {
 	}
 }
 
+func TestRankPrefersEnglish(t *testing.T) {
+	rels := []Release{
+		{Text: "오펜하이머 Oppenheimer,2023.1080p.KORSUB.WEBRip.H264.AAC.mkv", InfoHash: "kor", Seeders: 500},
+		{Text: "Оппенгеймер / Oppenheimer [2023 BDRip 1080p] [IMAX] 2x Dub", InfoHash: "rus", Seeders: 500},
+		{Text: "Oppenheimer.2023.MULTi.VFQ.1080p.BluRay", InfoHash: "fr", Seeders: 500},
+		{Text: "Oppenheimer.2023.1080p.HC.WEBRip", InfoHash: "hc", Seeders: 500},
+		{Text: "Oppenheimer.2023.1080p.WEBRip.x264", InfoHash: "en", Seeders: 3},
+		{Text: "Amélie.2001.1080p.BluRay", InfoHash: "accent", Seeders: 2},
+	}
+	got := Rank(rels, "1080p", 0, 0)
+	var order []string
+	for _, r := range got {
+		order = append(order, r.InfoHash)
+	}
+	// English first whatever the seeders, burned-in subtitles last.
+	if o := strings.Join(order, ","); len(order) != 6 || !strings.HasPrefix(o, "accent,en,") || !strings.HasSuffix(o, ",kor,hc") {
+		t.Fatalf("rank = %s", o)
+	}
+}
+
 func TestPickFile(t *testing.T) {
 	files := []RemoteFile{
 		{ID: "1", Name: "Pack/Show.S01E01.mkv", Size: 2},

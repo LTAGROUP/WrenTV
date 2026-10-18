@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -21,7 +22,29 @@ var (
 	episodeWordsRE = regexp.MustCompile(`(?i)\bseason[ ._-]*(\d{1,2})\W*episode[ ._-]*(\d{1,3})\b`)
 	seasonRE       = regexp.MustCompile(`(?i)\b(?:s(\d{1,2})|season[ ._-]*(\d{1,2}))\b`)
 	completeRE     = regexp.MustCompile(`(?i)\b(complete|season[ ._-]*pack|all[ ._-]*seasons)\b`)
+	// Subtitles burned into the picture.
+	hardsubRE = regexp.MustCompile(`(?i)\b(hc|hardsub(bed|s)?|hard[ ._-]?coded|[a-z]{2,3}sub(bed|s)?)\b`)
+	// Dubbed or foreign-language releases.
+	foreignRE = regexp.MustCompile(`(?i)\b(\d+x[ ._-]?dub|dub(bed)?|mvo|dvo|multi|dual[ ._-]?audio|vf[fiq]?|vostfr|truefrench|french|german|deutsch|ita|italian|spanish|castellano|latino|rus|russian|ukr|hindi|tamil|telugu|korean|kor|japanese|chinese|chs|cht|polish|pl|turkish|portuguese|dublado|nordic|czech|hun)\b`)
 )
+
+// foreignPenalty pushes releases that aren't plainly in English below the
+// ones that are: burned-in subtitles first, then dubs, language tags and
+// titles written in another script.
+func foreignPenalty(text string) int {
+	if hardsubRE.MatchString(text) {
+		return 5000
+	}
+	if foreignRE.MatchString(text) {
+		return 2500
+	}
+	for _, r := range text {
+		if r > unicode.MaxLatin1 && unicode.IsLetter(r) && !unicode.In(r, unicode.Latin) {
+			return 2500
+		}
+	}
+	return 0
+}
 
 // QualityOf reads the resolution tag of a release ("2160p", "1080p", "720p" or "").
 func QualityOf(text string) string {
@@ -98,8 +121,8 @@ func isPack(name string, season int) bool {
 
 // Rank orders an addon's releases for one quality: matching quality only,
 // junk and oversized releases dropped, then (for episodes) season packs first
-// so the rest of the season can come from the same torrent, then quality
-// markers and seeders.
+// so the rest of the season can come from the same torrent, English releases
+// before dubbed or hard-subbed ones, then quality markers and seeders.
 func Rank(rels []Release, quality string, maxSize int64, season int) []Release {
 	type scored struct {
 		r     Release
@@ -128,6 +151,7 @@ func Rank(rels []Release, quality string, maxSize int64, season int) []Release {
 				score += b.pts
 			}
 		}
+		score -= foreignPenalty(r.Text)
 		if quality != "2160p" && (strings.Contains(t, "hdr") || strings.Contains(t, "dolby vision")) {
 			score -= 300 // HDR at 1080p is rarer to play back well
 		}
