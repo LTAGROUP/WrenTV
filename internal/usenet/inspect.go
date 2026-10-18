@@ -47,13 +47,14 @@ func Inspect(ctx context.Context, pool *Pool, nzb *NZB, keep func(name string) b
 		}
 		idx = append(idx, i)
 	}
-	if len(idx) == 0 || len(idx) > 400 {
+	// A 60 GB remux in 100 MB volumes is over 600 files.
+	if len(idx) == 0 || len(idx) > 2000 {
 		return nil, ErrUnplayable
 	}
 	heads := make([]head, len(nzb.Files))
 	read := func(files []int) {
 		var wg sync.WaitGroup
-		sem := make(chan struct{}, 8)
+		sem := make(chan struct{}, 16)
 		for _, i := range files {
 			wg.Add(1)
 			go func(i int) {
@@ -260,20 +261,33 @@ func rarVideos(ctx context.Context, pool *Pool, nzb *NZB, heads []head, files []
 		lay.Files = append(lay.Files, FileLayout{Index: v.file, Size: h.size, PartSize: h.partSize})
 	}
 	f := NewFile(pool, nzb, lay)
-	f.max, f.ctx = 4, ctx
+	f.max, f.ctx = 16, ctx
 	// The first article of each volume is already here.
 	for k, v := range vols {
 		e := &segEntry{done: make(chan struct{}), data: heads[v.file].data}
 		close(e.done)
 		f.cache[segKey{k, 0}] = e
 	}
+	// Volumes are read side by side: a header that doesn't fit in the
+	// first article needs another fetch, and big posts have a hundred.
 	infos := make([]*rarVolumeInfo, len(vols))
+	errs := make([]error, len(vols))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
 	for k := range vols {
-		info, err := readRARVolume(fileReader{f: f, file: k}, lay.Files[k].Size)
+		wg.Add(1)
+		go func(k int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			infos[k], errs[k] = readRARVolume(fileReader{f: f, file: k}, lay.Files[k].Size)
+		}(k)
+	}
+	wg.Wait()
+	for k, err := range errs {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", vols[k].name, err)
 		}
-		infos[k] = info
 	}
 	// Nameless volumes are in post order, unless RAR5 numbers them.
 	if !named {

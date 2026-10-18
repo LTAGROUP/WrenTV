@@ -185,6 +185,10 @@ const readyGrace = 8 * time.Second
 // still being checked before it's stored ahead of them.
 const orderWait = 3 * time.Second
 
+// torrentAfter is how long torrents wait for Usenet posts that have found
+// nothing yet before they're tried alongside.
+const torrentAfter = 10 * time.Second
+
 func (s *Service) qualities() []string {
 	q := s.cfg().Qualities
 	if len(q) == 0 {
@@ -731,52 +735,70 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 			var picks []*pick
 			var done, stored []bool
 			next := 0
-			for _, r := range Rank(nzbs, q, maxSize, season) {
-				slots <- struct{}{}
-				qmu.Lock()
-				stop := need <= 0 || ctx.Err() != nil || len(tried) >= need+2 || time.Since(started) > postTime
-				dup := !stop && seen(r)
-				k := len(tried)
-				if !stop && !dup {
-					tried, picks, done, stored = append(tried, r), append(picks, nil), append(done, false), append(stored, false)
-				}
-				qmu.Unlock()
-				if stop || dup {
-					<-slots
-					if stop {
-						break
-					}
-					continue
-				}
-				pwg.Add(1)
-				go func(k int, r Release) {
-					defer pwg.Done()
-					defer func() { <-slots }()
-					p, _ := s.add(ctx, r, caches, season, episode, maxSize)
+			postsDone := make(chan struct{})
+			go func() {
+				defer close(postsDone)
+				for _, r := range Rank(nzbs, q, maxSize, season) {
+					slots <- struct{}{}
 					qmu.Lock()
-					defer qmu.Unlock()
-					picks[k], done[k] = p, true
-					for ; next < len(done) && done[next]; next++ {
-						if p := picks[next]; p != nil && !stored[next] && need > 0 && !seen(tried[next]) {
-							stored[next] = true
-							keep(tried[next], p)
+					stop := need <= 0 || ctx.Err() != nil || len(tried) >= need+2 || time.Since(started) > postTime
+					dup := !stop && seen(r)
+					k := len(tried)
+					if !stop && !dup {
+						tried, picks, done, stored = append(tried, r), append(picks, nil), append(done, false), append(stored, false)
+					}
+					qmu.Unlock()
+					if stop || dup {
+						<-slots
+						if stop {
+							break
 						}
+						continue
 					}
-					// A find waiting on a slow post ranked above it is stored
-					// after a moment anyway, so playback isn't held up.
-					if p != nil && k >= next {
-						time.AfterFunc(orderWait, func() {
-							qmu.Lock()
-							defer qmu.Unlock()
-							if !stored[k] && need > 0 && ctx.Err() == nil && !seen(tried[k]) {
-								stored[k] = true
-								keep(tried[k], p)
+					pwg.Add(1)
+					go func(k int, r Release) {
+						defer pwg.Done()
+						defer func() { <-slots }()
+						p, _ := s.add(ctx, r, caches, season, episode, maxSize)
+						qmu.Lock()
+						defer qmu.Unlock()
+						picks[k], done[k] = p, true
+						for ; next < len(done) && done[next]; next++ {
+							if p := picks[next]; p != nil && !stored[next] && need > 0 && !seen(tried[next]) {
+								stored[next] = true
+								keep(tried[next], p)
 							}
-						})
-					}
-				}(k, r)
+						}
+						// A find waiting on a slow post ranked above it is stored
+						// after a moment anyway, so playback isn't held up.
+						if p != nil && k >= next {
+							time.AfterFunc(orderWait, func() {
+								qmu.Lock()
+								defer qmu.Unlock()
+								if !stored[k] && need > 0 && ctx.Err() == nil && !seen(tried[k]) {
+									stored[k] = true
+									keep(tried[k], p)
+								}
+							})
+						}
+					}(k, r)
+				}
+				pwg.Wait()
+			}()
+			// Torrents wait for the posts, unless the posts have found
+			// nothing for a while: then both are tried at once, so the
+			// item doesn't sit with no versions.
+			select {
+			case <-postsDone:
+			case <-time.After(torrentAfter):
+				qmu.Lock()
+				some := settled
+				qmu.Unlock()
+				if some {
+					<-postsDone
+				}
 			}
-			pwg.Wait()
+			defer func() { <-postsDone }()
 
 			tries := 0
 			for _, r := range Rank(rels, q, maxSize, season) {

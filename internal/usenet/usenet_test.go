@@ -339,6 +339,11 @@ func TestStoredRARVolumes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Volumes the file runs on from are read no further than their first
+	// article; only the last is walked to its end.
+	if n := s.bodies.Load(); n > 4 {
+		t.Fatalf("inspect fetched %d articles for 3 volumes", n)
+	}
 	if len(vids) != 1 || vids[0].Name != "Show.S01E01.1080p.mkv" || vids[0].Size != int64(len(video)) {
 		t.Fatalf("videos %+v", vids)
 	}

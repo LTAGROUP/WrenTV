@@ -112,6 +112,9 @@ func readRAR4(r io.ReaderAt, size int64) (*rarVolumeInfo, error) {
 			}
 			v.Entries = append(v.Entries, rarEntry{Name: name, DataOff: off + hsize, DataLen: pack,
 				SplitBefore: flags&0x01 != 0, SplitAfter: flags&0x02 != 0})
+			if flags&0x02 != 0 {
+				return v, nil // it runs on into the next volume; only the end mark follows
+			}
 			add = pack
 		case 0x7b: // end of archive
 			return v, nil
@@ -206,6 +209,9 @@ func readRAR5(r io.ReaderAt, size int64) (*rarVolumeInfo, error) {
 			if fflags&0x01 == 0 { // not a directory
 				v.Entries = append(v.Entries, rarEntry{Name: name, DataOff: dataOff, DataLen: int64(dataSize),
 					SplitBefore: hflags&0x08 != 0, SplitAfter: hflags&0x10 != 0})
+				if hflags&0x10 != 0 {
+					return v, nil // it runs on into the next volume; only the end mark follows
+				}
 			}
 		case 5: // end of archive
 			return v, nil
