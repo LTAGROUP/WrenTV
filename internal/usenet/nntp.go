@@ -137,15 +137,22 @@ func (c *conn) deadline(ctx context.Context, d time.Duration) (stop func()) {
 		select {
 		case <-ctx.Done():
 			c.dl.Lock()
-			c.cut = true
-			_ = c.nc.SetDeadline(time.Unix(1, 0)) // unblock reads now
+			// A command that finished as ctx ended is left alone: the
+			// connection may already be back in the pool, or running the
+			// next command.
+			select {
+			case <-done:
+			default:
+				c.cut = true
+				_ = c.nc.SetDeadline(time.Unix(1, 0)) // unblock reads now
+			}
 			c.dl.Unlock()
 		case <-done:
 		}
 	}()
 	return func() {
-		close(done)
 		c.dl.Lock()
+		close(done)
 		c.hard, c.cut, c.stall = time.Time{}, false, 0
 		_ = c.nc.SetDeadline(time.Time{})
 		c.dl.Unlock()
@@ -588,11 +595,21 @@ func (s *server) get(ctx context.Context) (*conn, bool, error) {
 			s.open++
 			s.dialing++
 			s.mu.Unlock()
-			c, err := dial(ctx, s.Server)
+			// A login that's begun is finished even if ctx ends (a reader
+			// seeking away): cutting it off wastes one of the account's
+			// connections until the server notices.
+			c, err := dial(context.WithoutCancel(ctx), s.Server)
 			s.mu.Lock()
 			s.dialing--
 			if err == nil {
 				s.loggedIn = true
+				if ctx.Err() != nil {
+					c.used = time.Now()
+					s.idle = append(s.idle, c)
+					s.release()
+					s.mu.Unlock()
+					return nil, false, ctx.Err()
+				}
 				s.mu.Unlock()
 				return c, true, nil
 			}

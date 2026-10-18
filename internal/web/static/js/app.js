@@ -26,6 +26,7 @@ document.addEventListener('click', (e) => {
 
 const routes = [
   [/^\/$/, viewHome],
+  [/^\/watchlist$/, viewWatchlist],
   [/^\/movies$/, () => viewCatalog('movie')],
   [/^\/shows$/, () => viewCatalog('show')],
   [/^\/library\/([^/]+)$/, viewLibrary],
@@ -317,6 +318,7 @@ async function shell(view, seq) {
       <aside class="sidebar">
         <a class="brand" href="/"><img class="logo" src="/brand/wren-symbol-small-on-dark.svg" alt="">${esc(state.server.name || 'Wren TV')}</a>
         <a class="nav" href="/" data-path="/">${icons.home}<span>Home</span></a>
+        <a class="nav" href="/watchlist" data-path="/watchlist">${icons.bookmark}<span>Watchlist</span></a>
         ${canStream() ? `<a class="nav" href="/movies" data-path="/movies">${icons.movies}<span>Movies</span></a>
           <a class="nav" href="/shows" data-path="/shows">${icons.shows}<span>TV Shows</span></a>
           <a class="nav" href="/collections" data-path="/collections">${icons.stack}<span>Collections</span></a>`
@@ -494,6 +496,7 @@ async function viewHome() {
   const featured = pickFeatured(home);
   let html = featured ? featureHero(featured) : '';
   if (home.continueWatching.length) html += shelf('Continue Watching', home.continueWatching.map(wideCard).join(''));
+  html += watchlistShelf(home.watchlist);
   html += skeletonShelf('Trending this week', 8, 'trending');
   for (const c of home.collections || []) {
     const cards = c.items.map((it) => posterCard(it)).join('') + (c.missing || []).map((v) => titleCard(v)).join('');
@@ -522,6 +525,7 @@ async function viewDiscoverHome() {
   }
   let html = home.hero.length ? discoverHero(home.hero) : '';
   if (home.continueWatching.length) html += shelf('Continue Watching', home.continueWatching.map(wideCard).join(''));
+  html += watchlistShelf(home.watchlist);
   home.rows.forEach((row, i) => {
     if (i === 1 && home.recentlyWatched.length) html += shelf('Recently Watched', home.recentlyWatched.map((it) => posterCard(it)).join(''));
     html += shelf(row.title, row.items.map((v, n) => titleCard(v, row.id === 'trending' && n < 10 ? n + 1 : 0)).join(''),
@@ -532,6 +536,24 @@ async function viewDiscoverHome() {
   bindPlayLinks(node);
   bindShelves(node);
   bindHero(node, home.hero);
+  return node;
+}
+
+// watchlistShelf is the home row of what the viewer saved for later.
+const watchlistShelf = (items) => items?.length ? shelf('My Watchlist', items.map((it) => posterCard(it)).join(''), { see: '/watchlist' }) : '';
+
+// viewWatchlist is the movies and shows the viewer saved for later, newest
+// added first.
+async function viewWatchlist() {
+  setTitle('Watchlist');
+  const all = await api('/api/watchlist');
+  const showWatched = new URLSearchParams(location.search).get('watched') === '1';
+  const items = showWatched ? all : all.filter((it) => !isWatched(it));
+  const node = el(`<div><div class="page-head"><h1>Watchlist <span class="muted small">${items.length} title${items.length === 1 ? '' : 's'}</span></h1>
+    <div class="toolbar"><button class="chip${showWatched ? ' on' : ''}" id="show-watched" aria-pressed="${showWatched}">Show watched</button></div></div>
+    ${items.length ? `<div class="grid">${items.map((it) => posterCard(it)).join('')}</div>`
+      : `<div class="empty"><h2>${all.length ? 'All watched' : 'Your watchlist is empty'}</h2><p>${all.length ? 'Turn on Show watched to see them.' : 'Add movies and shows from their pages to find them here.'}</p></div>`}</div>`);
+  $('#show-watched', node).onclick = () => go('/watchlist' + (showWatched ? '' : '?watched=1'), true);
   return node;
 }
 
@@ -873,6 +895,9 @@ async function viewItem(id) {
     actions += `<button class="btn primary lg" data-act="next">▶ ${n.progress?.position > 30 ? 'Resume' : 'Play'} S${n.seasonNumber} · E${n.episodeNumber}</button>`;
   }
   actions += `<button class="btn lg" data-act="trailer" hidden>Trailer</button>`;
+  if (d.onWatchlist !== undefined) {
+    actions += `<button class="btn lg${d.onWatchlist ? ' on' : ''}" data-act="watchlist" aria-pressed="${d.onWatchlist}" title="${d.onWatchlist ? 'Remove from your watchlist' : 'Add to your watchlist'}">${icons.bookmark} ${d.onWatchlist ? 'On Watchlist' : 'Watchlist'}</button>`;
+  }
   actions += `<button class="btn lg${isWatched(it) ? ' on' : ''}" data-act="watched">${isWatched(it) ? '✓ Watched' : 'Mark Watched'}</button>`;
   if (playable && d.canDownload && (d.files?.length || d.streaming)) actions += `<button class="btn lg" data-act="download" title="Save to this device">${icons.download} Download</button>`;
   if (isAdmin() && d.streaming) {
@@ -938,6 +963,14 @@ async function viewItem(id) {
   act('watched', async () => {
     await api(`/api/items/${it.id}/watched`, { method: 'POST', body: { watched: !isWatched(it) } });
     render();
+  });
+  act('watchlist', async (e) => {
+    const b = e.currentTarget;
+    b.disabled = true;
+    try {
+      await api(`/api/items/${it.id}/watchlist`, { method: d.onWatchlist ? 'DELETE' : 'PUT' });
+      render();
+    } catch (ex) { toast(ex.message); b.disabled = false; }
   });
   act('match', () => manage.fixMatch(it));
   act('download', (e) => downloadToDevice(it, e.currentTarget, version()));
