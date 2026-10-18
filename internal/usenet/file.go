@@ -58,7 +58,7 @@ type segEntry struct {
 }
 
 func NewFile(pool *Pool, nzb *NZB, lay *Layout) *File {
-	return &File{pool: pool, nzb: nzb, lay: lay, Ahead: 8, cache: map[segKey]*segEntry{}, max: 48}
+	return &File{pool: pool, nzb: nzb, lay: lay, Ahead: 32, cache: map[segKey]*segEntry{}, max: 64}
 }
 
 func (f *File) Size() int64     { return f.lay.Size }

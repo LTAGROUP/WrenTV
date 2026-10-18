@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"math/rand"
@@ -19,6 +20,8 @@ import (
 type fakeServer struct {
 	mu       sync.Mutex
 	articles map[string][]byte
+	gone     map[string]bool // answered 451, as Giganews does for takedowns
+	logins   atomic.Int32
 	open     atomic.Int32
 	peak     atomic.Int32
 	bodies   atomic.Int32
@@ -74,6 +77,7 @@ func (s *fakeServer) serve(c net.Conn) {
 		case cmd == "AUTHINFO" && len(f) == 3 && strings.EqualFold(f[1], "PASS"):
 			if f[2] == "secret" {
 				authed = true
+				s.logins.Add(1)
 				fmt.Fprint(w, "281 ok\r\n")
 			} else {
 				fmt.Fprint(w, "481 no\r\n")
@@ -84,8 +88,11 @@ func (s *fakeServer) serve(c net.Conn) {
 			id := strings.Trim(f[1], "<>")
 			s.mu.Lock()
 			body, ok := s.articles[id]
+			gone := s.gone[id]
 			s.mu.Unlock()
 			switch {
+			case gone:
+				fmt.Fprintf(w, "451 0 <%s>\r\n", id)
 			case !ok:
 				fmt.Fprint(w, "430 no such article\r\n")
 			case cmd == "STAT":
@@ -238,6 +245,32 @@ func TestPlainVideo(t *testing.T) {
 	s.mu.Unlock()
 	if ok, _ := Available(ctx, pool, nzb, vids[0].Layout, 100); ok {
 		t.Fatal("missing article not noticed")
+	}
+}
+
+// Giganews answers taken-down articles with 451. That's a missing article,
+// not a broken connection: the post fails fast and connections are kept.
+func TestTakenDownArticles(t *testing.T) {
+	s := newFakeServer(t)
+	video := append([]byte{0x1a, 0x45, 0xdf, 0xa3}, randomBytes(400_000, 4)...)
+	nzb := &NZB{Files: []NZBFile{s.post("Movie.2020.1080p.mkv", video, 64000, `"Movie.2020.1080p.mkv" yEnc`)}}
+	s.mu.Lock()
+	s.gone = map[string]bool{nzb.Files[0].Segments[0].ID: true, nzb.Files[0].Segments[3].ID: true}
+	s.mu.Unlock()
+	pool := s.pool(1)
+	defer pool.Close()
+	ctx := context.Background()
+	if ok, err := Alive(ctx, pool, nzb, nil, 10); ok || err != nil {
+		t.Fatalf("alive %v %v, want false, nil", ok, err)
+	}
+	if _, err := pool.Body(ctx, nzb.Files[0].Segments[0].ID); !errors.Is(err, ErrMissing) {
+		t.Fatalf("body err %v, want ErrMissing", err)
+	}
+	if _, err := Inspect(ctx, pool, nzb, nil); !errors.Is(err, ErrMissing) {
+		t.Fatalf("inspect err %v, want ErrMissing", err)
+	}
+	if n := s.logins.Load(); n != 1 {
+		t.Fatalf("logged in %d times, want 1", n)
 	}
 }
 

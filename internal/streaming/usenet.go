@@ -209,6 +209,12 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 			return !ok || (s == season && e == episode)
 		}
 	}
+	if ok, err := usenet.Alive(ctx, pool, nzb, keep, 24); !ok {
+		if err == nil {
+			err = errors.New("articles missing from the news server")
+		}
+		return fail("check", err)
+	}
 	vids, err := usenet.Inspect(ctx, pool, nzb, keep)
 	if err != nil {
 		return fail("inspect", err)

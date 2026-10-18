@@ -318,6 +318,27 @@ func rarVideos(ctx context.Context, pool *Pool, nzb *NZB, heads []head, files []
 	return out, nil
 }
 
+// Alive checks a spread of a whole post's articles, leaving out par2 and
+// other extras. It takes a second where reading a taken-down post's files
+// takes many, so dead posts are dropped before they're inspected.
+// keep is as for Inspect.
+func Alive(ctx context.Context, pool *Pool, nzb *NZB, keep func(name string) bool, samples int) (bool, error) {
+	var all []string
+	for _, f := range nzb.Files {
+		name := f.Name()
+		if junkExtRE.MatchString(name) {
+			continue
+		}
+		if _, rar := rarVolume(name); keep != nil && (rar || isVideo(name)) && !keep(name) {
+			continue
+		}
+		for _, s := range f.Segments {
+			all = append(all, s.ID)
+		}
+	}
+	return statSpread(ctx, pool, all, samples)
+}
+
 // Available checks a spread of a video's articles on the news servers.
 // Posts lose articles to takedowns; this catches most dead ones before
 // anyone presses play.
@@ -328,6 +349,10 @@ func Available(ctx context.Context, pool *Pool, nzb *NZB, lay *Layout, samples i
 			all = append(all, s.ID)
 		}
 	}
+	return statSpread(ctx, pool, all, samples)
+}
+
+func statSpread(ctx context.Context, pool *Pool, all []string, samples int) (bool, error) {
 	if len(all) == 0 {
 		return false, nil
 	}

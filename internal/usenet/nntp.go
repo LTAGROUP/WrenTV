@@ -156,7 +156,7 @@ func (c *conn) body(id string) ([]byte, error) {
 	}
 	switch code {
 	case 222:
-	case 430, 423:
+	case 430, 423, 451: // 451: taken down (Giganews)
 		return nil, ErrMissing
 	default:
 		return nil, fmt.Errorf("news server: %d %s", code, msg)
@@ -200,7 +200,7 @@ func (c *conn) stats(ids []string) (missing []string, err error) {
 		}
 		switch code {
 		case 223:
-		case 430, 423:
+		case 430, 423, 451: // 451: taken down (Giganews)
 			missing = append(missing, id)
 		default:
 			return nil, fmt.Errorf("news server: %d %s", code, msg)
