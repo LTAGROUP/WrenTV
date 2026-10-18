@@ -122,3 +122,21 @@ func TestRankDropsUnplayable(t *testing.T) {
 		t.Fatalf("rank = %+v", got)
 	}
 }
+
+func TestPickPostFile(t *testing.T) {
+	files := []RemoteFile{{Name: "prMHH5ZaDGIjxeOIUg2V.mkv", Size: 900}, {Name: "x.nfo", Size: 1}}
+	if f, ok := pickPostFile(files, "Show.S01E01.The.Eyes.1080p.WEB-DL-FLUX", 1, 1); !ok || f.Size != 900 {
+		t.Fatalf("hidden name in a post for the episode = %+v, %v", f, ok)
+	}
+	if _, ok := pickPostFile(files, "Show.S01E02.1080p.WEB-DL-FLUX", 1, 1); ok {
+		t.Fatal("post for another episode accepted")
+	}
+	// A file named for another episode isn't taken, even from the right post.
+	other := []RemoteFile{{Name: "Show.S01E02.mkv", Size: 900}}
+	if _, ok := pickPostFile(other, "Show.S01E01.1080p.WEB-DL-FLUX", 1, 1); ok {
+		t.Fatal("other episode's file accepted")
+	}
+	if f, ok := pickPostFile(files, "Movie.2024.1080p.WEB-DL", 0, 0); !ok || f.Size != 900 {
+		t.Fatalf("movie = %+v, %v", f, ok)
+	}
+}

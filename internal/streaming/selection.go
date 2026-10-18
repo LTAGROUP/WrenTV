@@ -199,6 +199,25 @@ func PickFile(files []RemoteFile, fileName string, season, episode int) (RemoteF
 	return best, found
 }
 
+// pickPostFile is PickFile for a Usenet post. Posts often hide their file
+// names, so a post named for the episode wanted plays its largest video
+// whose name doesn't say it's some other episode.
+func pickPostFile(files []RemoteFile, release string, season, episode int) (RemoteFile, bool) {
+	if f, ok := PickFile(files, "", season, episode); ok || season <= 0 {
+		return f, ok
+	}
+	if s, e, ok := EpisodeOf(release); !ok || s != season || e != episode {
+		return RemoteFile{}, false
+	}
+	var untagged []RemoteFile
+	for _, f := range files {
+		if _, _, ok := EpisodeOf(f.Name); !ok {
+			untagged = append(untagged, f)
+		}
+	}
+	return PickFile(untagged, "", 0, 0)
+}
+
 // EpisodeFiles maps each episode of a season found in a pack to its file.
 func EpisodeFiles(files []RemoteFile, season int) map[int]RemoteFile {
 	out := map[int]RemoteFile{}

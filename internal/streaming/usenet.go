@@ -228,7 +228,7 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 		files[i] = RemoteFile{ID: v.Name, Name: v.Name, Size: v.Size}
 		layouts[v.Name] = v.Layout
 	}
-	f, ok := PickFile(files, "", season, episode)
+	f, ok := pickPostFile(files, r.Name, season, episode)
 	if !ok {
 		return fail("pick", errors.New("no video for this title"))
 	}
