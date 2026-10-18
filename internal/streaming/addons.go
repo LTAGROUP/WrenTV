@@ -211,7 +211,7 @@ const addonUA = "AIOStreams-compatible WrenTV/1.0"
 
 var (
 	sizeRE = regexp.MustCompile(`(?i)([0-9]+(?:[.,][0-9]+)?)\s*(tib|tb|gib|gb|mib|mb)\b`)
-	seedRE = regexp.MustCompile(`(?i)(?:👤\s*|seeders?\D{0,3})([0-9]+)`)
+	seedRE = regexp.MustCompile(`(?i)(?:[👤👥]\s*|seeders?\D{0,3})([0-9]+)`)
 )
 
 func searchAddon(ctx context.Context, a Addon, kind, id string) ([]Release, error) {

@@ -22,6 +22,9 @@ var (
 	episodeWordsRE = regexp.MustCompile(`(?i)\bseason[ ._-]*(\d{1,2})\W*episode[ ._-]*(\d{1,3})\b`)
 	seasonRE       = regexp.MustCompile(`(?i)\b(?:s(\d{1,2})|season[ ._-]*(\d{1,2}))\b`)
 	completeRE     = regexp.MustCompile(`(?i)\b(complete|season[ ._-]*pack|all[ ._-]*seasons)\b`)
+	// Releases players can't handle: H.266 video, and Blu-ray disc folders
+	// whose numbered clips may not be the film.
+	unplayableRE = regexp.MustCompile(`(?i)\b(vvc|vvenc|h\.?266|x266)\b|(^|/)bdmv/|\.iso$`)
 	// Subtitles burned into the picture.
 	hardsubRE = regexp.MustCompile(`(?i)\b(hc|hardsub(bed|s)?|hard[ ._-]?coded|[a-z]{2,3}sub(bed|s)?)\b`)
 	// Dubbed or foreign-language releases.
@@ -120,7 +123,7 @@ func isPack(name string, season int) bool {
 }
 
 // Rank orders an addon's releases for one quality: matching quality only,
-// junk and oversized releases dropped, then (for episodes) season packs first
+// junk, unplayable and oversized releases dropped, then (for episodes) season packs first
 // so the rest of the season can come from the same torrent, English releases
 // before dubbed or hard-subbed ones, then quality markers and seeders.
 func Rank(rels []Release, quality string, maxSize int64, season int) []Release {
@@ -130,7 +133,8 @@ func Rank(rels []Release, quality string, maxSize int64, season int) []Release {
 	}
 	var list []scored
 	for _, r := range rels {
-		if QualityOf(r.Text) != quality || isJunk(r.Name) || isJunk(r.FileName) {
+		if QualityOf(r.Text) != quality || isJunk(r.Name) || isJunk(r.FileName) || unplayableRE.MatchString(r.Name) ||
+			unplayableRE.MatchString(r.FileName) {
 			continue
 		}
 		// Packs report the whole torrent's size; their file is checked once picked.

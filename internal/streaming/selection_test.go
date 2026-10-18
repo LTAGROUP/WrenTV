@@ -111,3 +111,14 @@ func TestReleaseFromTorrentio(t *testing.T) {
 		t.Fatalf("addon = %+v %v", a, err)
 	}
 }
+
+func TestRankDropsUnplayable(t *testing.T) {
+	rels := []Release{
+		{Name: "Movie.2023.BDREMUX.2160p", Text: "2160p remux", FileName: "BDMV/STREAM/00000.m2ts"},
+		{Name: "Movie.2023.2160p.BluRay.VVenC.H266-X.mp4", Text: "2160p bluray"},
+		{Name: "Movie.2023.2160p.BluRay.x265-Y", Text: "2160p bluray", FileName: "Movie.2023.2160p.BluRay.x265-Y.mkv"},
+	}
+	if got := Rank(rels, "2160p", 0, 0); len(got) != 1 || got[0].Name != "Movie.2023.2160p.BluRay.x265-Y" {
+		t.Fatalf("rank = %+v", got)
+	}
+}
