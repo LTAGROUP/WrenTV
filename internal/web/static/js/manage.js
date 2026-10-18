@@ -414,7 +414,7 @@ function streamingTab(s, libs) {
     </div>
 
     <div class="panel"><h2>Addons</h2>
-      <p class="small muted">Stremio addons that list torrents for a title. Results from every enabled addon are merged.</p>
+      <p class="small muted">Stremio addons that list streams for a title: torrents (Torrentio, Comet), or ready-to-play links from addons that use your debrid account themselves (AIOStreams with TorBox Search, Meteor). Results from every enabled addon are merged.</p>
       <div class="addon-list"></div>
       <div class="addon-add"><input type="text" data-addon-url placeholder="https://…/manifest.json" autocomplete="off"><button type="button" class="btn" data-addon-add>Add addon</button></div>
       <p class="small error" data-addon-err hidden></p>
@@ -438,7 +438,7 @@ function streamingTab(s, libs) {
         <div class="field"><label>Download quality</label><select name="stDlQuality">${QUALITIES.map(([q, label]) => `<option value="${q}" ${q === st.downloadQuality ? 'selected' : ''}>${label}</option>`).join('')}</select></div>
         <div class="field"><label>Versions per quality</label><select name="stPerQuality">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${n === (st.perQuality || 3) ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
       </div>
-      <label class="check"><input type="checkbox" name="stUsenet" ${st.usenet !== false ? 'checked' : ''}> Prefer TorBox Usenet (needs a TorBox plan with Usenet)</label>
+      <label class="check"><input type="checkbox" name="stUsenet" ${st.usenet !== false ? 'checked' : ''}> Prefer Usenet streams (cached Usenet from addons such as AIOStreams with TorBox Search plays first)</label>
       <p class="small muted">Each title gets this many 4K and 1080p versions to choose from. The best one plays unless the viewer picks another.</p>
     </div>
 

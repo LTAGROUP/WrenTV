@@ -3,7 +3,6 @@ package streaming
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
@@ -16,15 +15,9 @@ import (
 
 // TorBox allows 300 requests a minute per endpoint; stay well under it.
 // Guards are shared by every TorBox client (clients are rebuilt when keys change).
-var (
-	torboxGuard       = newGuard("torbox", 250*time.Millisecond, time.Minute)
-	torboxSearchGuard = newGuard("torbox search", 500*time.Millisecond, time.Minute)
-)
+var torboxGuard = newGuard("torbox", 250*time.Millisecond, time.Minute)
 
-const (
-	torboxAPI    = "https://api.torbox.app/v1/api"
-	torboxSearch = "https://search-api.torbox.app"
-)
+const torboxAPI = "https://api.torbox.app/v1/api"
 
 type torBox struct{ key string }
 
@@ -213,47 +206,6 @@ func (t *torBox) link(ctx context.Context, kind, idParam, ref, fileID string) (s
 
 // ---------- Usenet ----------
 
-// SearchUsenet asks TorBox's search for the Usenet posts of a title and
-// keeps the ones TorBox has cached, which play at once like a cached torrent.
-func (t *torBox) SearchUsenet(ctx context.Context, imdbID string, season, episode int) ([]Release, error) {
-	v := url.Values{"check_cache": {"true"}, "check_owned": {"true"}, "search_user_engines": {"true"}}
-	if season > 0 {
-		v.Set("season", strconv.Itoa(season))
-		v.Set("episode", strconv.Itoa(episode))
-	}
-	req, _ := http.NewRequest(http.MethodGet, torboxSearch+"/usenet/imdb:"+url.PathEscape(imdbID)+"?"+v.Encode(), nil)
-	raw, err := t.callWith(ctx, torboxSearchGuard, "usenet search", req)
-	if err != nil {
-		return nil, err
-	}
-	data, _ := raw["data"].(map[string]any)
-	nzbs, _ := data["nzbs"].([]any)
-	var out []Release
-	for _, v := range nzbs {
-		m, _ := v.(map[string]any)
-		cached, _ := m["cached"].(bool)
-		owned, _ := m["owned"].(bool)
-		link, _ := m["nzb"].(string)
-		name, _ := m["raw_title"].(string)
-		if !(cached || owned) || link == "" || name == "" {
-			continue
-		}
-		hash, _ := m["hash"].(string)
-		if hash == "" {
-			hash = fmt.Sprintf("%x", md5.Sum([]byte(link)))
-		}
-		text := name
-		if p, _ := m["title_parsed_data"].(map[string]any); p != nil {
-			if res, _ := p["resolution"].(string); res != "" {
-				text += "\n" + res
-			}
-		}
-		out = append(out, Release{Name: name, Text: text, InfoHash: strings.ToLower(hash), NZB: link, FileIdx: -1,
-			Size: sizeOf(m["size"]), Seeders: -1, Addon: "TorBox Usenet"})
-	}
-	return out, nil
-}
-
 // AddUsenet adds a cached Usenet post to the account and lists its files.
 func (t *torBox) AddUsenet(ctx context.Context, hash, nzb, name string) (*Torrent, error) {
 	if id := t.findByHash(ctx, "usenet", hash); id != "" {
@@ -281,18 +233,6 @@ func (t *torBox) AddUsenet(ctx context.Context, hash, nzb, name string) (*Torren
 
 func (t *torBox) LinkUsenet(ctx context.Context, ref, fileID string) (string, error) {
 	return t.link(ctx, "usenet", "usenet_id", ref, fileID)
-}
-
-// sizeOf reads a size TorBox sends as a number or a string.
-func sizeOf(v any) int64 {
-	switch x := v.(type) {
-	case float64:
-		return int64(x)
-	case string:
-		n, _ := strconv.ParseInt(x, 10, 64)
-		return n
-	}
-	return 0
 }
 
 func idString(v any) string {

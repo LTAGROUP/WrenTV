@@ -23,6 +23,7 @@ type Stream struct {
 	Kind         string `json:"kind"` // "torrent" or "usenet"
 	InfoHash     string `json:"infoHash"`
 	NZB          string `json:"-"`
+	Link         string `json:"-"` // addon play link; empty for streams added to a debrid account here
 	FileIdx      int    `json:"fileIdx"`
 	FileName     string `json:"fileName"`
 	Size         int64  `json:"size"`
@@ -37,12 +38,12 @@ type Stream struct {
 }
 
 const streamCols = `id, item_id, quality, info_hash, file_idx, file_name, size, release, addon, provider, provider_ref, provider_file,
-	failures, created_at, updated_at, rank, kind, nzb`
+	failures, created_at, updated_at, rank, kind, nzb, link`
 
 func scanStream(r interface{ Scan(...any) error }) (*Stream, error) {
 	st := &Stream{}
 	err := r.Scan(&st.ID, &st.ItemID, &st.Quality, &st.InfoHash, &st.FileIdx, &st.FileName, &st.Size, &st.Release, &st.Addon,
-		&st.Provider, &st.ProviderRef, &st.ProviderFile, &st.Failures, &st.CreatedAt, &st.UpdatedAt, &st.Rank, &st.Kind, &st.NZB)
+		&st.Provider, &st.ProviderRef, &st.ProviderFile, &st.Failures, &st.CreatedAt, &st.UpdatedAt, &st.Rank, &st.Kind, &st.NZB, &st.Link)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -80,8 +81,8 @@ func (d *DB) PutStream(ctx context.Context, st *Stream, f *MediaFile) error {
 	}
 	defer tx.Rollback()
 	// The old stream's file goes with it (ON DELETE CASCADE).
-	if _, err := tx.ExecContext(ctx, `DELETE FROM streams WHERE item_id=? AND quality=? AND info_hash=? AND file_name=?`,
-		st.ItemID, st.Quality, st.InfoHash, st.FileName); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM streams WHERE item_id=? AND quality=? AND info_hash=? AND file_name=? AND link=?`,
+		st.ItemID, st.Quality, st.InfoHash, st.FileName, st.Link); err != nil {
 		return err
 	}
 	if st.ID == "" {
@@ -92,9 +93,9 @@ func (d *DB) PutStream(ctx context.Context, st *Stream, f *MediaFile) error {
 	}
 	now := Now()
 	st.CreatedAt, st.UpdatedAt = now, now
-	if _, err := tx.ExecContext(ctx, `INSERT INTO streams (`+streamCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	if _, err := tx.ExecContext(ctx, `INSERT INTO streams (`+streamCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		st.ID, st.ItemID, st.Quality, st.InfoHash, st.FileIdx, st.FileName, st.Size, st.Release, st.Addon, st.Provider,
-		st.ProviderRef, st.ProviderFile, st.Failures, st.CreatedAt, st.UpdatedAt, st.Rank, st.Kind, st.NZB); err != nil {
+		st.ProviderRef, st.ProviderFile, st.Failures, st.CreatedAt, st.UpdatedAt, st.Rank, st.Kind, st.NZB, st.Link); err != nil {
 		return err
 	}
 	if f.ID == "" {

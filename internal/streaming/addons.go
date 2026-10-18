@@ -1,6 +1,7 @@
 package streaming
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,20 +19,23 @@ import (
 	"unicode"
 )
 
-// Addon is a Stremio addon queried for torrent streams.
+// Addon is a Stremio addon queried for streams: torrents, or play links
+// from addons that add releases to a debrid account themselves.
 type Addon struct {
 	Name    string
 	BaseURL string // manifest URL without /manifest.json
 }
 
-// Release is one torrent an addon offered for a title, or a Usenet post
-// (NZB set, InfoHash is TorBox's hash for it).
+// Release is one torrent an addon offered for a title, or a play link
+// (Link set, InfoHash only when the addon said which torrent it is).
 type Release struct {
 	Name     string // release name
 	Text     string // everything the addon said about it (for quality matching)
 	InfoHash string
 	NZB      string
-	FileIdx  int // file index inside the torrent, -1 if unknown
+	Link     string // addon URL that redirects to the file on the debrid CDN
+	Usenet   bool   // the link plays a Usenet post
+	FileIdx  int    // file index inside the torrent, -1 if unknown
 	FileName string
 	Size     int64
 	Seeders  int
@@ -95,7 +99,7 @@ func Manifest(ctx context.Context, a Addon) (string, error) {
 	req.Header.Set("User-Agent", "WrenTV/1.0")
 	resp, err := addonClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", redactURL(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -124,7 +128,7 @@ func Manifest(ctx context.Context, a Addon) (string, error) {
 }
 
 // Search asks every addon for streams of a title (IMDb id; with season and
-// episode for shows) and merges them by info hash.
+// episode for shows) and merges torrents by info hash.
 func Search(ctx context.Context, addons []Addon, imdbID string, season, episode int) ([]Release, error) {
 	if imdbID == "" {
 		return nil, errors.New("title has no IMDb id")
@@ -153,6 +157,10 @@ func Search(ctx context.Context, addons []Addon, imdbID string, season, episode 
 			continue
 		}
 		for _, rel := range r.rows {
+			if rel.Link != "" {
+				byHash["link:"+rel.Link] = rel
+				continue
+			}
 			if old, ok := byHash[rel.InfoHash]; !ok || rel.Seeders > old.Seeders || (old.FileIdx < 0 && rel.FileIdx >= 0) {
 				byHash[rel.InfoHash] = rel
 			}
@@ -175,12 +183,31 @@ type addonStream struct {
 	Description   string   `json:"description"`
 	InfoHash      string   `json:"infoHash"`
 	FileIdx       *int     `json:"fileIdx"`
+	URL           string   `json:"url"`
 	Sources       []string `json:"sources"`
 	BehaviorHints struct {
 		Filename  string `json:"filename"`
 		VideoSize int64  `json:"videoSize"`
 	} `json:"behaviorHints"`
+	// AIOStreams describes each stream here for clients it recognises.
+	StreamData *struct {
+		Type       string `json:"type"`
+		Filename   string `json:"filename"`
+		FolderName string `json:"folderName"`
+		Size       int64  `json:"size"`
+		Service    *struct {
+			ID     string `json:"id"`
+			Cached bool   `json:"cached"`
+		} `json:"service"`
+		Torrent *struct {
+			InfoHash string `json:"infoHash"`
+		} `json:"torrent"`
+	} `json:"streamData"`
 }
+
+// addonUA starts with "AIO" because that is how AIOStreams decides to
+// include streamData (stream type, cached or not) in its responses.
+const addonUA = "AIOStreams-compatible WrenTV/1.0"
 
 var (
 	sizeRE = regexp.MustCompile(`(?i)([0-9]+(?:[.,][0-9]+)?)\s*(tib|tb|gib|gb|mib|mb)\b`)
@@ -199,10 +226,10 @@ func searchAddon(ctx context.Context, a Addon, kind, id string) ([]Release, erro
 		}
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		req.Header.Set("Accept", "application/json")
-		req.Header.Set("User-Agent", "WrenTV/1.0")
+		req.Header.Set("User-Agent", addonUA)
 		resp, err := addonClient.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", a.Name, err)
+			return nil, fmt.Errorf("%s: %w", a.Name, redactURL(err)) // the URL can hold the addon's config
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			d := min(max(retryAfter(resp.Header.Get("Retry-After")), 2*time.Second), 30*time.Second)
@@ -241,21 +268,37 @@ func searchAddon(ctx context.Context, a Addon, kind, id string) ([]Release, erro
 
 func releaseFrom(s addonStream, addon string) (Release, bool) {
 	hash := strings.ToLower(strings.TrimSpace(s.InfoHash))
-	if len(hash) != 40 {
-		return Release{}, false
-	}
 	text := strings.TrimSpace(strings.Join([]string{s.Name, s.Title, s.Description, s.BehaviorHints.Filename}, "\n"))
+	var link string
+	if len(hash) != 40 {
+		var ok bool
+		if link, ok = playLink(s, text); !ok {
+			return Release{}, false
+		}
+		hash = ""
+	}
 	// Torrentio's title starts with the torrent name; Comet's description
 	// starts with the file name behind an emoji.
 	name := cleanName(firstLine(s.Title))
 	if name == "" {
 		name = cleanName(firstLine(s.Description))
 	}
-	if name == "" {
-		name = s.BehaviorHints.Filename
+	if name == "" || link != "" {
+		name = cmp.Or(s.BehaviorHints.Filename, name)
 	}
-	r := Release{Name: name, Text: text, InfoHash: hash, FileIdx: -1, FileName: s.BehaviorHints.Filename, Size: s.BehaviorHints.VideoSize,
+	r := Release{Name: name, Text: text, InfoHash: hash, Link: link, FileIdx: -1, FileName: s.BehaviorHints.Filename, Size: s.BehaviorHints.VideoSize,
 		Seeders: -1, Addon: addon}
+	if d := s.StreamData; d != nil && link != "" {
+		r.Usenet = d.Type == "usenet"
+		r.FileName = cmp.Or(r.FileName, d.Filename)
+		r.Name = cmp.Or(d.FolderName, r.FileName, r.Name)
+		r.Size = cmp.Or(r.Size, d.Size)
+		if d.Torrent != nil && len(d.Torrent.InfoHash) == 40 {
+			r.InfoHash = strings.ToLower(d.Torrent.InfoHash)
+		}
+	} else if link != "" {
+		r.Usenet = usenetRE.MatchString(text)
+	}
 	if s.FileIdx != nil {
 		r.FileIdx = *s.FileIdx
 	}
@@ -271,6 +314,31 @@ func releaseFrom(s addonStream, addon string) (Release, bool) {
 		}
 	}
 	return r, true
+}
+
+var usenetRE = regexp.MustCompile(`(?i)\b(usenet|nzb|easynews)\b|📰`)
+
+// playLink returns the link of a stream an addon serves from a debrid
+// account. Links that would start a download (not cached yet), errors and
+// notices dressed up as streams are skipped: they'd keep the player waiting.
+func playLink(s addonStream, text string) (string, bool) {
+	u, err := url.Parse(strings.TrimSpace(s.URL))
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return "", false
+	}
+	if d := s.StreamData; d != nil {
+		switch d.Type {
+		case "usenet", "debrid", "http", "":
+		default:
+			return "", false // error, statistic, info, live, ...
+		}
+		if d.Service != nil && !d.Service.Cached {
+			return "", false
+		}
+	} else if strings.Contains(text, "⏳") || strings.Contains(strings.ToLower(text), "uncached") {
+		return "", false
+	}
+	return u.String(), true
 }
 
 // cleanName drops leading emoji and symbols addons decorate names with.

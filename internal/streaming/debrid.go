@@ -28,14 +28,10 @@ type Provider interface {
 	Link(ctx context.Context, ref, fileID string) (string, error)
 }
 
-// UsenetProvider is a debrid service that also serves the Usenet posts it
-// has cached (TorBox). Usenet streams come first: they start as fast as a
-// cached torrent and don't depend on seeders.
+// UsenetProvider is a debrid service that also serves Usenet posts from
+// their NZB (TorBox).
 type UsenetProvider interface {
 	Provider
-	// SearchUsenet lists the cached posts of a title (IMDb id; with season
-	// and episode for shows).
-	SearchUsenet(ctx context.Context, imdbID string, season, episode int) ([]Release, error)
 	// AddUsenet adds a cached post to the account and lists its files.
 	AddUsenet(ctx context.Context, hash, nzb, name string) (*Torrent, error)
 	// LinkUsenet returns a direct URL for one file of an added post.

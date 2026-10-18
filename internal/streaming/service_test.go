@@ -2,12 +2,14 @@ package streaming
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -66,37 +68,45 @@ func waitLookups(t *testing.T, s *Service) {
 	t.Fatal("lookup didn't finish")
 }
 
-// usenetProvider is a fake TorBox that also has Usenet posts cached.
-type usenetProvider struct {
-	*fakeProvider
-	posts []Release
-	files map[string][]RemoteFile
-}
-
-func (u *usenetProvider) SearchUsenet(_ context.Context, _ string, _, _ int) ([]Release, error) {
-	return u.posts, nil
-}
-func (u *usenetProvider) AddUsenet(_ context.Context, hash, _, _ string) (*Torrent, error) {
-	files, ok := u.files[hash]
-	if !ok {
-		return nil, ErrNotCached
-	}
-	return &Torrent{Ref: "u-" + hash, Files: files}, nil
-}
-func (u *usenetProvider) LinkUsenet(_ context.Context, ref, file string) (string, error) {
-	return u.cdn + "/" + ref + "/" + file, nil
-}
-
 func TestMovieChoicesPreferUsenet(t *testing.T) {
 	ctx := context.Background()
 	h := func(c string) string { return strings.Repeat(c, 40) }
-	addon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var mu sync.Mutex
+	opened := map[string]int{}
+	var addon *httptest.Server
+	addon = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/play/"):
+			// AIOStreams adds the post to TorBox, then redirects to its CDN.
+			mu.Lock()
+			opened[r.URL.Path]++
+			mu.Unlock()
+			http.Redirect(w, r, addon.URL+"/cdn/"+strings.TrimPrefix(r.URL.Path, "/play/")+"/Movie.2024.mkv", http.StatusFound)
+			return
+		case strings.HasPrefix(r.URL.Path, "/cdn/"):
+			w.Header().Set("Content-Type", "video/x-matroska")
+			w.Header().Set("Content-Range", "bytes 0-0/8000000000")
+			w.WriteHeader(http.StatusPartialContent)
+			w.Write([]byte{0})
+			return
+		}
+		usenet := func(id, name string, cached bool) map[string]any {
+			return map[string]any{"name": "[TB⚡] AIOStreams 2160p", "description": "🎥 WEB-DL 📦 15 GB", "url": addon.URL + "/play/" + id,
+				"behaviorHints": map[string]any{"filename": name + ".mkv", "videoSize": 15 << 30},
+				"streamData":    map[string]any{"type": "usenet", "folderName": name, "service": map[string]any{"id": "torbox", "cached": cached}}}
+		}
 		json.NewEncoder(w).Encode(map[string]any{"streams": []map[string]any{
 			{"title": "Movie.2024.2160p.REMUX-GRP\n👤 900 💾 50 GB", "infoHash": h("a")},
 			{"title": "Movie.2024.2160p.WEB-DL-GRP\n👤 500 💾 15 GB", "infoHash": h("b")},
 			{"title": "Movie.2024.2160p.BluRay.x265-OTHER\n👤 50 💾 20 GB", "infoHash": h("c")},
 			{"title": "Movie.2024.1080p.BluRay-GRP\n👤 300 💾 10 GB", "infoHash": h("d")},
 			{"title": "Movie.2024.1080p.WEB-DL-GRP\n👤 200 💾 5 GB", "infoHash": h("e")},
+			usenet("u1", "Movie.2024.2160p.WEB-DL-NZB", true),
+			// The same release as torrent b: offered once, from Usenet.
+			usenet("u2", "Movie.2024.2160p.WEB-DL-GRP", true),
+			// Not cached: opening it would start a download.
+			usenet("u3", "Movie.2024.2160p.REMUX-SLOW", false),
+			{"name": "[❌] AIOStreams", "description": "Something failed", "url": addon.URL + "/play/err", "streamData": map[string]any{"type": "error"}},
 		}})
 	}))
 	defer addon.Close()
@@ -108,16 +118,8 @@ func TestMovieChoicesPreferUsenet(t *testing.T) {
 	cfg := &config.Config{Streaming: config.StreamingConfig{Enabled: true, Qualities: []string{"2160p", "1080p"}, PerQuality: 3, Usenet: true,
 		Addons: []config.AddonConfig{{Name: "fake", URL: addon.URL + "/manifest.json", Enabled: true}}}}
 	file := func(n string) []RemoteFile { return []RemoteFile{{ID: "1", Name: n + ".mkv", Size: 1000}} }
-	prov := &usenetProvider{
-		fakeProvider: &fakeProvider{cdn: "http://cdn", cached: map[string][]RemoteFile{
-			h("a"): file("a"), h("b"): file("b"), h("c"): file("c"), h("d"): file("d"), h("e"): file("e")}},
-		posts: []Release{
-			{Name: "Movie.2024.2160p.WEB-DL-NZB", Text: "Movie.2024.2160p.WEB-DL-NZB\n2160p", InfoHash: "u1", NZB: "http://nzb/1", FileIdx: -1, Seeders: -1},
-			// The same release as torrent b: offered once, from Usenet.
-			{Name: "Movie.2024.2160p.WEB-DL-GRP", Text: "Movie.2024.2160p.WEB-DL-GRP", InfoHash: "u2", NZB: "http://nzb/2", FileIdx: -1, Seeders: -1},
-		},
-		files: map[string][]RemoteFile{"u1": file("u1"), "u2": file("u2")},
-	}
+	prov := &fakeProvider{cdn: "http://cdn", cached: map[string][]RemoteFile{
+		h("a"): file("a"), h("b"): file("b"), h("c"): file("c"), h("d"): file("d"), h("e"): file("e")}}
 	s := New(Deps{Cfg: cfg, DB: d, TMDB: tmdb.New("test", "en-US", d), Hub: library.NewHub()})
 	s.testProviders = []Provider{prov}
 	lib, _ := d.StreamLibrary(ctx, "movies")
@@ -130,21 +132,33 @@ func TestMovieChoicesPreferUsenet(t *testing.T) {
 	sts, _ := d.StreamsForItem(ctx, it.ID)
 	var got []string
 	for _, st := range sts {
-		got = append(got, fmt.Sprintf("%s/%d/%s/%s", st.Quality, st.Rank, st.Kind, st.InfoHash[:2]))
+		got = append(got, fmt.Sprintf("%s/%d/%s/%s", st.Quality, st.Rank, st.Kind, cmp.Or(st.InfoHash, st.Release)[:2]))
 	}
-	want := []string{"2160p/0/usenet/u1", "2160p/1/usenet/u2", "2160p/2/torrent/" + h("a")[:2],
+	want := []string{"2160p/0/usenet/Mo", "2160p/1/usenet/Mo", "2160p/2/torrent/" + h("a")[:2],
 		"1080p/0/torrent/" + h("d")[:2], "1080p/1/torrent/" + h("e")[:2]}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("streams =\n%v\nwant\n%v", got, want)
+	}
+	if sts[0].Release != "Movie.2024.2160p.WEB-DL-NZB" || sts[0].Size != 8000000000 || sts[0].FileName != "Movie.2024.2160p.WEB-DL-NZB.mkv" {
+		t.Fatalf("usenet stream = %+v", sts[0])
 	}
 	files, _ := d.FilesForItem(ctx, it.ID)
 	if len(files) != 5 || files[0].StreamRank != 0 || files[0].Tag != "Usenet · WEB-DL" || files[0].StreamID != sts[0].ID {
 		t.Fatalf("files = %+v", files[0])
 	}
-	// Usenet streams play through the Usenet link.
-	if u, _, err := s.linkFor(ctx, sts[0].ID, true); err != nil || u != "http://cdn/u-u1/1" {
+	// The first play uses where the link led during the lookup; later ones
+	// open the link again.
+	if u, _, err := s.linkFor(ctx, sts[0].ID, false); err != nil || u != addon.URL+"/cdn/u1/Movie.2024.mkv" {
 		t.Fatalf("usenet link = %q, %v", u, err)
 	}
+	if _, _, err := s.linkFor(ctx, sts[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	if opened["/play/u1"] != 2 || opened["/play/u3"] != 0 || opened["/play/err"] != 0 {
+		t.Fatalf("opened = %v", opened)
+	}
+	mu.Unlock()
 	// A dropped stream is replaced by a later top-up; the others keep playing.
 	d.DeleteStream(ctx, sts[0].ID)
 	d.PutStreamLookup(ctx, db.StreamLookup{ItemID: it.ID, LookedAt: 0})

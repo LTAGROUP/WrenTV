@@ -348,6 +348,9 @@ var migrations = []string{
 		import_movies INTEGER NOT NULL DEFAULT 0,
 		import_episodes INTEGER NOT NULL DEFAULT 0
 	);`,
+	// Streams an addon hands over as a play link (AIOStreams, Meteor): the
+	// link is opened again whenever the stream starts.
+	`ALTER TABLE streams ADD COLUMN link TEXT NOT NULL DEFAULT '';`,
 }
 
 // fkOff lists migrations (1-based) that rebuild tables. They run with

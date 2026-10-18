@@ -64,6 +64,9 @@ type Service struct {
 	sources   map[string]*debridSource
 	streaming int // open debrid sources
 	links     map[string]cachedLink
+	// pending holds where addon links led while a title was looked up, so
+	// the first play doesn't open the link a second time.
+	pending map[string]cachedLink
 	// cdnFails counts plays in a row whose link the CDN wouldn't serve. It's
 	// kept here: finding the torrent again resets the stream's own count.
 	cdnFails  map[string]int
@@ -99,7 +102,7 @@ type lookup struct {
 
 func New(d Deps) *Service {
 	return &Service{
-		Deps: d, sources: map[string]*debridSource{}, links: map[string]cachedLink{}, cdnFails: map[string]int{}, lookups: map[string]*lookup{},
+		Deps: d, sources: map[string]*debridSource{}, links: map[string]cachedLink{}, pending: map[string]cachedLink{}, cdnFails: map[string]int{}, lookups: map[string]*lookup{},
 		refreshed: map[string]time.Time{}, prefetchQ: make(chan string, 1000), queued: map[string]bool{},
 		dlKick: make(chan struct{}, 1), dlRunning: map[string]*runningDownload{},
 	}
@@ -501,25 +504,29 @@ func (s *Service) usenetProvider() UsenetProvider {
 	return nil
 }
 
-// search asks the addons for torrents and TorBox for cached Usenet posts at once.
+// search asks the addons for streams. Cached Usenet posts that addons
+// serve as play links come back on their own when Usenet is preferred.
 func (s *Service) search(ctx context.Context, imdb string, season, episode int) (torrents, usenet []Release, err error) {
-	var wg sync.WaitGroup
-	if u := s.usenetProvider(); u != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			var uerr error
-			if usenet, uerr = u.SearchUsenet(ctx, imdb, season, episode); uerr != nil {
-				slog.Info("usenet search failed", "imdb", imdb, "err", uerr)
-			}
-		}()
+	all, err := Search(ctx, s.addons(), imdb, season, episode)
+	if !s.cfg().Usenet {
+		return all, nil, err
 	}
-	torrents, err = Search(ctx, s.addons(), imdb, season, episode)
-	wg.Wait()
-	if len(usenet) > 0 {
-		err = nil
+	for _, r := range all {
+		if r.Usenet {
+			usenet = append(usenet, r)
+		} else {
+			torrents = append(torrents, r)
+		}
 	}
 	return torrents, usenet, err
+}
+
+// releaseKey tells releases apart: by torrent when known, else by link.
+func releaseKey(r Release) string {
+	if r.InfoHash == "" && r.Link != "" {
+		return "link:" + r.Link
+	}
+	return r.InfoHash
 }
 
 // cacheState is what one provider said about the torrents of a lookup.
@@ -537,7 +544,7 @@ func (s *Service) checkCached(ctx context.Context, rels []Release, qualities []s
 	for _, q := range qualities {
 		cands := Rank(rels, q, s.maxSize(q), season)
 		for _, r := range cands[:min(len(cands), 40)] {
-			if !seen[r.InfoHash] {
+			if r.InfoHash != "" && r.Link == "" && !seen[r.InfoHash] {
 				seen[r.InfoHash] = true
 				hashes = append(hashes, r.InfoHash)
 			}
@@ -623,6 +630,9 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 			for _, st := range have[q] {
 				rank = max(rank, st.Rank+1)
 				skip[st.InfoHash], skip[sameRelease(st.Release)] = true, true
+				if st.Link != "" {
+					skip["link:"+st.Link] = true
+				}
 			}
 			need := per - len(have[q])
 			cands := append(Rank(nzbs, q, maxSize, season), Rank(rels, q, maxSize, season)...)
@@ -631,7 +641,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 				if need == 0 || ctx.Err() != nil || tries >= need*3+3 {
 					break
 				}
-				if skip[r.InfoHash] || (sameRelease(r.Name) != "" && skip[sameRelease(r.Name)]) {
+				if skip[releaseKey(r)] || (sameRelease(r.Name) != "" && skip[sameRelease(r.Name)]) {
 					continue
 				}
 				p, tried := s.add(ctx, r, caches, season, episode, maxSize)
@@ -645,7 +655,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 					slog.Warn("store stream", "item", it.ID, "err", err)
 					continue
 				}
-				skip[r.InfoHash], skip[sameRelease(r.Name)] = true, true
+				skip[releaseKey(r)], skip[sameRelease(r.Name)] = true, true
 				rank++
 				need--
 				mu.Lock()
@@ -677,6 +687,26 @@ func (s *Service) add(ctx context.Context, r Release, caches map[string]*cacheSt
 	fits := func(tor *Torrent) (RemoteFile, bool) {
 		f, ok := PickFile(tor.Files, r.FileName, season, episode)
 		return f, ok && (maxSize <= 0 || f.Size <= maxSize)
+	}
+	if r.Link != "" {
+		target, size, err := openLink(ctx, r.Link)
+		if err != nil {
+			slog.Debug("addon link", "release", r.Name, "addon", r.Addon, "err", err)
+			return nil, true
+		}
+		if maxSize > 0 && size > maxSize {
+			return nil, true
+		}
+		s.mu.Lock()
+		for k, c := range s.pending {
+			if time.Since(c.at) > 10*time.Minute {
+				delete(s.pending, k)
+			}
+		}
+		s.pending[r.Link] = cachedLink{url: target, at: time.Now()}
+		s.mu.Unlock()
+		f := RemoteFile{Name: linkFileName(r.FileName, target), Size: size}
+		return &pick{rel: r, tor: &Torrent{}, file: f}, true
 	}
 	if r.NZB != "" {
 		u := s.usenetProvider()
@@ -715,10 +745,13 @@ func (s *Service) add(ctx context.Context, r Release, caches map[string]*cacheSt
 }
 
 func (s *Service) store(ctx context.Context, it *db.Item, q string, rank int, p *pick) error {
-	st := &db.Stream{ItemID: it.ID, Quality: q, Rank: rank, Kind: "torrent", InfoHash: p.rel.InfoHash, NZB: p.rel.NZB, FileName: p.file.Name,
-		Size: p.file.Size, Release: p.rel.Name, Addon: p.rel.Addon, Provider: p.prov.Name(), ProviderRef: p.tor.Ref,
+	st := &db.Stream{ItemID: it.ID, Quality: q, Rank: rank, Kind: "torrent", InfoHash: p.rel.InfoHash, NZB: p.rel.NZB, Link: p.rel.Link,
+		FileName: p.file.Name, Size: p.file.Size, Release: p.rel.Name, Addon: p.rel.Addon, ProviderRef: p.tor.Ref,
 		ProviderFile: p.file.ID, FileIdx: p.rel.FileIdx}
-	if p.rel.NZB != "" {
+	if p.prov != nil {
+		st.Provider = p.prov.Name()
+	}
+	if p.rel.NZB != "" || p.rel.Usenet {
 		st.Kind = "usenet"
 	}
 	// Codec and HDR are guessed from the names until the first play probes it.
@@ -992,6 +1025,33 @@ func (s *Service) linkFor(ctx context.Context, streamID string, force bool) (str
 		s.links[streamID] = cachedLink{url: u, at: time.Now()}
 		s.mu.Unlock()
 		return u, st.Size, nil
+	}
+	if st.Link != "" {
+		// The addon adds the release when its link is opened; the link it
+		// just opened while looking the title up is still fresh.
+		s.mu.Lock()
+		c, ok := s.pending[st.Link]
+		delete(s.pending, st.Link)
+		s.mu.Unlock()
+		if ok && !force && time.Since(c.at) < 10*time.Minute {
+			return remember(c.url)
+		}
+		u, size, err := openLink(ctx, st.Link)
+		if err == nil {
+			if size > 0 {
+				st.Size = size
+			}
+			return remember(u)
+		}
+		if ctx.Err() != nil {
+			return "", 0, err
+		}
+		slog.Info("addon link failed", "stream", st.ID, "addon", st.Addon, "err", err)
+		if n, _ := s.DB.StreamFailed(ctx, st.ID); n >= 2 {
+			_ = s.DB.DeleteStream(ctx, st.ID)
+			_ = s.DB.PutStreamLookup(ctx, db.StreamLookup{ItemID: st.ItemID, LookedAt: 0})
+		}
+		return "", 0, ErrUnavailable
 	}
 	if p := s.provider(st.Provider); p != nil && st.ProviderRef != "" {
 		var u string
