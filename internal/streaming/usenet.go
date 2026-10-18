@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/LTAGROUP/wrentv/internal/config"
@@ -36,6 +37,43 @@ type usenetState struct {
 	pool *usenet.Pool
 	// nzbs keeps parsed NZBs of recent plays.
 	nzbs map[string]*usenet.NZB
+	// dead are posts that lost articles during a play, by NZB link. Spot
+	// checks can miss the holes, so they aren't tried again for a while.
+	dead map[string]time.Time
+}
+
+// deadFor is how long a post that failed a play stays skipped.
+const deadFor = 7 * 24 * time.Hour
+
+func (u *usenetState) isDead(link string) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	t, ok := u.dead[link]
+	return ok && time.Since(t) < deadFor
+}
+
+// dropPost forgets a stored post that can't play and looks for another.
+func (s *Service) dropPost(st *db.Stream, why error) {
+	slog.Warn("usenet post dropped", "stream", st.ID, "release", st.Release, "err", why)
+	u := &s.usenet
+	u.mu.Lock()
+	if u.dead == nil {
+		u.dead = map[string]time.Time{}
+	}
+	u.dead[st.NZB] = time.Now()
+	for link, t := range u.dead {
+		if time.Since(t) > deadFor {
+			delete(u.dead, link)
+		}
+	}
+	u.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = s.DB.DeleteStream(ctx, st.ID)
+	_ = s.DB.PutStreamLookup(ctx, db.StreamLookup{ItemID: st.ItemID, LookedAt: 0})
+	if it, err := s.DB.GetItem(ctx, st.ItemID); err == nil {
+		s.topUp(it)
+	}
 }
 
 func (s *Service) newsPool() *usenet.Pool {
@@ -112,7 +150,7 @@ func (s *Service) searchIndexers(ctx context.Context, q usenet.Query) []Release 
 			var rels []Release
 			for _, r := range res {
 				rels = append(rels, Release{Name: r.Title, Text: r.Title, NZB: r.NZB, Indexer: ix.Name, Usenet: true,
-					FileIdx: -1, Size: r.Size, Seeders: r.Grabs, Addon: ix.Name})
+					FileIdx: -1, Size: r.Size, Seeders: r.Grabs, Addon: ix.Name, Posted: r.PubDate})
 			}
 			ch <- rels
 		}(ix)
@@ -201,6 +239,9 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 		slog.Info("usenet post skipped", "release", r.Name, "step", step, "err", err, "took", time.Since(t).Round(time.Millisecond))
 		return nil, true
 	}
+	if s.usenet.isDead(r.NZB) {
+		return fail("check", errors.New("lost articles during a play"))
+	}
 	nzb, err := s.nzb(ctx, r.NZB)
 	if err != nil {
 		return fail("nzb", err)
@@ -259,10 +300,10 @@ func (s *Service) openPost(ctx context.Context, st *db.Stream) (*usenet.File, er
 	if err != nil {
 		return nil, err
 	}
-	for _, fl := range lay.Files {
-		if fl.Index >= len(nzb.Files) {
-			return nil, ErrUnavailable
-		}
+	// Layouts saved before RAR sets with hidden names were read right
+	// leave out most of the archive.
+	if lay.Skips(nzb) {
+		return nil, ErrUnavailable
 	}
 	return usenet.NewFile(pool, nzb, &lay), nil
 }
@@ -270,6 +311,8 @@ func (s *Service) openPost(ctx context.Context, st *db.Stream) (*usenet.File, er
 // usenetSource plays a stored Usenet stream through the server.
 type usenetSource struct {
 	svc     *Service
+	st      *db.Stream
+	dropped atomic.Bool
 	f       *usenet.File
 	token   string
 	name    string
@@ -281,6 +324,10 @@ type usenetSource struct {
 func (s *usenetSource) Input() string {
 	return fmt.Sprintf("http://127.0.0.1:%d/internal/stream/%s", s.svc.HTTPPort, s.token)
 }
+
+// BackgroundInput is Input for work that mustn't slow playback, such as
+// seek thumbnails: it gets fewer connections and reads little ahead.
+func (s *usenetSource) BackgroundInput() string { return s.Input() + "?bg=1" }
 
 func (s *usenetSource) Size() int64           { return s.f.Size() }
 func (s *usenetSource) ReaderAt() io.ReaderAt { return s.f }
@@ -317,11 +364,19 @@ func (s *usenetSource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		return
 	}
+	ctx := r.Context()
+	if r.URL.Query().Get("bg") != "" {
+		ctx = usenet.Background(ctx)
+	}
 	t0 := time.Now()
-	fw := &firstWrite{w: &throttledWriter{ctx: r.Context(), w: w, t: s.t}}
-	n, err := s.f.WriteRange(r.Context(), fw, start, end-start+1)
+	fw := &firstWrite{w: &throttledWriter{ctx: ctx, w: w, t: s.t}}
+	n, err := s.f.WriteRange(ctx, fw, start, end-start+1)
 	if err != nil && r.Context().Err() == nil {
 		slog.Warn("usenet stream failed", "file", s.name, "offset", start, "err", err)
+		// A hole in the post won't fill in: the next play gets another.
+		if errors.Is(err, usenet.ErrMissing) && s.dropped.CompareAndSwap(false, true) {
+			go s.svc.dropPost(s.st, err)
+		}
 	}
 	slog.Debug("usenet read", "offset", start, "bytes", n, "first", fw.at.Sub(t0).Round(time.Millisecond), "took", time.Since(t0).Round(time.Millisecond))
 }
@@ -387,12 +442,25 @@ func (tw *throttledWriter) Write(p []byte) (int, error) {
 }
 
 // usenetPlay opens a Usenet stream for playback. Posts that lost articles
-// since they were found are dropped after failing twice.
+// since they were found are dropped, and the play falls back to another.
 func (s *Service) usenetPlay(ctx context.Context, st *db.Stream, release func()) (*usenetSource, error) {
 	f, err := s.openPost(ctx, st)
 	if err == nil {
+		// The first bytes and a spread of the rest, side by side: a post
+		// with holes is caught here instead of partway through the movie.
 		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		alive := make(chan error, 1)
+		go func() {
+			ok, err := f.Available(cctx, 24)
+			if err == nil && !ok {
+				err = usenet.ErrMissing
+			}
+			alive <- err
+		}()
 		_, err = f.ReadAtContext(cctx, make([]byte, 1), 0)
+		if aerr := <-alive; err == nil && errors.Is(aerr, usenet.ErrMissing) {
+			err = aerr
+		}
 		cancel()
 	}
 	if err != nil {
@@ -401,16 +469,13 @@ func (s *Service) usenetPlay(ctx context.Context, st *db.Stream, release func())
 		}
 		slog.Warn("usenet stream failed", "stream", st.ID, "file", st.FileName, "err", err)
 		if errors.Is(err, usenet.ErrMissing) || errors.Is(err, ErrUnavailable) {
-			if n, _ := s.DB.StreamFailed(ctx, st.ID); n >= 2 {
-				_ = s.DB.DeleteStream(ctx, st.ID)
-				_ = s.DB.PutStreamLookup(ctx, db.StreamLookup{ItemID: st.ItemID, LookedAt: 0})
-			}
+			s.dropPost(st, err)
 			return nil, ErrUnavailable
 		}
 		return nil, err
 	}
 	global, _ := s.limiters()
-	src := &usenetSource{svc: s, f: f, token: randToken(), name: st.FileName, release: release,
+	src := &usenetSource{svc: s, st: st, f: f, token: randToken(), name: st.FileName, release: release,
 		t: throttle{global, newLimiter(s.cfg().Limits.PerStreamMbps)}}
 	s.mu.Lock()
 	s.sources[src.token] = src

@@ -10,6 +10,7 @@ import (
 	"hash/crc32"
 	"math/rand"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -379,11 +380,14 @@ func TestManyRARVolumes(t *testing.T) {
 	}
 	parts := func(i int) string { return fmt.Sprintf("Movie.part%03d.rar", i+1) }
 	for _, name := range []func(int) string{old, parts} {
-		testManyRARVolumes(t, name)
+		testManyRARVolumes(t, name, name)
 	}
+	// The NZB's names can hide the real ones the volumes carry.
+	hidden := func(i int) string { return fmt.Sprintf("a1b2c3d4.part%03d.rar", i+1) }
+	testManyRARVolumes(t, parts, hidden)
 }
 
-func testManyRARVolumes(t *testing.T, volName func(int) string) {
+func testManyRARVolumes(t *testing.T, volName, subject func(int) string) {
 	s := newFakeServer(t)
 	const vols, per = 40, 50_000
 	var video []byte
@@ -403,7 +407,7 @@ func testManyRARVolumes(t *testing.T, volName func(int) string) {
 		video = append(video, chunk...)
 		name := volName(i)
 		vol := rar4Volume("Movie.2160p.mkv", chunk, i > 0, i < vols-1, i == 0)
-		files = append(files, s.post(name, vol, 20_000, fmt.Sprintf(`"%s" yEnc`, name)))
+		files = append(files, s.post(name, vol, 20_000, fmt.Sprintf(`"%s" yEnc`, subject(i))))
 	}
 	nzb := &NZB{Files: files}
 	pool := s.pool(4)
@@ -417,6 +421,14 @@ func testManyRARVolumes(t *testing.T, volName func(int) string) {
 	}
 	if len(vids) != 1 || vids[0].Size != int64(len(video)) {
 		t.Fatalf("videos %+v, want size %d", vids, len(video))
+	}
+	if vids[0].Layout.Skips(nzb) {
+		t.Fatal("layout skips volumes")
+	}
+	short := *vids[0].Layout
+	short.Files = append(slices.Clone(short.Files[:3]), short.Files[len(short.Files)-2:]...)
+	if !short.Skips(nzb) {
+		t.Fatal("layout without its middle volumes doesn't skip any")
 	}
 	f := NewFile(pool, nzb, vids[0].Layout)
 	got := make([]byte, len(video))

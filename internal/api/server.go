@@ -52,6 +52,8 @@ type Server struct {
 	Tracking  *tracking.Service // Simkl and playback webhooks
 	Images    *images.Cache
 	Thumbs    *thumbs.Manager // seek thumbnails
+	// thumbJobs starts a streamed file's thumbnails on first request, by session.
+	thumbJobs sync.Map
 	Direct    *direct.Manager // automatic HTTPS addresses (supabase mode)
 
 	Auth  auth.Provider

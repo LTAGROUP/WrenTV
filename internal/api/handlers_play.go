@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -683,18 +684,22 @@ func (s *Server) startThumbs(f *db.MediaFile, src stream.Source, info *media.Inf
 		j.Input = f.Path
 		return s.Thumbs.Start(context.Background(), j)
 	}
+	// Reading a streamed file costs bandwidth playback needs, so the frames
+	// wait until a player asks for one (most never do), and read at low
+	// priority when the source offers it.
 	j.Input = src.Input()
+	if bg, ok := src.(interface{ BackgroundInput() string }); ok {
+		j.Input = bg.BackgroundInput()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { <-sess.Done(); cancel() }()
-	iv := thumbs.Interval(info.Duration, true)
+	var once sync.Once
+	s.thumbJobs.Store(sess.ID, func() { once.Do(func() { s.Thumbs.Start(ctx, j) }) })
 	go func() {
-		select {
-		case <-time.After(20 * time.Second):
-			s.Thumbs.Start(ctx, j)
-		case <-ctx.Done():
-		}
+		<-sess.Done()
+		cancel()
+		s.thumbJobs.Delete(sess.ID)
 	}()
-	return iv
+	return thumbs.Interval(info.Duration, true)
 }
 
 func (s *Server) serveThumb(w http.ResponseWriter, r *http.Request) {
@@ -702,6 +707,9 @@ func (s *Server) serveThumb(w http.ResponseWriter, r *http.Request) {
 	if sess == nil || s.Thumbs == nil {
 		http.Error(w, "session expired", http.StatusGone)
 		return
+	}
+	if start, ok := s.thumbJobs.Load(sess.ID); ok {
+		start.(func())()
 	}
 	n, err := strconv.Atoi(strings.TrimSuffix(chi.URLParam(r, "n"), ".jpg"))
 	if err != nil {

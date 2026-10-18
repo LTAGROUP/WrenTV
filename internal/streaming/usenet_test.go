@@ -3,6 +3,7 @@ package streaming
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -137,6 +138,35 @@ func TestUsenetLookupAndPlayback(t *testing.T) {
 	}
 	if fetched.Load() != before {
 		t.Fatal("playback fetched the NZB again")
+	}
+	src.Close()
+
+	// The post loses an article partway through a play: it's dropped, and
+	// not stored again by the lookup for a replacement.
+	src, err = s.Source(ctx, files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	ns.Remove("Movie.2024.1080p.WEB-DL-GRP.mkv", 11)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Range", "bytes=500000-520000")
+	src.(http.Handler).ServeHTTP(rec, req)
+	src.Close()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if sts, _ := d.StreamsForItem(ctx, it.ID); len(sts) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the post with a hole wasn't dropped")
+		}
+	}
+	waitLookups(t, s)
+	if sts, _ := d.StreamsForItem(ctx, it.ID); len(sts) != 0 {
+		t.Fatalf("streams after the drop = %+v", sts)
+	}
+	if _, err := s.Source(ctx, files[0]); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("source after the drop: %v", err)
 	}
 }
 

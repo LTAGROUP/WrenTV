@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestQualityAndEpisode(t *testing.T) {
@@ -138,5 +139,23 @@ func TestPickPostFile(t *testing.T) {
 	}
 	if f, ok := pickPostFile(files, "Movie.2024.1080p.WEB-DL", 0, 0); !ok || f.Size != 900 {
 		t.Fatalf("movie = %+v, %v", f, ok)
+	}
+}
+
+func TestNewestToo(t *testing.T) {
+	day := func(n int) time.Time { return time.Date(2026, 10, n, 0, 0, 0, 0, time.UTC) }
+	ranked := []Release{
+		{Name: "A", Posted: day(1)},
+		{Name: "B", Posted: day(2)},
+		{Name: "C"}, // undated: rank order only
+		{Name: "D", Posted: day(9)},
+		{Name: "E", Posted: day(5)},
+	}
+	var got []string
+	for _, r := range newestToo(ranked) {
+		got = append(got, r.Name)
+	}
+	if want := "A D B E C"; strings.Join(got, " ") != want {
+		t.Fatalf("order = %v, want %s", got, want)
 	}
 }

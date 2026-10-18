@@ -52,11 +52,17 @@ final class PlayerModel {
     var duration = 0.0
     var paused = false
     var buffering = false
+    var volume: Float = 1
+    var muted = false
 
     var audioStreams: [MediaStream] = []
     var audioIndex: Int?
     var subtitles: [SubtitleTrack] = []
     var mpvTracks: [MPVTrack] = []
+    /// AVPlayer's subtitle choices: the text tracks the server lists in the
+    /// stream, and any captions in the video.
+    var avSubtitles: [AVMediaSelectionOption] = []
+    var avSubtitle: AVMediaSelectionOption?
     var upNext: Item?
     /// The item's versions, and the one playing.
     var versions: [MediaVersion] = []
@@ -83,11 +89,13 @@ final class PlayerModel {
     /// The AVKit subtitle the viewer had on, kept across stream restarts.
     @ObservationIgnored private var keptSubtitle: String?
     @ObservationIgnored private var sessionId: String?
+    @ObservationIgnored private var lastAutoRetry: Date?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var progressTask: Task<Void, Never>?
     @ObservationIgnored private var statusSub: AnyCancellable?
     @ObservationIgnored private var endObserver: NSObjectProtocol?
+    @ObservationIgnored private var avSubtitleGroup: AVMediaSelectionGroup?
     @ObservationIgnored private var mpvLayer: MPVLayer?
     @ObservationIgnored private var pendingMPVLoad: (URL, Double)?
     @ObservationIgnored private var stopped = false
@@ -207,6 +215,9 @@ final class PlayerModel {
         }
         timeObserver = nil
         avPlayer = nil
+        avSubtitles = []
+        avSubtitle = nil
+        avSubtitleGroup = nil
         mpvLayer?.teardown()
         mpvLayer = nil
         mpv?.destroy()
@@ -223,20 +234,21 @@ final class PlayerModel {
             player.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
         }
         avPlayer = player
+        applyVolume()
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 4), queue: .main) { [weak self] t in
             MainActor.assumeIsolated { self?.tick(t.seconds) }
         }
         statusSub = item.publisher(for: \.status).receive(on: DispatchQueue.main).sink { [weak self] status in
             if status == .failed {
-                self?.phase = .error(item.error?.localizedDescription ?? "Playback failed")
+                self?.failed(item.error?.localizedDescription ?? "Playback failed")
             }
         }
         endObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.finished() }
         }
         player.play()
-        // Subtitles live in AVKit's own menu: the server lists its text tracks
-        // in the stream, next to any captions in the video. They start off
+        // The server lists its text subtitle tracks in the stream, next to any
+        // captions in the video. They start off
         // unless the viewer's language setting picks one (or one was on
         // before a stream restart).
         let kept = keptSubtitle
@@ -260,6 +272,9 @@ final class PlayerModel {
             }
             guard let self, self.avPlayer?.currentItem === item else { return }
             item.select(pick, in: group)
+            self.avSubtitleGroup = group
+            self.avSubtitles = group.options
+            self.avSubtitle = pick
         }
     }
 
@@ -268,6 +283,7 @@ final class PlayerModel {
         position = t
         if let d = avPlayer?.currentItem?.duration.seconds, d.isFinite, d > 0 { duration = d }
         paused = (avPlayer?.rate ?? 0) == 0
+        buffering = avPlayer?.timeControlStatus == .waitingToPlayAtSpecifiedRate
         updateSkip()
     }
 
@@ -283,11 +299,20 @@ final class PlayerModel {
         c.onPause = { [weak self] in self?.paused = $0 }
         c.onBuffering = { [weak self] in self?.buffering = $0 }
         c.onTracks = { [weak self] in self?.mpvTracks = $0 }
-        c.onEnd = { [weak self] in self?.finished() }
-        c.onError = { [weak self] in self?.phase = .error($0) }
+        c.onEnd = { [weak self] in
+            guard let self else { return }
+            // A stream that breaks partway ends early instead of failing.
+            if self.duration > 0, self.position < self.duration - 120, !self.isOffline {
+                self.failed("The stream ended early.")
+            } else {
+                self.finished()
+            }
+        }
+        c.onError = { [weak self] in self?.failed($0) }
         if let audioTrack { c.set("aid", String(audioTrack)) }
         c.set("sid", subtitleTrack.map(String.init) ?? "no")
         mpv = c
+        applyVolume()
         pendingMPVLoad = (url, start)
     }
 
@@ -309,7 +334,25 @@ final class PlayerModel {
         p.rate == 0 ? p.play() : p.pause()
     }
 
-    func seek(by d: Double) { seek(to: max(0, position + d)) }
+    func seek(by d: Double) { seek(to: min(max(0, position + d), max(duration, 0))) }
+
+    func setVolume(_ v: Float) {
+        volume = min(max(v, 0), 1)
+        muted = false
+        applyVolume()
+    }
+
+    func toggleMute() {
+        muted.toggle()
+        applyVolume()
+    }
+
+    private func applyVolume() {
+        avPlayer?.volume = volume
+        avPlayer?.isMuted = muted
+        mpv?.set("volume", String(Int(volume * 100)))
+        mpv?.set("mute", muted ? "yes" : "no")
+    }
 
     func seek(to t: Double) {
         if let mpv { mpv.seek(to: t); return }
@@ -333,6 +376,12 @@ final class PlayerModel {
         restartStream(at: position)
     }
 
+    func selectAVSubtitle(_ o: AVMediaSelectionOption?) {
+        guard let item = avPlayer?.currentItem, let avSubtitleGroup else { return }
+        item.select(o, in: avSubtitleGroup)
+        avSubtitle = o
+    }
+
     func selectMPVTrack(_ t: MPVTrack?) {
         if let t { mpv?.selectTrack(t) } else { mpv?.disableSubtitles() }
         // Refresh selection state.
@@ -349,10 +398,20 @@ final class PlayerModel {
         start(at: position > 0 ? position : nil)
     }
 
-    private func restartStream(at pos: Double) {
-        if let item = avPlayer?.currentItem, let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible) {
-            keptSubtitle = item.currentMediaSelection.selectedMediaOption(in: group)?.displayName
+    /// A stream that fails partway is tried again from the same spot once:
+    /// the server drops a post that lost articles and hands out another.
+    private func failed(_ message: String) {
+        guard phase == .playing else { return }
+        if !isOffline, lastAutoRetry.map({ Date().timeIntervalSince($0) > 120 }) ?? true {
+            lastAutoRetry = Date()
+            retry()
+            return
         }
+        phase = .error(message)
+    }
+
+    private func restartStream(at pos: Double) {
+        if avPlayer != nil { keptSubtitle = avSubtitle?.displayName }
         let old = sessionId
         sessionId = nil
         teardownEngines()

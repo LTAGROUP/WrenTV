@@ -41,6 +41,7 @@ type Release struct {
 	Size     int64
 	Seeders  int
 	Addon    string
+	Posted   time.Time // when an indexer's post went up, if known
 	trackers []string
 }
 

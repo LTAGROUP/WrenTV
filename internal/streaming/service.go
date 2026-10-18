@@ -198,6 +198,40 @@ var torrentAfter = 10 * time.Second
 // up the tries before a live one is reached (postTime still bounds it).
 const postSpare = 10
 
+// newestToo alternates ranked posts with the newest ones left. Popular
+// titles are taken down within days, so the best-ranked posts are often
+// gone while a lower-ranked one posted since still plays.
+func newestToo(ranked []Release) []Release {
+	byAge := make([]int, len(ranked))
+	for i := range byAge {
+		byAge[i] = i
+	}
+	slices.SortStableFunc(byAge, func(a, b int) int { return ranked[b].Posted.Compare(ranked[a].Posted) })
+	out := make([]Release, 0, len(ranked))
+	used := make([]bool, len(ranked))
+	take := func(i int) {
+		used[i] = true
+		out = append(out, ranked[i])
+	}
+	ri, ai := 0, 0
+	for len(out) < len(ranked) {
+		if len(out)%2 == 1 {
+			for ai < len(byAge) && (used[byAge[ai]] || ranked[byAge[ai]].Posted.IsZero()) {
+				ai++
+			}
+			if ai < len(byAge) {
+				take(byAge[ai])
+				continue
+			}
+		}
+		for used[ri] {
+			ri++
+		}
+		take(ri)
+	}
+	return out
+}
+
 // soloPosts is how many of the best quality's top posts are read one at a
 // time, with all connections, while someone waits to play.
 const soloPosts = 3
@@ -788,7 +822,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 				if q == best {
 					defer unlead()
 				}
-				for _, r := range Rank(nzbs, q, maxSize, season) {
+				for _, r := range newestToo(Rank(nzbs, q, maxSize, season)) {
 					slots <- struct{}{}
 					qmu.Lock()
 					stop := need <= 0 || ctx.Err() != nil || len(tried) >= need+postSpare || time.Since(started) > postTime

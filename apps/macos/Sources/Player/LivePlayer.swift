@@ -276,6 +276,8 @@ struct LivePlayerWindow: View {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled, !showList else { return }
             withAnimation(.easeOut(duration: 0.3)) { controlsVisible = false }
+            // The pointer goes with the controls; moving it brings both back.
+            if NSApp.isActive { NSCursor.setHiddenUntilMouseMoves(true) }
         }
     }
 }

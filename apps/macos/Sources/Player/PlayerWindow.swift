@@ -37,9 +37,13 @@ struct PlayerWindow: View {
         .onContinuousHover { _ in poke() }
         .focusable()
         .focusEffectDisabled()
-        .onKeyPress(.space) { model?.togglePause(); poke(); return model?.engine == "mpv" ? .handled : .ignored }
-        .onKeyPress(.leftArrow) { guard model?.engine == "mpv" else { return .ignored }; model?.seek(by: -10); poke(); return .handled }
-        .onKeyPress(.rightArrow) { guard model?.engine == "mpv" else { return .ignored }; model?.seek(by: 10); poke(); return .handled }
+        .onKeyPress(.space) { model?.togglePause(); poke(); return .handled }
+        .onKeyPress(.leftArrow) { model?.seek(by: -10); poke(); return .handled }
+        .onKeyPress(.rightArrow) { model?.seek(by: 10); poke(); return .handled }
+        .onKeyPress(.upArrow) { model.map { $0.setVolume($0.volume + 0.1) }; poke(); return .handled }
+        .onKeyPress(.downArrow) { model.map { $0.setVolume($0.volume - 0.1) }; poke(); return .handled }
+        .onKeyPress("m") { model?.toggleMute(); poke(); return .handled }
+        .onKeyPress("f") { NSApp.keyWindow?.toggleFullScreen(nil); return .handled }
         .onKeyPress("s") {
             guard let m = model, let k = m.skip else { return .ignored }
             k == .intro ? m.skipIntro() : m.skipCredits()
@@ -62,6 +66,8 @@ struct PlayerWindow: View {
             // Leave the controls up while a menu is open; closing it pokes again.
             if model?.menuOpen == true { return }
             withAnimation(.easeOut(duration: 0.3)) { controlsVisible = false }
+            // The pointer goes with the controls; moving it brings both back.
+            if NSApp.isActive { NSCursor.setHiddenUntilMouseMoves(true) }
         }
     }
 }
@@ -90,18 +96,23 @@ private struct PlayerContent: View {
         case .playing, .ended:
             ZStack {
                 video
+                // Both players share these controls, so clicks go to us, not the video view.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { NSApp.keyWindow?.toggleFullScreen(nil) }
+                    .onTapGesture { model.togglePause() }
                 if model.buffering {
                     ProgressView().controlSize(.large)
                 }
                 VStack {
                     if controlsVisible { topBar.transition(.opacity) }
                     Spacer()
-                    if model.engine == "mpv" && controlsVisible { MPVControls(model: model).transition(.opacity) }
+                    if controlsVisible { PlayerControls(model: model).transition(.opacity) }
                 }
                 if model.phase == .ended, let next = model.upNext {
                     UpNextCard(next: next, play: model.playNext)
                 } else if model.phase == .playing {
-                    SkipOverlay(model: model, raised: model.engine == "mpv" && controlsVisible)
+                    SkipOverlay(model: model, raised: controlsVisible)
                 }
             }
         }
@@ -111,8 +122,6 @@ private struct PlayerContent: View {
     private var video: some View {
         if model.engine == "mpv", let c = model.mpv {
             MPVVideoView(controller: c) { model.attach($0) }
-                .onTapGesture(count: 2) { NSApp.keyWindow?.toggleFullScreen(nil) }
-                .onTapGesture { model.togglePause() }
         } else if let p = model.avPlayer {
             AVPlayerViewRep(player: p)
         }
@@ -128,11 +137,6 @@ private struct PlayerContent: View {
                 }
             }
             Spacer()
-            HStack(spacing: 6) {
-                if model.versions.count > 1 { VersionMenu(model: model) }
-                if !model.chapters.isEmpty { ChapterMenu(model: model) }
-                if model.engine == "mpv" || model.audioStreams.count > 1 { TrackMenu(model: model) }
-            }
         }
         .padding(.horizontal, 24)
         .padding(.top, 34)
@@ -198,8 +202,8 @@ private struct PlayerMenuButton<Panel: View>: View {
     var body: some View {
         Button { open.toggle() } label: {
             Image(systemName: symbol)
-                .font(.system(size: 19, weight: .medium))
-                .frame(width: 38, height: 34)
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: 30, height: 26)
                 .background(open || hover ? Color.white.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 8))
                 .contentShape(Rectangle())
         }
@@ -305,7 +309,7 @@ private struct SkipOverlay: View {
             }
         }
         .padding(.trailing, 36)
-        .padding(.bottom, raised ? 130 : 96)
+        .padding(.bottom, raised ? 150 : 96)
         .animation(.easeOut(duration: 0.25), value: model.skip)
         .animation(.easeOut(duration: 0.25), value: model.countdown == nil)
     }
@@ -364,8 +368,7 @@ private struct TrackMenu: View {
     @Bindable var model: PlayerModel
 
     var body: some View {
-        let mpv = model.engine == "mpv"
-        PlayerMenuButton(model: model, symbol: mpv ? "captions.bubble" : "speaker.wave.2", help: mpv ? "Audio & Subtitles" : "Audio") {
+        PlayerMenuButton(model: model, symbol: "captions.bubble", help: "Audio & Subtitles") {
             if model.engine == "mpv" {
                 let audio = model.mpvTracks.filter { $0.type == "audio" }
                 let subs = model.mpvTracks.filter { $0.type == "sub" }
@@ -382,10 +385,18 @@ private struct TrackMenu: View {
                     }
                 }
             } else {
-                // Subtitles are in AVKit's own menu, next to the video's captions.
-                PlayerMenuSection(title: "Audio") {
-                    ForEach(model.audioStreams, id: \.typeIndex) { a in
-                        PlayerMenuRow(title: a.label, selected: model.audioIndex == a.typeIndex) { model.selectAudio(a.typeIndex) }
+                if model.audioStreams.count > 1 {
+                    PlayerMenuSection(title: "Audio") {
+                        ForEach(model.audioStreams, id: \.typeIndex) { a in
+                            PlayerMenuRow(title: a.label, selected: model.audioIndex == a.typeIndex) { model.selectAudio(a.typeIndex) }
+                        }
+                    }
+                    Divider().padding(.horizontal, 6)
+                }
+                PlayerMenuSection(title: "Subtitles") {
+                    PlayerMenuRow(title: "Off", selected: model.avSubtitle == nil) { model.selectAVSubtitle(nil) }
+                    ForEach(model.avSubtitles, id: \.self) { o in
+                        PlayerMenuRow(title: o.displayName, selected: model.avSubtitle == o) { model.selectAVSubtitle(o) }
                     }
                 }
             }
@@ -393,40 +404,74 @@ private struct TrackMenu: View {
     }
 }
 
-private struct MPVControls: View {
+/// The transport bar, laid out like AVKit's floating controls, for both players.
+private struct PlayerControls: View {
     @Bindable var model: PlayerModel
     @State private var scrub: Double?
 
     var body: some View {
-        VStack(spacing: 8) {
-            Slider(value: Binding(get: { scrub ?? model.position }, set: { scrub = $0 }),
-                   in: 0...max(model.duration, 1)) { editing in
-                if !editing, let s = scrub {
-                    model.seek(to: s)
-                    scrub = nil
+        VStack(spacing: 10) {
+            ZStack {
+                HStack(spacing: 8) {
+                    Button { model.toggleMute() } label: { Image(systemName: volumeSymbol).frame(width: 22) }
+                        .help(model.muted ? "Unmute (M)" : "Mute (M)")
+                    Slider(value: Binding(get: { Double(model.muted ? 0 : model.volume) }, set: { model.setVolume(Float($0)) }), in: 0...1)
+                        .controlSize(.mini)
+                        .frame(width: 84)
+                    Spacer()
+                    if model.versions.count > 1 { VersionMenu(model: model) }
+                    if !model.chapters.isEmpty { ChapterMenu(model: model) }
+                    if model.engine == "mpv" || model.audioStreams.count > 1 || !model.avSubtitles.isEmpty { TrackMenu(model: model) }
+                    Button { NSApp.keyWindow?.toggleFullScreen(nil) } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right").frame(width: 30, height: 26)
+                    }
+                    .help("Full Screen (F)")
                 }
+                HStack(spacing: 26) {
+                    Button { model.seek(by: -10) } label: { Image(systemName: "gobackward.10") }.help("Back 10 seconds")
+                    Button { model.togglePause() } label: {
+                        Image(systemName: model.paused ? "play.fill" : "pause.fill")
+                            .font(.system(size: 24))
+                            .frame(width: 30)
+                    }
+                    .help(model.paused ? "Play (Space)" : "Pause (Space)")
+                    Button { model.seek(by: 10) } label: { Image(systemName: "goforward.10") }.help("Forward 10 seconds")
+                }
+                .font(.system(size: 18, weight: .medium))
             }
-            .controlSize(.small)
-            .overlay { ChapterTicks(model: model).allowsHitTesting(false) }
-            HStack(spacing: 22) {
+            HStack(spacing: 10) {
                 Text(formatClock(scrub ?? model.position)).monospacedDigit()
-                if let c = model.currentChapter, !c.title.isEmpty {
-                    Text(c.title).foregroundStyle(.secondary).lineLimit(1)
+                Slider(value: Binding(get: { scrub ?? model.position }, set: { scrub = $0 }),
+                       in: 0...max(model.duration, 1)) { editing in
+                    if !editing, let s = scrub {
+                        model.seek(to: s)
+                        scrub = nil
+                    }
                 }
-                Spacer()
-                Button { model.seek(by: -10) } label: { Image(systemName: "gobackward.10") }
-                Button { model.togglePause() } label: { Image(systemName: model.paused ? "play.fill" : "pause.fill").font(.title) }
-                Button { model.seek(by: 10) } label: { Image(systemName: "goforward.10") }
-                Spacer()
+                .controlSize(.mini)
+                .overlay { ChapterTicks(model: model).allowsHitTesting(false) }
                 Text("-" + formatClock(max(0, model.duration - (scrub ?? model.position)))).monospacedDigit()
             }
-            .buttonStyle(.plain)
-            .font(.title3)
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            if let c = model.currentChapter, !c.title.isEmpty {
+                Text(c.title).font(.caption).foregroundStyle(.secondary).lineLimit(1).padding(.top, -6)
+            }
         }
-        .padding(.horizontal, 28)
-        .padding(.bottom, 22)
-        .padding(.top, 40)
-        .background(LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .top, endPoint: .bottom))
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: 640)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.white.opacity(0.08)))
+        .environment(\.colorScheme, .dark)
+        .padding(.horizontal, 40)
+        .padding(.bottom, 24)
+    }
+
+    private var volumeSymbol: String {
+        if model.muted || model.volume == 0 { return "speaker.slash.fill" }
+        return model.volume < 0.34 ? "speaker.wave.1.fill" : model.volume < 0.67 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"
     }
 }
 
@@ -492,9 +537,8 @@ struct AVPlayerViewRep: NSViewRepresentable {
     func makeNSView(context: Context) -> AVPlayerView {
         let v = AVPlayerView()
         v.player = player
-        v.controlsStyle = .floating
-        v.showsFullScreenToggleButton = true
-        v.allowsPictureInPicturePlayback = true
+        // PlayerControls draws the controls, the same for both players.
+        v.controlsStyle = .none
         v.videoGravity = .resizeAspect
         return v
     }

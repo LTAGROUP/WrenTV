@@ -132,8 +132,17 @@ func Inspect(ctx context.Context, pool *Pool, nzb *NZB, keep func(name string) b
 		}
 	}
 
+	// Sets with unread volumes go by the names in the NZB: those volumes
+	// have no other, and the read ones may call themselves something else.
+	partial := map[string]bool{}
+	for _, i := range later {
+		if heads[i].lazy {
+			partial[rarSet(nzb.Files[i].Name())] = true
+		}
+	}
 	var videos []Video
 	sets := map[string][]int{}
+	names := make([]string, len(nzb.Files))
 	var setOrder []string
 	var firstErr error
 	for _, i := range idx {
@@ -147,6 +156,12 @@ func Inspect(ctx context.Context, pool *Pool, nzb *NZB, keep func(name string) b
 		name := bestName(h.name, nzb.Files[i].Name())
 		switch {
 		case isRAR(h.data) || h.lazy:
+			if subj := nzb.Files[i].Name(); partial[rarSet(subj)] {
+				if _, ok := rarVolume(subj); ok {
+					name = subj
+				}
+			}
+			names[i] = name
 			key := rarSet(name)
 			if _, ok := rarVolume(name); !ok {
 				key = "\x00obfuscated" // nameless volumes: one archive, in post order
@@ -168,7 +183,7 @@ func Inspect(ctx context.Context, pool *Pool, nzb *NZB, keep func(name string) b
 		}
 	}
 	for _, key := range setOrder {
-		vs, err := rarVideos(ctx, pool, nzb, heads, sets[key], key != "\x00obfuscated")
+		vs, err := rarVideos(ctx, pool, nzb, heads, names, sets[key], key != "\x00obfuscated")
 		if err != nil {
 			if firstErr == nil || errors.Is(firstErr, ErrMissing) {
 				firstErr = err
@@ -273,7 +288,8 @@ func sniffExt(b []byte) string {
 }
 
 // rarVideos reads one archive's volumes and returns the videos stored in it.
-func rarVideos(ctx context.Context, pool *Pool, nzb *NZB, heads []head, files []int, named bool) ([]Video, error) {
+// names are the volumes' names, by NZB file.
+func rarVideos(ctx context.Context, pool *Pool, nzb *NZB, heads []head, names []string, files []int, named bool) ([]Video, error) {
 	type vol struct {
 		file int
 		name string
@@ -281,7 +297,7 @@ func rarVideos(ctx context.Context, pool *Pool, nzb *NZB, heads []head, files []
 	}
 	vols := make([]vol, len(files))
 	for k, i := range files {
-		name := bestName(heads[i].name, nzb.Files[i].Name())
+		name := names[i]
 		n, ok := rarVolume(name)
 		if !ok {
 			n = k
@@ -289,6 +305,12 @@ func rarVideos(ctx context.Context, pool *Pool, nzb *NZB, heads []head, files []
 		vols[k] = vol{file: i, name: name, num: n}
 	}
 	slices.SortStableFunc(vols, func(a, b vol) int { return a.num - b.num })
+	// A named archive missing a volume can't be joined.
+	for k := 1; named && k < len(vols); k++ {
+		if vols[k].num != vols[k-1].num+1 {
+			return nil, fmt.Errorf("RAR: volume %d of %s missing", vols[k-1].num+1, vols[k].name)
+		}
+	}
 
 	lay := &Layout{}
 	for _, v := range vols {
@@ -524,4 +546,34 @@ func statSpread(ctx context.Context, pool *Pool, all []string, samples int) (boo
 		}
 	}
 	return true, nil
+}
+
+// Skips says whether a layout leaves out volumes of its RAR archive
+// between ones it uses, as layouts saved by an older inspector could.
+// Such a video plays its start and then the wrong bytes.
+func (l *Layout) Skips(nzb *NZB) bool {
+	used := map[int]bool{}
+	sets := map[string]bool{}
+	lo, hi := len(nzb.Files), -1
+	for _, fl := range l.Files {
+		if fl.Index >= len(nzb.Files) {
+			return true
+		}
+		used[fl.Index] = true
+		lo, hi = min(lo, fl.Index), max(hi, fl.Index)
+		if name := nzb.Files[fl.Index].Name(); isRARName(name) {
+			sets[rarSet(name)] = true
+		}
+	}
+	for i := lo + 1; i < hi; i++ {
+		if name := nzb.Files[i].Name(); !used[i] && isRARName(name) && sets[rarSet(name)] {
+			return true
+		}
+	}
+	return false
+}
+
+func isRARName(name string) bool {
+	_, ok := rarVolume(name)
+	return ok
 }

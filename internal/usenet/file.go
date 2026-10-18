@@ -67,6 +67,11 @@ func NewFile(pool *Pool, nzb *NZB, lay *Layout) *File {
 func (f *File) Size() int64     { return f.lay.Size }
 func (f *File) Layout() *Layout { return f.lay }
 
+// Available checks a spread of the file's articles; see Available.
+func (f *File) Available(ctx context.Context, samples int) (bool, error) {
+	return Available(ctx, f.pool, f.nzb, f.lay, samples)
+}
+
 // span is part of one article that a read needs.
 type span struct {
 	key      segKey
@@ -258,10 +263,16 @@ func (f *File) WriteRange(ctx context.Context, w io.Writer, off, n int64) (int64
 		// Read-ahead starts small and doubles as the read goes on: players
 		// probe with many short reads, and a seek shouldn't queue tens of
 		// megabytes ahead of the bytes it's waiting for.
-		ahead, started := min(2, max(f.Ahead, 1)), 0
+		// Background reads (seek thumbnails) need a few megabytes, not the
+		// tens a player streams through.
+		most := max(f.Ahead, 1)
+		if ctx.Value(bgKey{}) != nil {
+			most = min(most, 4)
+		}
+		ahead, started := min(2, most), 0
 		for i, s := range sp {
-			if i > 0 && ahead < f.Ahead {
-				ahead = min(ahead*2, f.Ahead)
+			if i > 0 && ahead < most {
+				ahead = min(ahead*2, most)
 			}
 			for ; started < len(sp) && started <= i+ahead; started++ {
 				f.start(ctx, sp[started].key)
