@@ -22,6 +22,8 @@ var (
 	ErrMissing = errors.New("article missing")
 	// ErrAuth means a news server refused the login.
 	ErrAuth = errors.New("news server login failed")
+	// ErrTooMany means the account has every connection it may open in use.
+	ErrTooMany = errors.New("news server: too many connections")
 )
 
 // Server is a news server account.
@@ -68,6 +70,9 @@ func dial(ctx context.Context, s Server) (*conn, error) {
 	code, msg, err := c.status()
 	if err == nil && code != 200 && code != 201 {
 		err = fmt.Errorf("news server: %d %s", code, msg)
+		if strings.Contains(strings.ToLower(msg), "connections") {
+			err = fmt.Errorf("%w: %d %s", ErrTooMany, code, msg)
+		}
 	}
 	if err == nil && s.User != "" {
 		err = c.login(s.User, s.Pass)
@@ -89,6 +94,9 @@ func (c *conn) login(user, pass string) error {
 		if err != nil {
 			return err
 		}
+	}
+	if code == 482 || code == 502 && strings.Contains(strings.ToLower(msg), "connections") {
+		return fmt.Errorf("%w: %d %s", ErrTooMany, code, msg)
 	}
 	if code != 281 {
 		return fmt.Errorf("%w: %d %s", ErrAuth, code, msg)
@@ -206,13 +214,17 @@ func (c *conn) stats(ids []string) (missing []string, err error) {
 // ones lack.
 type Pool struct {
 	servers []*server
+	stop    chan struct{}
+	once    sync.Once
 }
 
 type server struct {
 	Server
 	slots chan struct{}
-	mu    sync.Mutex
-	idle  []*conn
+	// bg is what lookups may use, so a few connections stay free to play.
+	bg   chan struct{}
+	mu   sync.Mutex
+	idle []*conn
 	// downUntil pauses a server that refused logins or connections.
 	downUntil time.Time
 	lastErr   error
@@ -225,19 +237,73 @@ func NewPool(servers []Server) *Pool {
 			continue
 		}
 		s.MaxConns = max(s.MaxConns, 1)
-		p.servers = append(p.servers, &server{Server: s, slots: make(chan struct{}, s.MaxConns)})
+		reserve := min(3, s.MaxConns/3)
+		p.servers = append(p.servers, &server{Server: s, slots: make(chan struct{}, s.MaxConns),
+			bg: make(chan struct{}, max(s.MaxConns-reserve, 1))})
 	}
+	p.stop = make(chan struct{})
+	go p.reap()
 	return p
+}
+
+// idleFor is how long an unused connection is kept. Logged-in connections
+// count against the account's limit, so they aren't held for nothing.
+const idleFor = 45 * time.Second
+
+func (p *Pool) reap() {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-p.stop:
+			return
+		case <-t.C:
+		}
+		for _, s := range p.servers {
+			s.mu.Lock()
+			keep := s.idle[:0]
+			for _, c := range s.idle {
+				if time.Since(c.used) < idleFor {
+					keep = append(keep, c)
+				} else {
+					c.quit()
+				}
+			}
+			clear(s.idle[len(keep):])
+			s.idle = keep
+			s.mu.Unlock()
+		}
+	}
+}
+
+type bgKey struct{}
+
+// Background marks work that can wait, such as looking a post over before
+// it's offered: it leaves some connections free for playback.
+func Background(ctx context.Context) context.Context {
+	return context.WithValue(ctx, bgKey{}, true)
+}
+
+// quit logs out politely, so the server frees the slot at once.
+func (c *conn) quit() {
+	c.nc.SetDeadline(time.Now().Add(2 * time.Second))
+	c.w.WriteString("QUIT\r\n")
+	c.w.Flush()
+	c.nc.Close()
 }
 
 func (p *Pool) Empty() bool { return p == nil || len(p.servers) == 0 }
 
-// Close drops the idle connections.
+// Close drops the idle connections and stops reaping.
 func (p *Pool) Close() {
+	if p == nil {
+		return
+	}
+	p.once.Do(func() { close(p.stop) })
 	for _, s := range p.servers {
 		s.mu.Lock()
 		for _, c := range s.idle {
-			c.nc.Close()
+			c.quit()
 		}
 		s.idle = nil
 		s.mu.Unlock()
@@ -246,6 +312,14 @@ func (p *Pool) Close() {
 
 // with runs f on a connection to s, reconnecting once if a kept one died.
 func (s *server) with(ctx context.Context, f func(*conn) error) error {
+	if ctx.Value(bgKey{}) != nil {
+		select {
+		case s.bg <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		defer func() { <-s.bg }()
+	}
 	select {
 	case s.slots <- struct{}{}:
 	case <-ctx.Done():
@@ -280,7 +354,7 @@ func (s *server) get(ctx context.Context) (*conn, bool, error) {
 		c := s.idle[len(s.idle)-1]
 		s.idle = s.idle[:len(s.idle)-1]
 		// Servers drop connections left idle; don't trust old ones.
-		if time.Since(c.used) < 50*time.Second {
+		if time.Since(c.used) < idleFor+10*time.Second {
 			s.mu.Unlock()
 			return c, false, nil
 		}
@@ -293,7 +367,17 @@ func (s *server) get(ctx context.Context) (*conn, bool, error) {
 	}
 	s.mu.Unlock()
 	c, err := dial(ctx, s.Server)
-	if err != nil && ctx.Err() == nil {
+	// Connections another app (or a just-restarted server) holds free up
+	// soon; wait for one rather than failing.
+	for wait := 500 * time.Millisecond; errors.Is(err, ErrTooMany) && wait <= 8*time.Second; wait *= 2 {
+		select {
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		case <-time.After(wait):
+		}
+		c, err = dial(ctx, s.Server)
+	}
+	if err != nil && ctx.Err() == nil && !errors.Is(err, ErrTooMany) {
 		s.mu.Lock()
 		s.downUntil, s.lastErr = time.Now().Add(30*time.Second), fmt.Errorf("%s: %w", s.Host, err)
 		s.mu.Unlock()

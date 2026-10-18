@@ -25,6 +25,10 @@ import (
 // usenetProvider names streams that play from the news servers.
 const usenetProvider = "usenet"
 
+// postTime is how long a lookup spends on Usenet posts before only
+// torrents are tried.
+const postTime = 40 * time.Second
+
 // usenetState is the shared news server pool, rebuilt when servers change.
 type usenetState struct {
 	mu   sync.Mutex
@@ -164,7 +168,7 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 	if pool.Empty() {
 		return nil, false
 	}
-	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	ctx, cancel := context.WithTimeout(usenet.Background(ctx), 30*time.Second)
 	defer cancel()
 	nzb, err := s.nzb(ctx, r.NZB)
 	if err != nil {

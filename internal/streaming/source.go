@@ -142,7 +142,8 @@ func (s *debridSource) open(ctx context.Context, method, rng string) (*http.Resp
 			req.Header.Set("Range", rng)
 		}
 		resp, err := upstream.Do(req)
-		expired := err == nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound ||
+		// TorBox's CDN answers an expired link with 400 as well.
+		expired := err == nil && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound ||
 			resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusUnauthorized)
 		if err == nil && !expired && resp.StatusCode < 500 {
 			return resp, nil

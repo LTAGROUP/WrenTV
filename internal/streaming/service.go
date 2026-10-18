@@ -630,6 +630,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 	}
 	caches := s.checkCached(ctx, rels, missing, season)
 
+	started := time.Now()
 	var mu sync.Mutex
 	found := len(sts)
 	unsettled := len(missing)
@@ -666,17 +667,27 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 				}
 			}
 			need := per - len(have[q])
-			cands := append(Rank(nzbs, q, maxSize, season), Rank(rels, q, maxSize, season)...)
-			tries := 0
-			for _, r := range cands {
-				if need == 0 || ctx.Err() != nil || tries >= need*3+3 {
+			posts := Rank(nzbs, q, maxSize, season)
+			cands := append(posts, Rank(rels, q, maxSize, season)...)
+			// Usenet posts go first but get their own small budget: a post is
+			// only known to play once its files are read, which takes seconds,
+			// and torrents must still be tried when posts fail.
+			tries, postTries := 0, 0
+			for i, r := range cands {
+				isPost := i < len(posts)
+				if need == 0 || ctx.Err() != nil || (!isPost && tries >= need*3+3) {
 					break
+				}
+				if isPost && (postTries >= need+2 || time.Since(started) > postTime) {
+					continue
 				}
 				if skip[releaseKey(r)] || (sameRelease(r.Name) != "" && skip[sameRelease(r.Name)]) {
 					continue
 				}
 				p, tried := s.add(ctx, r, caches, season, episode, maxSize)
-				if tried {
+				if tried && isPost {
+					postTries++
+				} else if tried {
 					tries++
 				}
 				if p == nil {

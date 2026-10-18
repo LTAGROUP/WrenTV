@@ -51,20 +51,70 @@ func Inspect(ctx context.Context, pool *Pool, nzb *NZB, keep func(name string) b
 		return nil, ErrUnplayable
 	}
 	heads := make([]head, len(nzb.Files))
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 8)
-	for _, i := range idx {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			heads[i] = readHead(ctx, pool, nzb.Files[i])
-		}(i)
+	read := func(files []int) {
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 8)
+		for _, i := range files {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				heads[i] = readHead(ctx, pool, nzb.Files[i])
+			}(i)
+		}
+		wg.Wait()
 	}
-	wg.Wait()
+	// The first volume of a named RAR set says whether the archive can be
+	// streamed at all; the rest are read only if it can. A big post has
+	// a hundred or more volumes.
+	first := map[string]int{}
+	for _, i := range idx {
+		name := nzb.Files[i].Name()
+		if n, ok := rarVolume(name); ok && n == 0 {
+			first[rarSet(name)] = i
+		}
+	}
+	var now, later []int
+	for _, i := range idx {
+		name := nzb.Files[i].Name()
+		if n, ok := rarVolume(name); ok && n > 0 {
+			if _, has := first[rarSet(name)]; has {
+				later = append(later, i)
+				continue
+			}
+		}
+		now = append(now, i)
+	}
+	read(now)
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
+	}
+	if len(later) > 0 {
+		bad := map[string]error{}
+		for set, i := range first {
+			h := heads[i]
+			if h.err != nil {
+				bad[set] = h.err
+			} else if !isRAR(h.data) {
+				continue // misnamed; read the rest and see
+			} else if _, err := readRARVolume(bytes.NewReader(h.data), int64(len(h.data))); err != nil &&
+				(errors.Is(err, errPacked) || errors.Is(err, errEncrypted)) {
+				bad[set] = err
+			}
+		}
+		var rest []int
+		for _, i := range later {
+			if err := bad[rarSet(nzb.Files[i].Name())]; err != nil {
+				heads[i] = head{err: err}
+				continue
+			}
+			rest = append(rest, i)
+		}
+		read(rest)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 	}
 
 	var videos []Video

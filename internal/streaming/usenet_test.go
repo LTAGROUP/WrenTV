@@ -139,3 +139,51 @@ func TestUsenetLookupAndPlayback(t *testing.T) {
 		t.Fatal("playback fetched the NZB again")
 	}
 }
+
+// Posts that all fail mustn't use up the tries torrents get.
+func TestDeadPostsStillTryTorrents(t *testing.T) {
+	ctx := context.Background()
+	video := make([]byte, 120_000)
+	ns := usenettest.New(t)
+	posts, sizes := map[string][]byte{}, map[string]int64{}
+	for i := range 8 {
+		title := fmt.Sprintf("Movie.2024.1080p.WEB-DL-P%d", i)
+		one := usenettest.New(t)
+		one.Post(title+".mkv", video, 40_000)
+		ns.Post(title+".mkv", video, 40_000)
+		ns.Remove(title+".mkv", 2)
+		posts[title], sizes[title] = one.NZB(), int64(len(video))
+	}
+	var fetched atomic.Int32
+	ix := fakeIndexer(t, posts, sizes, &fetched)
+	hash := strings.Repeat("d", 40)
+	addon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"streams":[{"title":"Movie.2024.1080p.BluRay-GRP\n👤 50 💾 9 GB","infoHash":"%s"}]}`, hash)
+	}))
+	defer addon.Close()
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	cfg := &config.Config{DataDir: t.TempDir(), Streaming: config.StreamingConfig{Enabled: true, Qualities: []string{"1080p"}, PerQuality: 1, Usenet: true,
+		Addons:      []config.AddonConfig{{Name: "fake", URL: addon.URL + "/manifest.json", Enabled: true}},
+		Indexers:    []config.IndexerConfig{{Name: "fake", URL: ix.URL + "/api", APIKey: "ixkey", Enabled: true}},
+		NewsServers: []config.NewsServerConfig{{Host: ns.Host, Port: ns.Port, Username: "me", Password: "secret", Connections: 4, Enabled: true}}}}
+	s := New(Deps{Cfg: cfg, DB: d, TMDB: tmdb.New("test", "en-US", d), Hub: library.NewHub()})
+	s.testProviders = []Provider{&fakeProvider{cdn: "http://cdn", cached: map[string][]RemoteFile{hash: {{ID: "1", Name: "m.mkv", Size: 1000}}}}}
+	lib, _ := d.StreamLibrary(ctx, "movies")
+	it := &db.Item{LibraryID: lib.ID, Kind: "movie", MatchKey: "tmdb:2", Title: "Movie", Year: 2024, TMDBID: 2, IMDBID: "tt0000002", SeasonNumber: -1, EpisodeNumber: -1}
+	d.InsertItem(ctx, it)
+	if ready, err := s.Ensure(ctx, it, 20*time.Second); !ready || err != nil {
+		t.Fatalf("ensure = %v, %v", ready, err)
+	}
+	waitLookups(t, s)
+	sts, _ := d.StreamsForItem(ctx, it.ID)
+	if len(sts) != 1 || sts[0].InfoHash != hash {
+		t.Fatalf("streams = %+v", sts)
+	}
+	if n := fetched.Load(); n > 3 {
+		t.Fatalf("fetched %d NZBs for one stream", n)
+	}
+}
