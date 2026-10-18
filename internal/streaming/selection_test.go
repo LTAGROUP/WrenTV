@@ -2,6 +2,7 @@ package streaming
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -157,5 +158,35 @@ func TestNewestToo(t *testing.T) {
 	}
 	if want := "A D B E C"; strings.Join(got, " ") != want {
 		t.Fatalf("order = %v, want %s", got, want)
+	}
+}
+
+func TestFakesAndTrailers(t *testing.T) {
+	const gb = 1 << 30
+	rels := []Release{
+		{Name: "The Odyssey 2026 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune", Size: 4454 << 20},
+		{Name: "The Odyssey (2026) [1080p] [WEBRip] [5.1]", Size: 1628 << 20},
+		{Name: "The Odyssey 2026 2160p WEB-DL DDP5 1 Atmos DV HDR x265 FLUX", Size: 1 * gb},
+		{Name: "TheOdyssey_IMAX-TLR-2_4K-1.90_HEVC_10bit_EN-XX_TrueHD_51_TCQ_20260531.mkv", Size: 15 * gb},
+		{Name: "The Odyssey - Prologue (2025) IMAX DCPrip 4K ProRes 4444 PCM 5.1-hutaoing", Size: 40 * gb},
+		{Name: "The Odyssey 2160p HD (2026) ENG WEB  EZTV", FileName: "The Odyssey 2160p HD (2026) ENG WEB  EZTV exe", Size: 20 * gb},
+		{Name: "The.Odyssey.The.Making.of.an.Epic.2026.1080p.WEB.h264-EDITH", Size: 3 * gb},
+		{Name: "Odyssey 2025 1080p Blu-ray Remux AVC DD 5 1-SPHD"}, // size unknown: kept
+	}
+	for i := range rels {
+		rels[i].Text = rels[i].Name
+	}
+	var got []string
+	for _, q := range []string{"2160p", "1080p"} {
+		for _, r := range Rank(bigEnough(rels, 172), q, 0, 0) {
+			got = append(got, r.Name)
+		}
+	}
+	want := []string{rels[7].Name, rels[0].Name, rels[1].Name}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %q", got)
+	}
+	if n := len(bigEnough(rels, 0)); n != len(rels) {
+		t.Fatalf("no runtime dropped releases: %d", n)
 	}
 }

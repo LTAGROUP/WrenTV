@@ -698,6 +698,9 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 		s.recordLookup(ctx, it.ID, len(sts), err)
 		return len(sts), err
 	}
+	if season == 0 {
+		rels, nzbs = bigEnough(rels, it.RuntimeMin), bigEnough(nzbs, it.RuntimeMin)
+	}
 	caches := s.checkCached(ctx, rels, missing, season)
 
 	started := time.Now()

@@ -14,7 +14,7 @@ var (
 	q1080RE = regexp.MustCompile(`(?i)\b(1080p|fhd)\b`)
 	q720RE  = regexp.MustCompile(`(?i)\b720p\b`)
 	// Releases nobody wants to watch: camcorder/telesync copies, screeners, samples.
-	junkRE = regexp.MustCompile(`(?i)\b(cam|camrip|hdcam|ts|hdts|telesync|tc|telecine|scr|screener|dvdscr|workprint|sample|trailer|upscaled?|ai[ ._-]upscale[d]?)\b`)
+	junkRE = regexp.MustCompile(`(?i)\b(cam|camrip|hdcam|ts|hdts|telesync|tc|telecine|scr|screener|dvdscr|workprint|sample|trailer|tlr|teaser|promo|featurette|prologue|making[ ._-]of|upscaled?|ai[ ._-]upscale[d]?)\b`)
 	// S01E02, s1e2, 1x02
 	episodeRE     = regexp.MustCompile(`(?i)\bs(\d{1,2})[ ._-]*e(\d{1,3})\b|\b(\d{1,2})x(\d{2,3})\b`)
 	multiSeasonRE = regexp.MustCompile(`(?i)\bs\d{1,2}\s*-\s*s?\d{1,2}\b|\bseasons?[ ._-]*\d{1,2}\s*-\s*\d{1,2}\b`)
@@ -22,9 +22,10 @@ var (
 	episodeWordsRE = regexp.MustCompile(`(?i)\bseason[ ._-]*(\d{1,2})\W*episode[ ._-]*(\d{1,3})\b`)
 	seasonRE       = regexp.MustCompile(`(?i)\b(?:s(\d{1,2})|season[ ._-]*(\d{1,2}))\b`)
 	completeRE     = regexp.MustCompile(`(?i)\b(complete|season[ ._-]*pack|all[ ._-]*seasons)\b`)
-	// Releases players can't handle: H.266 video, and Blu-ray disc folders
-	// whose numbered clips may not be the film.
-	unplayableRE = regexp.MustCompile(`(?i)\b(vvc|vvenc|h\.?266|x266)\b|(^|/)bdmv/|\.iso$`)
+	// Releases players can't handle: H.266 video, Blu-ray disc folders
+	// whose numbered clips may not be the film, and programs posing as
+	// films.
+	unplayableRE = regexp.MustCompile(`(?i)\b(vvc|vvenc|h\.?266|x266)\b|(^|/)bdmv/|\.iso$|[ ._-]exe$|\.(exe|scr|lnk|msi)$`)
 	// Subtitles burned into the picture.
 	hardsubRE = regexp.MustCompile(`(?i)\b(hc|hardsub(bed|s)?|hard[ ._-]?coded|[a-z]{2,3}sub(bed|s)?)\b`)
 	// Dubbed or foreign-language releases.
@@ -120,6 +121,27 @@ func isPack(name string, season int) bool {
 		return n == season
 	}
 	return false
+}
+
+// minMBPerMin is the least a real copy of a film takes per minute at each
+// quality: well under the smallest encodes, well over fakes and trailers.
+var minMBPerMin = map[string]int64{"2160p": 15, "1080p": 5, "720p": 2}
+
+// bigEnough drops a film's releases too small to be the whole film at
+// their quality, such as trailers and fakes. runtime is in minutes; 0 keeps
+// everything.
+func bigEnough(rels []Release, runtime int) []Release {
+	if runtime <= 0 {
+		return rels
+	}
+	out := rels[:0:0]
+	for _, r := range rels {
+		if per := minMBPerMin[QualityOf(r.Text)]; r.Size > 0 && r.Size < per*int64(runtime)<<20 {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // Rank orders an addon's releases for one quality: matching quality only,
