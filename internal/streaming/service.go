@@ -1,12 +1,13 @@
 // Package streaming lets a server act as a shared Stremio-style client.
 //
 // Any movie or show can be searched and played. When a title is played the
-// server asks its Stremio addons (Torrentio, Comet, …) for releases and
-// TorBox for cached Usenet posts, keeps those already cached on the owner's
-// debrid accounts (TorBox, AllDebrid, Real-Debrid), and stores the best few
-// per quality (2160p and 1080p, Usenet first) as streams users can choose
+// server asks its Stremio addons (Torrentio, Comet, …) for releases and its
+// Newznab indexers for Usenet posts, keeps the torrents already cached on the
+// owner's debrid accounts (TorBox, AllDebrid, Real-Debrid) and the posts
+// still complete on the owner's news servers, and stores the best few per
+// quality (2160p and 1080p, Usenet first) as streams users can choose
 // between: just the info hash or NZB and the file, never the media. Bytes are
-// proxied from the debrid CDN on demand. After an episode plays, the rest of
+// proxied from the debrid CDN, or read from the news servers, on demand. After an episode plays, the rest of
 // its season is looked up in the background; a season pack fills every
 // episode at once. Streamed titles live in "streaming" libraries and give
 // way to real files of the same title. Removing the debrid keys hides them.
@@ -17,6 +18,7 @@ package streaming
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -34,6 +36,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/library"
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 	"github.com/LTAGROUP/wrentv/internal/stream"
+	"github.com/LTAGROUP/wrentv/internal/usenet"
 	"github.com/LTAGROUP/wrentv/internal/webhook"
 )
 
@@ -61,8 +64,9 @@ type Service struct {
 	mu        sync.Mutex
 	provKey   string
 	provs     []Provider
-	sources   map[string]*debridSource
-	streaming int // open debrid sources
+	sources   map[string]http.Handler // open sources, served to ffmpeg
+	streaming int                     // open debrid and Usenet sources
+	usenet    usenetState
 	links     map[string]cachedLink
 	// pending holds where addon links led while a title was looked up, so
 	// the first play doesn't open the link a second time.
@@ -102,7 +106,7 @@ type lookup struct {
 
 func New(d Deps) *Service {
 	return &Service{
-		Deps: d, sources: map[string]*debridSource{}, links: map[string]cachedLink{}, pending: map[string]cachedLink{}, cdnFails: map[string]int{}, lookups: map[string]*lookup{},
+		Deps: d, sources: map[string]http.Handler{}, links: map[string]cachedLink{}, pending: map[string]cachedLink{}, cdnFails: map[string]int{}, lookups: map[string]*lookup{},
 		refreshed: map[string]time.Time{}, prefetchQ: make(chan string, 1000), queued: map[string]bool{},
 		dlKick: make(chan struct{}, 1), dlRunning: map[string]*runningDownload{},
 	}
@@ -154,9 +158,10 @@ func (s *Service) provider(name string) Provider {
 	return nil
 }
 
-// Active reports whether streaming can be used: enabled, a debrid key, and TMDB.
+// Active reports whether streaming can be used: enabled, a debrid key or
+// Usenet, and TMDB.
 func (s *Service) Active() bool {
-	return s.cfg().Enabled && len(s.Providers()) > 0 && s.TMDB.Enabled()
+	return s.cfg().Enabled && (len(s.Providers()) > 0 || s.usenetOn()) && s.TMDB.Enabled()
 }
 
 func (s *Service) addons() []Addon {
@@ -489,6 +494,8 @@ type pick struct {
 	prov Provider
 	tor  *Torrent
 	file RemoteFile
+	// layouts says where each video of a Usenet post is, by file name.
+	layouts map[string]*usenet.Layout
 }
 
 // usenetProvider is the debrid service that serves Usenet, when Usenet is on.
@@ -504,29 +511,50 @@ func (s *Service) usenetProvider() UsenetProvider {
 	return nil
 }
 
-// search asks the addons for streams. Cached Usenet posts that addons
-// serve as play links come back on their own when Usenet is preferred.
-func (s *Service) search(ctx context.Context, imdb string, season, episode int) (torrents, usenet []Release, err error) {
-	all, err := Search(ctx, s.addons(), imdb, season, episode)
+// search asks the addons for streams and the indexers for Usenet posts.
+// When Usenet is preferred its posts come back apart, to be tried first.
+func (s *Service) search(ctx context.Context, q usenet.Query) (torrents, posts []Release, err error) {
+	var all, found []Release
+	var wg sync.WaitGroup
+	if s.usenetOn() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			found = s.searchIndexers(ctx, q)
+		}()
+	}
+	if addons := s.addons(); len(addons) > 0 {
+		all, err = Search(ctx, addons, q.IMDB, q.Season, q.Episode)
+	}
+	wg.Wait()
+	all = append(all, found...)
+	if len(found) > 0 && len(all) == len(found) {
+		err = nil
+	}
 	if !s.cfg().Usenet {
 		return all, nil, err
 	}
 	for _, r := range all {
 		if r.Usenet {
-			usenet = append(usenet, r)
+			posts = append(posts, r)
 		} else {
 			torrents = append(torrents, r)
 		}
 	}
-	return torrents, usenet, err
+	return torrents, posts, err
 }
 
-// releaseKey tells releases apart: by torrent when known, else by link.
+// releaseKey tells releases apart: by torrent when known, else by link or NZB.
 func releaseKey(r Release) string {
-	if r.InfoHash == "" && r.Link != "" {
+	switch {
+	case r.InfoHash != "":
+		return r.InfoHash
+	case r.Link != "":
 		return "link:" + r.Link
+	case r.NZB != "":
+		return "nzb:" + r.NZB
 	}
-	return r.InfoHash
+	return ""
 }
 
 // cacheState is what one provider said about the torrents of a lookup.
@@ -595,7 +623,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 		s.recordLookup(ctx, it.ID, len(sts), err)
 		return len(sts), err
 	}
-	rels, nzbs, err := s.search(ctx, imdb, season, episode)
+	rels, nzbs, err := s.search(ctx, s.usenetQuery(ctx, it, imdb, season, episode))
 	if err != nil && len(rels) == 0 {
 		s.recordLookup(ctx, it.ID, len(sts), err)
 		return len(sts), err
@@ -632,6 +660,9 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 				skip[st.InfoHash], skip[sameRelease(st.Release)] = true, true
 				if st.Link != "" {
 					skip["link:"+st.Link] = true
+				}
+				if st.NZB != "" {
+					skip["nzb:"+st.NZB] = true
 				}
 			}
 			need := per - len(have[q])
@@ -708,6 +739,9 @@ func (s *Service) add(ctx context.Context, r Release, caches map[string]*cacheSt
 		f := RemoteFile{Name: linkFileName(r.FileName, target), Size: size}
 		return &pick{rel: r, tor: &Torrent{}, file: f}, true
 	}
+	if r.Indexer != "" {
+		return s.addPost(ctx, r, season, episode, maxSize)
+	}
 	if r.NZB != "" {
 		u := s.usenetProvider()
 		if u == nil {
@@ -753,6 +787,13 @@ func (s *Service) store(ctx context.Context, it *db.Item, q string, rank int, p 
 	}
 	if p.rel.NZB != "" || p.rel.Usenet {
 		st.Kind = "usenet"
+	}
+	if lay := p.layouts[p.file.Name]; lay != nil {
+		b, err := json.Marshal(lay)
+		if err != nil {
+			return err
+		}
+		st.Provider, st.ProviderRef, st.ProviderFile = usenetProvider, string(b), ""
 	}
 	// Codec and HDR are guessed from the names until the first play probes it.
 	f := &db.MediaFile{ItemID: it.ID, LibraryID: it.LibraryID, Path: p.file.Name, Size: p.file.Size, Tag: ReleaseTag(st.Kind, p.rel.Name)}
@@ -910,6 +951,14 @@ func (s *Service) Source(ctx context.Context, f *db.MediaFile) (stream.Source, e
 	release, err := s.acquireStream()
 	if err != nil {
 		return nil, err
+	}
+	if st.Provider == usenetProvider {
+		src, err := s.usenetPlay(ctx, st, release)
+		if err != nil {
+			release()
+			return nil, err
+		}
+		return src, nil
 	}
 	u, size, err := s.linkFor(ctx, st.ID, false)
 	if err != nil {

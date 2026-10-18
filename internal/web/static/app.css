@@ -430,6 +430,9 @@ textarea { min-height: 80px; font-family: ui-monospace, Menlo, monospace; font-s
 .debrid:first-child [data-up], .debrid:last-child [data-down] { visibility: hidden; }
 .debrid .acts, .addon .acts { display: flex; gap: 6px; justify-content: flex-end; }
 .addon .name, .debrid .name { min-width: 0; } .addon .mono { font-size: 11.5px; }
+.usenet-row { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.usenet-row:last-child { border-bottom: 0; } .usenet-row > .check { margin-top: 30px; }
+.usenet-row .acts { display: flex; margin-top: 24px; }
 .addon-add { display: flex; gap: 8px; margin-top: 12px; } .addon-add input { flex: 1; min-width: 0; }
 .lt-source { background: var(--bg-3); border: 1px solid var(--line); border-radius: 8px; padding: 4px 14px 12px; margin-bottom: 12px; }
 .lt-source details { margin: 2px 0 6px; } .lt-source summary { cursor: pointer; }
@@ -455,6 +458,7 @@ textarea { min-height: 80px; font-family: ui-monospace, Menlo, monospace; font-s
   .debrid { grid-template-columns: auto 1fr; } .debrid input, .debrid .acts { grid-column: 1 / -1; } .debrid .acts { justify-content: flex-start; }
   .addon { grid-template-columns: auto 1fr; } .addon .acts { grid-column: 1 / -1; justify-content: flex-start; }
   .seg { grid-template-columns: 1fr; }
+  .usenet-row { grid-template-columns: auto 1fr; } .usenet-row .acts { grid-column: 1 / -1; margin-top: 0; }
 }
 
 /* ---------- the apps' look: capsule buttons, a rotating banner, tracks ---------- */

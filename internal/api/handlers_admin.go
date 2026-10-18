@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/db"
 	"github.com/LTAGROUP/wrentv/internal/direct"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
+	"github.com/LTAGROUP/wrentv/internal/usenet"
 )
 
 func (s *Server) handleIntegrationLibraries(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +87,21 @@ type streamingView struct {
 	ShowLibrary     string                 `json:"showLibrary"`
 	DownloadQuality string                 `json:"downloadQuality"`
 	Limits          config.StreamingLimits `json:"limits"`
+	Indexers        []indexerView          `json:"indexers"`
+	NewsServers     []newsServerView       `json:"newsServers"`
+}
+
+// indexerView is a Newznab indexer without its API key.
+type indexerView struct {
+	config.IndexerConfig
+	KeySet  bool   `json:"keySet"`
+	KeyHint string `json:"keyHint,omitempty"`
+}
+
+// newsServerView is a news server account without its password.
+type newsServerView struct {
+	config.NewsServerConfig
+	PasswordSet bool `json:"passwordSet"`
 }
 
 // debridView is one debrid service, in the order they're tried.
@@ -139,6 +156,17 @@ func (s *Server) settings() settingsView {
 		}
 		sv.Debrid = append(sv.Debrid, v)
 	}
+	sv.Indexers, sv.NewsServers = []indexerView{}, []newsServerView{}
+	for _, ix := range st.Indexers {
+		v := indexerView{IndexerConfig: ix, KeySet: ix.APIKey != ""}
+		if len(ix.APIKey) > 8 {
+			v.KeyHint = "…" + ix.APIKey[len(ix.APIKey)-4:]
+		}
+		sv.Indexers = append(sv.Indexers, v)
+	}
+	for _, ns := range st.NewsServers {
+		sv.NewsServers = append(sv.NewsServers, newsServerView{NewsServerConfig: ns, PasswordSet: ns.Password != ""})
+	}
 	return settingsView{
 		ServerName: c.ServerName, PublicURL: c.PublicURL, HWAccel: c.Transcode.HWAccel, TMDBKeySet: c.Metadata.TMDBAPIKey != "",
 		OMDbKeySet: c.Metadata.OMDbAPIKey != "", Fingerprint: c.Markers.Fingerprint, Streaming: sv, UserDefaults: c.Users,
@@ -190,6 +218,75 @@ type streamingPatch struct {
 	ShowLibrary     *string                 `json:"showLibrary"`
 	DownloadQuality *string                 `json:"downloadQuality"`
 	Limits          *config.StreamingLimits `json:"limits"`
+	Indexers        *[]indexerPatch         `json:"indexers"`
+	NewsServers     *[]newsServerPatch      `json:"newsServers"`
+}
+
+// indexerPatch and newsServerPatch leave the saved key or password alone
+// when it's sent empty.
+type indexerPatch struct {
+	config.IndexerConfig
+	APIKey string `json:"apiKey"`
+}
+
+type newsServerPatch struct {
+	config.NewsServerConfig
+	Password string `json:"password"`
+}
+
+// usenetFromPatch turns the settings page's indexers and servers into
+// config, keeping saved secrets that weren't retyped.
+func usenetFromPatch(c *config.StreamingConfig, ixs *[]indexerPatch, nss *[]newsServerPatch) ([]config.IndexerConfig, []config.NewsServerConfig, error) {
+	indexers, servers := c.Indexers, c.NewsServers
+	if ixs != nil {
+		indexers = nil
+		for _, p := range *ixs {
+			ix := p.IndexerConfig
+			u, err := usenet.Endpoint(ix.URL)
+			if err != nil {
+				return nil, nil, err
+			}
+			ix.URL, ix.Name, ix.APIKey = u, strings.TrimSpace(ix.Name), strings.TrimSpace(p.APIKey)
+			if ix.Name == "" {
+				if pu, err := url.Parse(u); err == nil {
+					ix.Name = strings.TrimPrefix(strings.TrimPrefix(pu.Hostname(), "api."), "www.")
+				}
+			}
+			if ix.APIKey == "" {
+				for _, old := range c.Indexers {
+					if old.URL == ix.URL {
+						ix.APIKey = old.APIKey
+					}
+				}
+			}
+			indexers = append(indexers, ix)
+		}
+	}
+	if nss != nil {
+		servers = nil
+		for _, p := range *nss {
+			ns := p.NewsServerConfig
+			ns.Host, ns.Username, ns.Password = strings.TrimSpace(ns.Host), strings.TrimSpace(ns.Username), p.Password
+			if ns.Host == "" {
+				return nil, nil, fmt.Errorf("enter the news server's address")
+			}
+			if ns.Port < 0 || ns.Port > 65535 {
+				return nil, nil, fmt.Errorf("news server port must be between 1 and 65535")
+			}
+			if ns.Connections < 1 || ns.Connections > 100 {
+				return nil, nil, fmt.Errorf("news server connections must be between 1 and 100")
+			}
+			if ns.Password == "" {
+				for _, old := range c.NewsServers {
+					if old.Host == ns.Host && old.Username == ns.Username {
+						ns.Password = old.Password
+					}
+				}
+			}
+			servers = append(servers, ns)
+		}
+	}
+	return indexers, servers, nil
 }
 
 // apply validates and applies a streaming patch.
@@ -252,6 +349,13 @@ func (s *Server) applyStreaming(r *http.Request, p *streamingPatch) error {
 	}
 	if p.Usenet != nil {
 		c.Usenet = *p.Usenet
+	}
+	if p.Indexers != nil || p.NewsServers != nil {
+		ixs, nss, err := usenetFromPatch(c, p.Indexers, p.NewsServers)
+		if err != nil {
+			return err
+		}
+		c.Indexers, c.NewsServers = ixs, nss
 	}
 	if p.Prefetch != nil {
 		c.Prefetch = *p.Prefetch

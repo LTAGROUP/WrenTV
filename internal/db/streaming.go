@@ -81,8 +81,8 @@ func (d *DB) PutStream(ctx context.Context, st *Stream, f *MediaFile) error {
 	}
 	defer tx.Rollback()
 	// The old stream's file goes with it (ON DELETE CASCADE).
-	if _, err := tx.ExecContext(ctx, `DELETE FROM streams WHERE item_id=? AND quality=? AND info_hash=? AND file_name=? AND link=?`,
-		st.ItemID, st.Quality, st.InfoHash, st.FileName, st.Link); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM streams WHERE item_id=? AND quality=? AND info_hash=? AND file_name=? AND link=? AND nzb=?`,
+		st.ItemID, st.Quality, st.InfoHash, st.FileName, st.Link, st.NZB); err != nil {
 		return err
 	}
 	if st.ID == "" {

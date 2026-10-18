@@ -320,6 +320,19 @@ func (s *Service) fetch(ctx context.Context, st *db.Stream, path string, run *ru
 		if st.Size > 0 && off >= st.Size {
 			return nil
 		}
+		if st.Provider == usenetProvider {
+			err := s.fetchPost(ctx, st, f, off, t, run)
+			if err == nil || ctx.Err() != nil || attempt >= 4 {
+				return err
+			}
+			slog.Info("download interrupted, resuming", "stream", st.ID, "err", err)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 5 * time.Second):
+			}
+			continue
+		}
 		u, _, err := s.linkFor(ctx, st.ID, attempt > 0)
 		if err != nil {
 			return err
@@ -409,4 +422,30 @@ func (s *Service) downloadPath(ctx context.Context, it *db.Item, st *db.Stream) 
 func safeName(s string) string {
 	r := strings.NewReplacer("/", "-", `\`, "-", ":", " -", "*", "", "?", "", `"`, "", "<", "", ">", "", "|", "-")
 	return strings.TrimSpace(r.Replace(s))
+}
+
+// fetchPost copies a Usenet stream from off to the end of f.
+func (s *Service) fetchPost(ctx context.Context, st *db.Stream, f *os.File, off int64, t throttle, run *runningDownload) error {
+	post, err := s.openPost(ctx, st)
+	if err != nil {
+		return err
+	}
+	post.Ahead = 16
+	w := &progressWriter{w: &throttledWriter{ctx: ctx, w: f, t: t}, n: &run.bytes, base: off}
+	_, err = post.WriteRange(ctx, w, off, post.Size()-off)
+	return err
+}
+
+type progressWriter struct {
+	w     io.Writer
+	n     *atomic.Int64
+	base  int64
+	wrote int64
+}
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	n, err := p.w.Write(b)
+	p.wrote += int64(n)
+	p.n.Store(p.base + p.wrote)
+	return n, err
 }

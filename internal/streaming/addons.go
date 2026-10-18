@@ -34,7 +34,8 @@ type Release struct {
 	InfoHash string
 	NZB      string
 	Link     string // addon URL that redirects to the file on the debrid CDN
-	Usenet   bool   // the link plays a Usenet post
+	Usenet   bool   // a Usenet post (an addon's link, or an indexer's NZB)
+	Indexer  string // the Newznab indexer that found the post
 	FileIdx  int    // file index inside the torrent, -1 if unknown
 	FileName string
 	Size     int64
@@ -149,6 +150,7 @@ func Search(ctx context.Context, addons []Addon, imdbID string, season, episode 
 		}(a)
 	}
 	byHash := map[string]Release{}
+	var order []string // first seen first, so ties keep the addon's order
 	var errs []string
 	for range addons {
 		r := <-ch
@@ -157,20 +159,24 @@ func Search(ctx context.Context, addons []Addon, imdbID string, season, episode 
 			continue
 		}
 		for _, rel := range r.rows {
+			key := rel.InfoHash
 			if rel.Link != "" {
-				byHash["link:"+rel.Link] = rel
-				continue
+				key = "link:" + rel.Link
 			}
-			if old, ok := byHash[rel.InfoHash]; !ok || rel.Seeders > old.Seeders || (old.FileIdx < 0 && rel.FileIdx >= 0) {
-				byHash[rel.InfoHash] = rel
+			old, ok := byHash[key]
+			if !ok {
+				order = append(order, key)
+			}
+			if !ok || rel.Link != "" || rel.Seeders > old.Seeders || (old.FileIdx < 0 && rel.FileIdx >= 0) {
+				byHash[key] = rel
 			}
 		}
 	}
-	out := make([]Release, 0, len(byHash))
-	for _, r := range byHash {
-		out = append(out, r)
+	out := make([]Release, 0, len(order))
+	for _, k := range order {
+		out = append(out, byHash[k])
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Seeders > out[j].Seeders })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Seeders > out[j].Seeders })
 	if len(out) == 0 && len(errs) > 0 {
 		return nil, errors.New("addons failed: " + strings.Join(errs, "; "))
 	}

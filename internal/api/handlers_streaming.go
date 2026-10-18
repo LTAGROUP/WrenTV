@@ -272,6 +272,31 @@ func (s *Server) handleCheckDebrid(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, streaming.CheckAccount(ctx, req.Provider, key))
 }
 
+// handleCheckUsenet tries the news servers and indexers on the settings
+// page, with saved secrets filling in any not retyped.
+func (s *Server) handleCheckUsenet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Indexers    *[]indexerPatch    `json:"indexers"`
+		NewsServers *[]newsServerPatch `json:"newsServers"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	ixs, nss, err := usenetFromPatch(&s.Cfg.Streaming, req.Indexers, req.NewsServers)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := streaming.CheckUsenet(ctx, nss, ixs); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleCheckAddon(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		URL string `json:"url"`

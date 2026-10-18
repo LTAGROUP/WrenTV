@@ -383,8 +383,9 @@ function streamingStatusLine(st, s) {
   if (!st.enabled) return '<span class="muted">Off</span>';
   if (st.active) return '<span class="ok">On</span> <span class="small muted">· everyone allowed to stream can search for and play any movie or show</span>';
   if (!s.tmdbKeySet) return '<span class="error">Needs a TMDB API key</span> <span class="small muted">(General tab)</span>';
-  if (!st.debrid.some((d) => d.keySet)) return '<span class="error">Needs a debrid API key</span>';
-  if (!st.addons.some((a) => a.enabled)) return '<span class="error">Needs at least one addon</span>';
+  const usenet = st.newsServers?.some((n) => n.enabled) && st.indexers?.some((i) => i.enabled && i.keySet);
+  if (!usenet && !st.debrid.some((d) => d.keySet)) return '<span class="error">Needs a debrid API key or Usenet</span>';
+  if (!usenet && !st.addons.some((a) => a.enabled)) return '<span class="error">Needs at least one addon</span>';
   return '<span class="muted">Starting…</span>';
 }
 
@@ -413,8 +414,22 @@ function streamingTab(s, libs) {
       </div>`).join('')}</div>
     </div>
 
+    <div class="panel"><h2>Usenet</h2>
+      <p class="small muted">Plays Usenet posts straight from your news server as they're watched, with nothing downloaded first.
+        Posts are found on your indexers (NZBGeek and other Newznab sites). TorBox Pro includes a news server: its address,
+        username and password are on torbox.app/tools, and it allows 10 connections.</p>
+      <h3 class="sub-h">News servers</h3>
+      <div class="nserver-list"></div>
+      <button type="button" class="btn small" data-ns-add>Add news server</button>
+      <h3 class="sub-h">Indexers</h3>
+      <div class="indexer-list"></div>
+      <button type="button" class="btn small" data-ix-add>Add indexer</button>
+      <div style="margin-top:14px"><button type="button" class="btn" data-usenet-check>Check Usenet</button> <span class="small" data-usenet-res></span></div>
+      <label class="check"><input type="checkbox" name="stUsenet" ${st.usenet !== false ? 'checked' : ''}> Play Usenet posts before torrents</label>
+    </div>
+
     <div class="panel"><h2>Addons</h2>
-      <p class="small muted">Stremio addons that list streams for a title: torrents (Torrentio, Comet), or ready-to-play links from addons that use your debrid account themselves (AIOStreams with TorBox Search, Meteor). Results from every enabled addon are merged.</p>
+      <p class="small muted">Stremio addons that list streams for a title: torrents (Torrentio, Comet), or ready-to-play links from addons that use your debrid account themselves (AIOStreams, Meteor). Results from every enabled addon are merged.</p>
       <div class="addon-list"></div>
       <div class="addon-add"><input type="text" data-addon-url placeholder="https://…/manifest.json" autocomplete="off"><button type="button" class="btn" data-addon-add>Add addon</button></div>
       <p class="small error" data-addon-err hidden></p>
@@ -438,7 +453,6 @@ function streamingTab(s, libs) {
         <div class="field"><label>Download quality</label><select name="stDlQuality">${QUALITIES.map(([q, label]) => `<option value="${q}" ${q === st.downloadQuality ? 'selected' : ''}>${label}</option>`).join('')}</select></div>
         <div class="field"><label>Versions per quality</label><select name="stPerQuality">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${n === (st.perQuality || 3) ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
       </div>
-      <label class="check"><input type="checkbox" name="stUsenet" ${st.usenet !== false ? 'checked' : ''}> Prefer Usenet streams (cached Usenet from addons such as AIOStreams with TorBox Search plays first)</label>
       <p class="small muted">Each title gets this many 4K and 1080p versions to choose from. The best one plays unless the viewer picks another.</p>
     </div>
 
@@ -724,6 +738,74 @@ export async function viewSettings() {
     };
   }
 
+  // Usenet: news servers and indexers. Saved passwords and keys aren't
+  // sent back; leaving the field empty keeps them.
+  const servers = (s.streaming.newsServers || []).map((n) => ({ ...n, password: '' }));
+  const indexers = (s.streaming.indexers || []).map((i) => ({ ...i, apiKey: '' }));
+  const nsList = $('.nserver-list', node);
+  const ixList = $('.indexer-list', node);
+  const bind = (row, item, onDel) => {
+    for (const el of $$('[data-f]', row)) {
+      const f = el.dataset.f;
+      el.oninput = el.onchange = () => {
+        item[f] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) || 0 : el.value;
+      };
+    }
+    $('[data-del]', row).onclick = onDel;
+  };
+  const drawServers = () => {
+    nsList.innerHTML = servers.length ? servers.map((n, i) => `<div class="usenet-row" data-i="${i}">
+      <label class="check" style="margin:0"><input type="checkbox" data-f="enabled" ${n.enabled ? 'checked' : ''} aria-label="Use this server"></label>
+      <div class="form-grid">
+        <div class="field"><label>Address</label><input type="text" data-f="host" value="${esc(n.host || '')}" placeholder="news.example.com" autocomplete="off"></div>
+        <div class="field"><label>Port</label><input type="number" data-f="port" min="1" max="65535" value="${n.port || 563}"></div>
+        <div class="field"><label>Connections</label><input type="number" data-f="connections" min="1" max="100" value="${n.connections || 10}"></div>
+        <div class="field"><label>Username</label><input type="text" data-f="username" value="${esc(n.username || '')}" autocomplete="off"></div>
+        <div class="field"><label>Password</label><input type="password" data-f="password" placeholder="${n.passwordSet ? 'Saved; type to replace' : ''}" autocomplete="new-password"></div>
+        <div class="field"><label class="check" style="margin-top:26px"><input type="checkbox" data-f="tls" ${n.tls !== false ? 'checked' : ''}> SSL</label></div>
+      </div>
+      <div class="acts"><button type="button" class="btn small danger" data-del>Remove</button></div></div>`).join('')
+      : '<p class="muted small">No news server.</p>';
+    for (const r of $$('.usenet-row', nsList)) {
+      const i = Number(r.dataset.i);
+      bind(r, servers[i], () => { servers.splice(i, 1); drawServers(); });
+    }
+  };
+  const drawIndexers = () => {
+    ixList.innerHTML = indexers.length ? indexers.map((x, i) => `<div class="usenet-row" data-i="${i}">
+      <label class="check" style="margin:0"><input type="checkbox" data-f="enabled" ${x.enabled ? 'checked' : ''} aria-label="Use this indexer"></label>
+      <div class="form-grid">
+        <div class="field"><label>Name</label><input type="text" data-f="name" value="${esc(x.name || '')}" placeholder="NZBGeek"></div>
+        <div class="field"><label>Address</label><input type="text" data-f="url" value="${esc(x.url || '')}" placeholder="https://api.nzbgeek.info" autocomplete="off"></div>
+        <div class="field"><label>API key</label><input type="password" data-f="apiKey" placeholder="${x.keySet ? `Saved ${esc(x.keyHint || '')}; type to replace` : ''}" autocomplete="off"></div>
+      </div>
+      <div class="acts"><button type="button" class="btn small danger" data-del>Remove</button></div></div>`).join('')
+      : '<p class="muted small">No indexer.</p>';
+    for (const r of $$('.usenet-row', ixList)) {
+      const i = Number(r.dataset.i);
+      bind(r, indexers[i], () => { indexers.splice(i, 1); drawIndexers(); });
+    }
+  };
+  drawServers();
+  drawIndexers();
+  $('[data-ns-add]', node).onclick = () => { servers.push({ host: '', port: 563, tls: true, connections: 10, enabled: true, password: '' }); drawServers(); };
+  $('[data-ix-add]', node).onclick = () => { indexers.push({ name: '', url: '', enabled: true, apiKey: '' }); drawIndexers(); };
+  const usenetBody = () => ({
+    newsServers: servers.filter((n) => n.host.trim()).map(({ passwordSet, ...n }) => n),
+    indexers: indexers.filter((x) => x.url.trim()).map(({ keySet, keyHint, ...x }) => x),
+  });
+  $('[data-usenet-check]', node).onclick = async (e) => {
+    const btn = e.currentTarget;
+    const res = $('[data-usenet-res]', node);
+    btn.disabled = true;
+    res.innerHTML = '<span class="muted">Checking…</span>';
+    try {
+      await api('/api/admin/streaming/check-usenet', { method: 'POST', body: usenetBody() });
+      res.innerHTML = '<span class="ok">Working</span>';
+    } catch (ex) { res.innerHTML = `<span class="error">${esc(ex.message)}</span>`; }
+    btn.disabled = false;
+  };
+
   // Addons
   let addons = (s.streaming.addons || []).map((a) => ({ ...a }));
   const addonList = $('.addon-list', node);
@@ -800,6 +882,7 @@ export async function viewSettings() {
       downloadQuality: v.stDlQuality,
       perQuality: int(v.stPerQuality),
       usenet: !!v.stUsenet,
+      ...usenetBody(),
       limits: {
         bandwidthMbps: num(v.lBandwidth), perStreamMbps: num(v.lPerStream), downloadMbps: num(v.lDownload),
         maxStreams: int(v.lStreams), maxDownloads: int(v.lDownloads), prefetchWorkers: int(v.lPrefetch),

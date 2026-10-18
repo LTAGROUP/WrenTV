@@ -20,6 +20,7 @@ import (
 )
 
 type fakeProvider struct {
+	mu      sync.Mutex
 	cdn     string
 	cached  map[string][]RemoteFile
 	stale   bool // Link fails once, as when the debrid item expired
@@ -29,6 +30,8 @@ type fakeProvider struct {
 
 func (f *fakeProvider) Name() string { return "torbox" }
 func (f *fakeProvider) Check(_ context.Context, hashes []string) (map[string]bool, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.checked++
 	out := map[string]bool{}
 	for _, h := range hashes {
@@ -37,6 +40,8 @@ func (f *fakeProvider) Check(_ context.Context, hashes []string) (map[string]boo
 	return out, true, nil
 }
 func (f *fakeProvider) Add(_ context.Context, hash, _ string) (*Torrent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.adds++
 	files, ok := f.cached[hash]
 	if !ok {
@@ -45,6 +50,8 @@ func (f *fakeProvider) Add(_ context.Context, hash, _ string) (*Torrent, error) 
 	return &Torrent{Ref: "t-" + hash, Files: files}, nil
 }
 func (f *fakeProvider) Link(_ context.Context, ref, file string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.stale {
 		f.stale = false
 		return "", ErrStale

@@ -186,6 +186,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/api/admin/downloads/{id}/retry", s.handleRetryDownload)
 			r.Post("/api/admin/streaming/check-debrid", s.handleCheckDebrid)
 			r.Post("/api/admin/streaming/check-addon", s.handleCheckAddon)
+			r.Post("/api/admin/streaming/check-usenet", s.handleCheckUsenet)
 			r.Get("/api/users", s.handleListUsers)
 			r.Post("/api/users", s.handleCreateUser)
 			r.Patch("/api/users/{id}", s.handleUpdateUser)

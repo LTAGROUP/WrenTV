@@ -169,9 +169,12 @@ type StreamingConfig struct {
 	// PerQuality is how many streams each quality keeps for users to choose
 	// from; the first plays by default.
 	PerQuality int `yaml:"per_quality"`
-	// Usenet also searches TorBox's Usenet cache (needs a TorBox plan with
-	// Usenet) and prefers it over torrents.
+	// Usenet plays Usenet posts before torrents.
 	Usenet bool `yaml:"usenet"`
+	// Indexers are searched for Usenet posts, which play straight from
+	// NewsServers: articles are fetched as the player reads them.
+	Indexers    []IndexerConfig    `yaml:"indexers"`
+	NewsServers []NewsServerConfig `yaml:"news_servers"`
 	// MaxSizeGB skips releases larger than this per quality (0 = no limit).
 	MaxSizeGB map[string]float64 `yaml:"max_size_gb"`
 	// Prefetch resolves the rest of the season after an episode is played.
@@ -184,6 +187,26 @@ type StreamingConfig struct {
 	ShowLibrary     string          `yaml:"show_library"`
 	DownloadQuality string          `yaml:"download_quality"`
 	Limits          StreamingLimits `yaml:"limits"`
+}
+
+type IndexerConfig struct {
+	Name    string `yaml:"name" json:"name"`
+	URL     string `yaml:"url" json:"url"`
+	APIKey  string `yaml:"api_key" json:"-"`
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+}
+
+// NewsServerConfig is a Usenet provider account. Servers are used in
+// order; later ones fill in articles the first lacks.
+type NewsServerConfig struct {
+	Host     string `yaml:"host" json:"host"`
+	Port     int    `yaml:"port" json:"port"`
+	TLS      bool   `yaml:"tls" json:"tls"`
+	Username string `yaml:"username" json:"username"`
+	Password string `yaml:"password" json:"-"`
+	// Connections is the most this server opens at once (the plan's limit).
+	Connections int  `yaml:"connections" json:"connections"`
+	Enabled     bool `yaml:"enabled" json:"enabled"`
 }
 
 type AddonConfig struct {
