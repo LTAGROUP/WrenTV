@@ -176,6 +176,13 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "could not read media: "+err.Error())
 		return
 	}
+	if why := notTheTitle(it, info); why != "" && f.StreamID != "" {
+		// A trailer, a promo or another film: find the real one.
+		src.Close()
+		s.Streaming.Reject(f.StreamID, why)
+		writeJSON(w, 202, playResponse{Status: "pending", Message: "Finding another stream…"})
+		return
+	}
 	prefs, _ := s.DB.GetPrefs(ctx, principal(r).User.ID)
 	audioIdx := preferredAudio(info, prefs.AudioLanguage)
 	if req.AudioIndex != nil {
@@ -724,4 +731,16 @@ func (s *Server) serveThumb(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "private, max-age=600")
 	http.ServeFile(w, r, p)
+}
+
+// notTheTitle says why a streamed file can't be the item: it has no
+// picture, or it is far shorter than the film. "" when it may be.
+func notTheTitle(it *db.Item, info *media.Info) string {
+	if len(info.Video) == 0 {
+		return "no video"
+	}
+	if it.Kind == "movie" && it.RuntimeMin > 0 && info.Duration > 0 && info.Duration < 0.6*float64(it.RuntimeMin*60) {
+		return fmt.Sprintf("runs %.0f min, the film %d min", info.Duration/60, it.RuntimeMin)
+	}
+	return ""
 }

@@ -37,30 +37,50 @@ type usenetState struct {
 	pool *usenet.Pool
 	// nzbs keeps parsed NZBs of recent plays.
 	nzbs map[string]*usenet.NZB
-	// dead are posts that lost articles during a play, by NZB link. Spot
-	// checks can miss the holes, so they aren't tried again for a while.
+	// dead are stored streams that failed a play or turned out not to be
+	// the title, by release key. Spot checks can miss a post's holes, so
+	// they aren't tried again for a while.
 	dead map[string]time.Time
 }
 
-// deadFor is how long a post that failed a play stays skipped.
+// deadFor is how long a stream that failed a play stays skipped.
 const deadFor = 7 * 24 * time.Hour
 
-func (u *usenetState) isDead(link string) bool {
+func (u *usenetState) isDead(r Release) bool {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	t, ok := u.dead[link]
+	t, ok := u.dead[releaseKey(r)]
 	return ok && time.Since(t) < deadFor
 }
 
 // dropPost forgets a stored post that can't play and looks for another.
 func (s *Service) dropPost(st *db.Stream, why error) {
 	slog.Warn("usenet post dropped", "stream", st.ID, "release", st.Release, "err", why)
+	s.drop(st)
+}
+
+// Reject forgets a stored stream whose file isn't the title, such as a
+// trailer or another film, and looks for another.
+func (s *Service) Reject(streamID, why string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	st, err := s.DB.GetStream(ctx, streamID)
+	if err != nil {
+		return
+	}
+	slog.Warn("stream rejected", "stream", st.ID, "release", st.Release, "why", why)
+	s.drop(st)
+}
+
+// drop deletes a stored stream, skips its release for a while and looks
+// for another.
+func (s *Service) drop(st *db.Stream) {
 	u := &s.usenet
 	u.mu.Lock()
 	if u.dead == nil {
 		u.dead = map[string]time.Time{}
 	}
-	u.dead[st.NZB] = time.Now()
+	u.dead[releaseKey(Release{InfoHash: st.InfoHash, Link: st.Link, NZB: st.NZB})] = time.Now()
 	for link, t := range u.dead {
 		if time.Since(t) > deadFor {
 			delete(u.dead, link)
@@ -239,7 +259,7 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 		slog.Info("usenet post skipped", "release", r.Name, "step", step, "err", err, "took", time.Since(t).Round(time.Millisecond))
 		return nil, true
 	}
-	if s.usenet.isDead(r.NZB) {
+	if s.usenet.isDead(r) {
 		return fail("check", errors.New("lost articles during a play"))
 	}
 	nzb, err := s.nzb(ctx, r.NZB)

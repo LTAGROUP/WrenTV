@@ -956,6 +956,9 @@ func (s *Service) add(ctx context.Context, r Release, caches map[string]*cacheSt
 		f, ok := PickFile(tor.Files, r.FileName, season, episode)
 		return f, ok && (maxSize <= 0 || f.Size <= maxSize)
 	}
+	if r.Indexer == "" && s.usenet.isDead(r) {
+		return nil, true
+	}
 	if r.Link != "" {
 		target, size, err := openLink(ctx, r.Link)
 		if err != nil {
