@@ -253,9 +253,17 @@ func usenetFromPatch(c *config.StreamingConfig, ixs *[]indexerPatch, nss *[]news
 				}
 			}
 			if ix.APIKey == "" {
-				for _, old := range c.Indexers {
-					if old.URL == ix.URL {
-						ix.APIKey = old.APIKey
+				// Keep the saved key: the same address, else the same site
+				// (an edited address), else the same name.
+				for _, same := range []func(config.IndexerConfig) bool{
+					func(old config.IndexerConfig) bool { return old.URL == ix.URL },
+					func(old config.IndexerConfig) bool { return (usenet.Indexer{URL: old.URL}).Owns(ix.URL) },
+					func(old config.IndexerConfig) bool { return strings.EqualFold(old.Name, ix.Name) },
+				} {
+					for _, old := range c.Indexers {
+						if ix.APIKey == "" && old.APIKey != "" && same(old) {
+							ix.APIKey = old.APIKey
+						}
 					}
 				}
 			}

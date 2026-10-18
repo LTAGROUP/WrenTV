@@ -384,6 +384,8 @@ function streamingStatusLine(st, s) {
   if (st.active) return '<span class="ok">On</span> <span class="small muted">· everyone allowed to stream can search for and play any movie or show</span>';
   if (!s.tmdbKeySet) return '<span class="error">Needs a TMDB API key</span> <span class="small muted">(General tab)</span>';
   const usenet = st.newsServers?.some((n) => n.enabled) && st.indexers?.some((i) => i.enabled && i.keySet);
+  const keyless = st.indexers?.find((i) => i.enabled && !i.keySet);
+  if (!usenet && keyless && st.newsServers?.some((n) => n.enabled)) return `<span class="error">Usenet is off: ${esc(keyless.name || 'an indexer')} needs its API key</span>`;
   if (!usenet && !st.debrid.some((d) => d.keySet)) return '<span class="error">Needs a debrid API key or Usenet</span>';
   if (!usenet && !st.addons.some((a) => a.enabled)) return '<span class="error">Needs at least one addon</span>';
   return '<span class="muted">Starting…</span>';
@@ -777,7 +779,7 @@ export async function viewSettings() {
       <div class="form-grid">
         <div class="field"><label>Name</label><input type="text" data-f="name" value="${esc(x.name || '')}" placeholder="NZBGeek"></div>
         <div class="field"><label>Address</label><input type="text" data-f="url" value="${esc(x.url || '')}" placeholder="https://api.nzbgeek.info" autocomplete="off"></div>
-        <div class="field"><label>API key</label><input type="password" data-f="apiKey" placeholder="${x.keySet ? `Saved ${esc(x.keyHint || '')}; type to replace` : ''}" autocomplete="off"></div>
+        <div class="field"><label>API key</label><input type="password" data-f="apiKey" placeholder="${x.keySet ? `Saved ${esc(x.keyHint || '')}; type to replace` : 'Needed to search'}" autocomplete="off"></div>
       </div>
       <div class="acts"><button type="button" class="btn small danger" data-del>Remove</button></div></div>`).join('')
       : '<p class="muted small">No indexer.</p>';

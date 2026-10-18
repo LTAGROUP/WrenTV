@@ -516,6 +516,9 @@ func (s *Service) usenetProvider() UsenetProvider {
 func (s *Service) search(ctx context.Context, q usenet.Query) (torrents, posts []Release, err error) {
 	var all, found []Release
 	var wg sync.WaitGroup
+	if why := s.usenetOff(); why != "" && why != "not set up" {
+		slog.Info("usenet skipped", "title", q.Title, "why", why)
+	}
 	if s.usenetOn() {
 		wg.Add(1)
 		go func() {

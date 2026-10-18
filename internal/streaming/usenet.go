@@ -73,7 +73,27 @@ func (s *Service) indexers() []usenet.Indexer {
 
 // usenetOn reports whether posts can be searched and played.
 func (s *Service) usenetOn() bool {
-	return len(s.indexers()) > 0 && !s.newsPool().Empty()
+	return s.usenetOff() == ""
+}
+
+// usenetOff says why Usenet isn't used, or "" when it is.
+func (s *Service) usenetOff() string {
+	c := s.cfg()
+	if len(c.Indexers) == 0 && len(c.NewsServers) == 0 {
+		return "not set up"
+	}
+	if len(s.indexers()) == 0 {
+		for _, ix := range c.Indexers {
+			if ix.Enabled && ix.APIKey == "" {
+				return fmt.Sprintf("indexer %s has no API key", ix.Name)
+			}
+		}
+		return "no indexer is turned on"
+	}
+	if s.newsPool().Empty() {
+		return "no news server is turned on"
+	}
+	return ""
 }
 
 // searchIndexers asks every indexer for posts of a title.
@@ -82,9 +102,12 @@ func (s *Service) searchIndexers(ctx context.Context, q usenet.Query) []Release 
 	ch := make(chan []Release, len(ixs))
 	for _, ix := range ixs {
 		go func(ix usenet.Indexer) {
+			t := time.Now()
 			res, err := ix.Search(ctx, q)
 			if err != nil {
-				slog.Info("indexer search", "indexer", ix.Name, "err", err)
+				slog.Warn("indexer search failed", "indexer", ix.Name, "err", err)
+			} else {
+				slog.Info("indexer search", "indexer", ix.Name, "title", q.Title, "posts", len(res), "took", time.Since(t).Round(time.Millisecond))
 			}
 			var rels []Release
 			for _, r := range res {
@@ -170,10 +193,14 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 	}
 	ctx, cancel := context.WithTimeout(usenet.Background(ctx), 30*time.Second)
 	defer cancel()
+	t := time.Now()
+	fail := func(step string, err error) (*pick, bool) {
+		slog.Info("usenet post skipped", "release", r.Name, "step", step, "err", err, "took", time.Since(t).Round(time.Millisecond))
+		return nil, true
+	}
 	nzb, err := s.nzb(ctx, r.NZB)
 	if err != nil {
-		slog.Debug("usenet nzb", "release", r.Name, "err", err)
-		return nil, true
+		return fail("nzb", err)
 	}
 	var keep func(string) bool
 	if season > 0 {
@@ -184,8 +211,7 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 	}
 	vids, err := usenet.Inspect(ctx, pool, nzb, keep)
 	if err != nil {
-		slog.Debug("usenet inspect", "release", r.Name, "err", err)
-		return nil, true
+		return fail("inspect", err)
 	}
 	files := make([]RemoteFile, len(vids))
 	layouts := map[string]*usenet.Layout{}
@@ -194,13 +220,19 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 		layouts[v.Name] = v.Layout
 	}
 	f, ok := PickFile(files, "", season, episode)
-	if !ok || (maxSize > 0 && f.Size > maxSize) {
-		return nil, true
+	if !ok {
+		return fail("pick", errors.New("no video for this title"))
+	}
+	if maxSize > 0 && f.Size > maxSize {
+		return fail("pick", fmt.Errorf("%s is over the size limit", f.Name))
 	}
 	if ok, err := usenet.Available(ctx, pool, nzb, layouts[f.Name], 48); !ok {
-		slog.Debug("usenet post incomplete", "release", r.Name, "err", err)
-		return nil, true
+		if err == nil {
+			err = errors.New("articles missing from the news server")
+		}
+		return fail("check", err)
 	}
+	slog.Info("usenet post found", "release", r.Name, "file", f.Name, "size", f.Size, "took", time.Since(t).Round(time.Millisecond))
 	return &pick{rel: r, tor: &Torrent{Files: files}, file: f, layouts: layouts}, true
 }
 
