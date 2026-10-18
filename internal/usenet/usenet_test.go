@@ -482,3 +482,50 @@ func TestReadAheadAndCache(t *testing.T) {
 		t.Fatal("header article was dropped from the cache")
 	}
 }
+
+// cancelAfter cancels its context once anything is written to it.
+type cancelAfter struct{ cancel context.CancelFunc }
+
+func (c cancelAfter) Write(p []byte) (int, error) { c.cancel(); return len(p), nil }
+
+// A reader that goes away (a player seeking elsewhere) drops its queued
+// read-ahead, and the articles already on a connection finish there, so no
+// connection is lost.
+func TestAbandonedReadAhead(t *testing.T) {
+	s := newFakeServer(t)
+	video := append([]byte{0x1a, 0x45, 0xdf, 0xa3}, randomBytes(64000*200, 7)...)
+	nzb := &NZB{Files: []NZBFile{s.post("Movie.2020.1080p.mkv", video, 64000, `"Movie.2020.1080p.mkv" yEnc`)}}
+	pool := s.pool(2)
+	defer pool.Close()
+	vids, err := Inspect(context.Background(), pool, nzb, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := NewFile(pool, nzb, vids[0].Layout)
+	settle := func() int32 {
+		for i := 0; i < 100; i++ {
+			n := s.bodies.Load()
+			time.Sleep(20 * time.Millisecond)
+			if s.bodies.Load() == n {
+				return n
+			}
+		}
+		return s.bodies.Load()
+	}
+	base := settle()
+	for i := 0; i < 5; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		f.WriteRange(ctx, cancelAfter{cancel}, int64(64000*(20+i*30)), 64000*100)
+	}
+	if n := settle() - base; n > 5*8 {
+		t.Fatalf("abandoned reads fetched %d articles", n)
+	}
+	if n := s.logins.Load(); n > 2 {
+		t.Fatalf("%d logins for 2 connections: some were dropped", n)
+	}
+	// What's still wanted reads fine afterwards.
+	var buf bytes.Buffer
+	if _, err := f.WriteRange(context.Background(), &buf, 64000*25, 64000*3); err != nil || !bytes.Equal(buf.Bytes(), video[64000*25:64000*28]) {
+		t.Fatalf("read after = %d bytes, %v", buf.Len(), err)
+	}
+}

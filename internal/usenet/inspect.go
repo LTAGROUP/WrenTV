@@ -260,7 +260,7 @@ func rarVideos(ctx context.Context, pool *Pool, nzb *NZB, heads []head, files []
 		lay.Files = append(lay.Files, FileLayout{Index: v.file, Size: h.size, PartSize: h.partSize})
 	}
 	f := NewFile(pool, nzb, lay)
-	f.max = 4
+	f.max, f.ctx = 4, ctx
 	// The first article of each volume is already here.
 	for k, v := range vols {
 		e := &segEntry{done: make(chan struct{}), data: heads[v.file].data}

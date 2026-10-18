@@ -43,6 +43,8 @@ type File struct {
 	lay  *Layout
 	// Ahead is how many articles a sequential read fetches in advance.
 	Ahead int
+	// ctx is for reads that have none of their own (fileReader).
+	ctx context.Context
 
 	mu    sync.Mutex
 	cache map[segKey]*segEntry
@@ -59,7 +61,7 @@ type segEntry struct {
 }
 
 func NewFile(pool *Pool, nzb *NZB, lay *Layout) *File {
-	return &File{pool: pool, nzb: nzb, lay: lay, Ahead: 32, cache: map[segKey]*segEntry{}, max: 96}
+	return &File{pool: pool, nzb: nzb, lay: lay, Ahead: 32, cache: map[segKey]*segEntry{}, max: 192}
 }
 
 func (f *File) Size() int64     { return f.lay.Size }
@@ -103,17 +105,26 @@ func (f *File) spans(off, n int64) ([]span, error) {
 
 // segment returns an article's data, fetching it once however many ask.
 func (f *File) segment(ctx context.Context, k segKey) ([]byte, error) {
-	e := f.start(k)
-	select {
-	case <-e.done:
-		return e.data, e.err
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	for {
+		e := f.start(ctx, k)
+		select {
+		case <-e.done:
+			// Whoever started the fetch went away first; fetch it again.
+			if e.err != nil && ctx.Err() == nil && (errors.Is(e.err, context.Canceled) || errors.Is(e.err, context.DeadlineExceeded)) {
+				continue
+			}
+			return e.data, e.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 }
 
 // start begins fetching an article in the background unless it's cached.
-func (f *File) start(k segKey) *segEntry {
+// The fetch is dropped if ctx ends before it reaches a connection, so a
+// reader that leaves (a player seeking away) doesn't keep its read-ahead
+// queued for connections others need.
+func (f *File) start(ctx context.Context, k segKey) *segEntry {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if e := f.cache[k]; e != nil {
@@ -151,7 +162,7 @@ func (f *File) start(k segKey) *segEntry {
 		f.order = keep
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(finishing(ctx), 2*time.Minute)
 		defer cancel()
 		e.data, e.err = f.fetch(ctx, k)
 		close(e.done)
@@ -206,7 +217,7 @@ func (f *File) ReadAtContext(ctx context.Context, p []byte, off int64) (int, err
 		return 0, err
 	}
 	for _, s := range sp {
-		f.start(s.key)
+		f.start(ctx, s.key)
 	}
 	n := 0
 	for _, s := range sp {
@@ -253,7 +264,7 @@ func (f *File) WriteRange(ctx context.Context, w io.Writer, off, n int64) (int64
 				ahead = min(ahead*2, f.Ahead)
 			}
 			for ; started < len(sp) && started <= i+ahead; started++ {
-				f.start(sp[started].key)
+				f.start(ctx, sp[started].key)
 			}
 			data, err := f.segment(ctx, s.key)
 			if err != nil {
@@ -288,7 +299,11 @@ func (r fileReader) ReadAt(p []byte, off int64) (int, error) {
 	n := 0
 	for n < len(p) && off < fl.Size {
 		seg := off / fl.PartSize
-		data, err := r.f.segment(context.Background(), segKey{r.file, int(seg)})
+		ctx := r.f.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		data, err := r.f.segment(ctx, segKey{r.file, int(seg)})
 		if err != nil {
 			return n, err
 		}

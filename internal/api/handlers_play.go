@@ -102,6 +102,12 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	streamed := s.isStreamLibrary(ctx, it.LibraryID)
+	// steps times each part of starting playback, for the debug log.
+	t0, last, steps := time.Now(), time.Now(), []any{}
+	step := func(name string) {
+		steps = append(steps, name, time.Since(last).Round(time.Millisecond))
+		last = time.Now()
+	}
 	if streamed {
 		if !s.limitsFor(p.User).CanStream {
 			writeErr(w, http.StatusForbidden, "streaming isn't available on this server")
@@ -109,9 +115,12 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		}
 		// Opening the title's page may already be getting it ready.
 		s.waitWarm(ctx, it.ID, 15*time.Second)
+		step("warm")
 		// Look up streams on first play; wait a little so a quick lookup
 		// starts playback at once, else the client retries.
-		if ready, err := s.Streaming.Ensure(ctx, it, 12*time.Second); !ready {
+		ready, err := s.Streaming.Ensure(ctx, it, 12*time.Second)
+		step("lookup")
+		if !ready {
 			if err != nil {
 				if local, _ := s.DB.FileEquivalent(ctx, it); local == nil {
 					writeErr(w, http.StatusFailedDependency, streamErrMessage(err))
@@ -131,6 +140,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	f := chooseFile(files, req)
 
 	src, err := s.openSource(ctx, f)
+	step("open")
 	if f.StreamID != "" && errors.Is(err, streaming.ErrUnavailable) {
 		// The stored stream went away: find another.
 		_, _ = s.Streaming.Ensure(ctx, it, 0)
@@ -159,6 +169,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	info, err := s.ensureProbe(ctx, f, src)
+	step("probe")
 	if err != nil {
 		src.Close()
 		writeErr(w, http.StatusBadGateway, "could not read media: "+err.Error())
@@ -174,6 +185,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	var kf []float64
 	if dec.Method == media.MethodRemux {
 		kf, err = s.ensureKeyframes(ctx, f, src)
+		step("keyframes")
 		if err != nil || len(kf) < 2 {
 			slog.Warn("keyframe index unavailable, falling back", "file", f.ID, "err", err)
 			req.Caps.ForceEngine = ""
@@ -193,6 +205,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	if kbps <= 0 {
 		kbps = 20000
 	}
+	slog.Debug("play start", append([]any{"item", it.ID, "total", time.Since(t0).Round(time.Millisecond)}, steps...)...)
 	sess, err := s.Streams.Create(stream.NewSessionOpts{
 		UserID: p.User.ID, ItemID: it.ID, FileID: f.ID, Src: src, Info: info, Decision: dec,
 		Keyframes: kf, KbpsTarget: kbps, MaxWidth: req.MaxWidth,

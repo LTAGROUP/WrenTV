@@ -225,7 +225,7 @@ type server struct {
 	// bgBusy counts connections lookups are using; they get half, so
 	// playback that starts while a lookup goes on isn't starved.
 	bgBusy int
-	idle []*conn
+	idle   []*conn
 	// open counts connections logged in or logging in (dialing), idle or busy.
 	open, dialing int
 	// freed is closed, and replaced, when a connection goes idle or away.
@@ -320,6 +320,15 @@ func Background(ctx context.Context) context.Context {
 	return context.WithValue(ctx, bgKey{}, true)
 }
 
+type finishKey struct{}
+
+// finishing marks reads that may be dropped while they wait for a
+// connection, but once on one finish anyway: cutting an article off
+// mid-transfer costs the connection and a new login.
+func finishing(ctx context.Context) context.Context {
+	return context.WithValue(ctx, finishKey{}, true)
+}
+
 // quit logs out politely, so the server frees the slot at once.
 func (c *conn) quit() {
 	c.nc.SetDeadline(time.Now().Add(2 * time.Second))
@@ -382,7 +391,11 @@ func (s *server) with(ctx context.Context, f func(*conn) error) error {
 		if err != nil {
 			return err
 		}
-		stop := c.deadline(ctx, 60*time.Second)
+		run := ctx
+		if ctx.Value(finishKey{}) != nil {
+			run = context.WithoutCancel(ctx)
+		}
+		stop := c.deadline(run, 60*time.Second)
 		err = f(c)
 		stop()
 		if err == nil || errors.Is(err, ErrMissing) {

@@ -24,6 +24,7 @@ type fakeProvider struct {
 	cdn     string
 	cached  map[string][]RemoteFile
 	stale   bool // Link fails once, as when the debrid item expired
+	slow    map[string]time.Duration
 	adds    int
 	checked int
 }
@@ -40,6 +41,10 @@ func (f *fakeProvider) Check(_ context.Context, hashes []string) (map[string]boo
 	return out, true, nil
 }
 func (f *fakeProvider) Add(_ context.Context, hash, _ string) (*Torrent, error) {
+	f.mu.Lock()
+	d := f.slow[hash]
+	f.mu.Unlock()
+	time.Sleep(d)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.adds++
@@ -175,6 +180,61 @@ func TestMovieChoicesPreferUsenet(t *testing.T) {
 	waitLookups(t, s)
 	if sts, _ := d.StreamsForItem(ctx, it.ID); len(sts) != 5 {
 		t.Fatalf("after top-up = %d streams", len(sts))
+	}
+}
+
+// Playback starts once a 4K stream is found, while 1080p is still looked
+// up; each stream stored tells the apps.
+func TestReadyOnFirstBestStream(t *testing.T) {
+	ctx := context.Background()
+	h := func(c string) string { return strings.Repeat(c, 40) }
+	addon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"streams": []map[string]any{
+			{"title": "Movie.2024.2160p.WEB-DL-GRP\n👤 500 💾 15 GB", "infoHash": h("a")},
+			{"title": "Movie.2024.1080p.WEB-DL-GRP\n👤 200 💾 5 GB", "infoHash": h("b")},
+		}})
+	}))
+	defer addon.Close()
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	cfg := &config.Config{Streaming: config.StreamingConfig{Enabled: true, Qualities: []string{"2160p", "1080p"}, PerQuality: 1,
+		Addons: []config.AddonConfig{{Name: "fake", URL: addon.URL + "/manifest.json", Enabled: true}}}}
+	file := func(n string) []RemoteFile { return []RemoteFile{{ID: "1", Name: n + ".mkv", Size: 1000}} }
+	prov := &fakeProvider{cdn: "http://cdn", cached: map[string][]RemoteFile{h("a"): file("a"), h("b"): file("b")},
+		slow: map[string]time.Duration{h("b"): 2 * time.Second}}
+	hub := library.NewHub()
+	events, stop := hub.Subscribe()
+	defer stop()
+	s := New(Deps{Cfg: cfg, DB: d, TMDB: tmdb.New("test", "en-US", d), Hub: hub})
+	s.testProviders = []Provider{prov}
+	lib, _ := d.StreamLibrary(ctx, "movies")
+	it := &db.Item{LibraryID: lib.ID, Kind: "movie", MatchKey: "tmdb:3", Title: "Movie", TMDBID: 3, IMDBID: "tt3", SeasonNumber: -1, EpisodeNumber: -1}
+	d.InsertItem(ctx, it)
+	t0 := time.Now()
+	if ready, err := s.Ensure(ctx, it, 10*time.Second); !ready || err != nil {
+		t.Fatalf("ensure = %v, %v", ready, err)
+	}
+	if took := time.Since(t0); took > time.Second {
+		t.Fatalf("ready took %v; it waited for 1080p", took)
+	}
+	if sts, _ := d.StreamsForItem(ctx, it.ID); len(sts) != 1 || sts[0].Quality != "2160p" {
+		t.Fatalf("streams at ready = %+v", sts)
+	}
+	waitLookups(t, s)
+	if sts, _ := d.StreamsForItem(ctx, it.ID); len(sts) != 2 {
+		t.Fatalf("streams = %d", len(sts))
+	}
+	updated := 0
+	for len(events) > 0 {
+		if e := <-events; e.Type == "item.updated" && e.ItemID == it.ID {
+			updated++
+		}
+	}
+	if updated != 2 {
+		t.Fatalf("item.updated sent %d times", updated)
 	}
 }
 

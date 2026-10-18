@@ -314,10 +314,26 @@ func (s *usenetSource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		return
 	}
-	_, err := s.f.WriteRange(r.Context(), &throttledWriter{ctx: r.Context(), w: w, t: s.t}, start, end-start+1)
+	t0 := time.Now()
+	fw := &firstWrite{w: &throttledWriter{ctx: r.Context(), w: w, t: s.t}}
+	n, err := s.f.WriteRange(r.Context(), fw, start, end-start+1)
 	if err != nil && r.Context().Err() == nil {
 		slog.Warn("usenet stream failed", "file", s.name, "offset", start, "err", err)
 	}
+	slog.Debug("usenet read", "offset", start, "bytes", n, "first", fw.at.Sub(t0).Round(time.Millisecond), "took", time.Since(t0).Round(time.Millisecond))
+}
+
+// firstWrite notes when the first bytes went out, for the debug log.
+type firstWrite struct {
+	w  io.Writer
+	at time.Time
+}
+
+func (f *firstWrite) Write(p []byte) (int, error) {
+	if f.at.IsZero() {
+		f.at = time.Now()
+	}
+	return f.w.Write(p)
 }
 
 // parseRange reads a single "bytes=a-b" range; no header means everything.

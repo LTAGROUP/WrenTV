@@ -177,6 +177,14 @@ func (s *Service) addons() []Addon {
 	return out
 }
 
+// readyGrace is how long playback waits for the best quality after a lower
+// one is found.
+const readyGrace = 8 * time.Second
+
+// orderWait is how long a found Usenet post waits for better-ranked posts
+// still being checked before it's stored ahead of them.
+const orderWait = 3 * time.Second
+
 func (s *Service) qualities() []string {
 	q := s.cfg().Qualities
 	if len(q) == 0 {
@@ -376,8 +384,8 @@ func (s *Service) syncEpisodes(ctx context.Context, show *db.Item, sh *tmdb.Show
 // Ensure makes sure a streaming movie or episode has streams, looking them
 // up if needed. It waits up to wait; ready=false means the lookup is still
 // running. ErrNoStreams means nothing cached was found. A lookup is ready
-// once every quality has its first stream; the other choices keep coming
-// in the background.
+// once the best quality has its first stream; the other choices keep
+// coming in the background.
 func (s *Service) Ensure(ctx context.Context, it *db.Item, wait time.Duration) (ready bool, err error) {
 	if !s.Active() {
 		return false, ErrDisabled
@@ -603,8 +611,8 @@ func (s *Service) checkCached(ctx context.Context, rels []Release, qualities []s
 
 // resolve looks up and stores the missing streams of an item: up to
 // perQuality per quality, Usenet first, then torrents, each in rank order.
-// ready is called once every quality has a stream (or none could be found)
-// and at least one was stored. It returns how many streams the item has.
+// ready is called once the best quality has a stream, or once it can't be
+// found and another quality has one (see readyGrace). It returns how many streams the item has.
 func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, error) {
 	per := s.perQuality()
 	sts, _ := s.DB.StreamsForItem(ctx, it.ID)
@@ -634,16 +642,32 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 	caches := s.checkCached(ctx, rels, missing, season)
 
 	started := time.Now()
+	// Playback starts on the first stream of the best quality wanted, or
+	// on any stream once that one gives up or a little after something
+	// else is found; the rest keep coming in the background.
+	best := missing[0]
+	for _, q := range missing {
+		if HeightOf(q) > HeightOf(best) {
+			best = q
+		}
+	}
 	var mu sync.Mutex
+	var readyOnce sync.Once
 	found := len(sts)
-	unsettled := len(missing)
-	settle := func() {
+	fire := func() {
+		if ready != nil {
+			readyOnce.Do(ready)
+		}
+	}
+	settle := func(q string, got bool) {
 		mu.Lock()
-		unsettled--
-		done := unsettled == 0 && found > 0
+		any := found > 0
 		mu.Unlock()
-		if done && ready != nil {
-			ready()
+		switch {
+		case q == best && any:
+			fire()
+		case got:
+			time.AfterFunc(readyGrace, fire)
 		}
 	}
 	var wg sync.WaitGroup
@@ -654,7 +678,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 			settled := false
 			defer func() {
 				if !settled {
-					settle()
+					settle(q, false)
 				}
 			}()
 			maxSize := s.maxSize(q)
@@ -683,9 +707,10 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 				mu.Lock()
 				found++
 				mu.Unlock()
+				s.Hub.Publish(library.Event{Type: "item.updated", LibraryID: it.LibraryID, ItemID: it.ID})
 				if !settled {
 					settled = true
-					settle()
+					settle(q, true)
 				}
 				if season > 0 {
 					s.fillSeason(ctx, it, q, p) // a season pack covers the other episodes too
@@ -704,7 +729,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 			slots := make(chan struct{}, max(need, 1))
 			var tried []Release
 			var picks []*pick
-			var done []bool
+			var done, stored []bool
 			next := 0
 			for _, r := range Rank(nzbs, q, maxSize, season) {
 				slots <- struct{}{}
@@ -713,7 +738,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 				dup := !stop && seen(r)
 				k := len(tried)
 				if !stop && !dup {
-					tried, picks, done = append(tried, r), append(picks, nil), append(done, false)
+					tried, picks, done, stored = append(tried, r), append(picks, nil), append(done, false), append(stored, false)
 				}
 				qmu.Unlock()
 				if stop || dup {
@@ -732,9 +757,22 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 					defer qmu.Unlock()
 					picks[k], done[k] = p, true
 					for ; next < len(done) && done[next]; next++ {
-						if p := picks[next]; p != nil && need > 0 && !seen(tried[next]) {
+						if p := picks[next]; p != nil && !stored[next] && need > 0 && !seen(tried[next]) {
+							stored[next] = true
 							keep(tried[next], p)
 						}
+					}
+					// A find waiting on a slow post ranked above it is stored
+					// after a moment anyway, so playback isn't held up.
+					if p != nil && k >= next {
+						time.AfterFunc(orderWait, func() {
+							qmu.Lock()
+							defer qmu.Unlock()
+							if !stored[k] && need > 0 && ctx.Err() == nil && !seen(tried[k]) {
+								stored[k] = true
+								keep(tried[k], p)
+							}
+						})
 					}
 				}(k, r)
 			}
@@ -742,19 +780,27 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 
 			tries := 0
 			for _, r := range Rank(rels, q, maxSize, season) {
-				if need <= 0 || ctx.Err() != nil || tries >= need*3+3 {
+				qmu.Lock()
+				enough := need <= 0 || tries >= need*3+3
+				qmu.Unlock()
+				if enough || ctx.Err() != nil {
 					break
 				}
-				if seen(r) {
+				qmu.Lock()
+				dup := seen(r)
+				qmu.Unlock()
+				if dup {
 					continue
 				}
 				p, tried := s.add(ctx, r, caches, season, episode, maxSize)
 				if tried {
 					tries++
 				}
-				if p != nil {
+				qmu.Lock()
+				if p != nil && need > 0 && !seen(r) {
 					keep(r, p)
 				}
+				qmu.Unlock()
 			}
 		}(q)
 	}

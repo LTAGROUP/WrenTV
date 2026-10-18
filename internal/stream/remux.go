@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -156,12 +157,25 @@ const seekNudge = 0.14
 type remuxer struct {
 	s   *Session
 	sf  singleflight.Group
-	sem chan struct{}
+	sem chan struct{} // for prefetches; what the player asks for doesn't wait
 	tag string
+
+	mu  sync.Mutex
+	pre map[segRef]*prefetchJob // queued or running
 }
 
+type prefetchJob struct{ cancel context.CancelFunc }
+
+type segRef struct {
+	track string
+	n     int
+}
+
+// ahead is how many segments past the player's are prepared.
+const ahead = 3
+
 func newRemuxer(s *Session) *remuxer {
-	r := &remuxer{s: s, sem: make(chan struct{}, 4)}
+	r := &remuxer{s: s, sem: make(chan struct{}, 4), pre: map[segRef]*prefetchJob{}}
 	if v := s.Info.PrimaryVideo(); v != nil {
 		r.tag = "hvc1"
 		switch {
@@ -195,13 +209,24 @@ func (r *remuxer) init(ctx context.Context, track string) (string, error) {
 }
 
 func (r *remuxer) segment(ctx context.Context, track string, n int) (string, error) {
+	// After a seek, prefetches for the old position only hold up the new one
+	// (a remote source reads each segment from the network).
+	r.mu.Lock()
+	for k, job := range r.pre {
+		// The one before stays: players fetch a little out of order.
+		if k.track == track && (k.n < n-1 || k.n > n+ahead) {
+			job.cancel()
+			delete(r.pre, k)
+		}
+	}
+	r.mu.Unlock()
 	p := filepath.Join(r.trackDir(track), strconv.Itoa(n)+".m4s")
 	if _, err := os.Stat(p); err != nil {
 		_, err, _ := r.sf.Do(track+strconv.Itoa(n), func() (any, error) {
 			if _, err := os.Stat(p); err == nil {
 				return nil, nil
 			}
-			return nil, r.produce(track, n)
+			return nil, r.produce(r.s.ctx, track, n)
 		})
 		if err != nil {
 			return "", err
@@ -213,29 +238,47 @@ func (r *remuxer) segment(ctx context.Context, track string, n int) (string, err
 
 // prefetch prepares the next segments in the background so playback never waits.
 func (r *remuxer) prefetch(track string, n int) {
-	for i := n + 1; i <= n+3 && i < len(r.s.plan); i++ {
-		i := i
+	for i := n + 1; i <= n+ahead && i < len(r.s.plan); i++ {
 		p := filepath.Join(r.trackDir(track), strconv.Itoa(i)+".m4s")
 		if _, err := os.Stat(p); err == nil {
 			continue
 		}
-		go r.sf.Do(track+strconv.Itoa(i), func() (any, error) {
-			if _, err := os.Stat(p); err == nil {
-				return nil, nil
+		k := segRef{track, i}
+		r.mu.Lock()
+		if r.pre[k] != nil {
+			r.mu.Unlock()
+			continue
+		}
+		ctx, cancel := context.WithCancel(r.s.ctx)
+		job := &prefetchJob{cancel}
+		r.pre[k] = job
+		r.mu.Unlock()
+		go func() {
+			defer func() {
+				r.mu.Lock()
+				if r.pre[k] == job {
+					delete(r.pre, k)
+				}
+				r.mu.Unlock()
+				cancel()
+			}()
+			select {
+			case r.sem <- struct{}{}:
+			case <-ctx.Done():
+				return
 			}
-			return nil, r.produce(track, i)
-		})
+			defer func() { <-r.sem }()
+			r.sf.Do(track+strconv.Itoa(i), func() (any, error) {
+				if _, err := os.Stat(p); err == nil || ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				return nil, r.produce(ctx, track, i)
+			})
+		}()
 	}
 }
 
-func (r *remuxer) produce(track string, n int) error {
-	select {
-	case r.sem <- struct{}{}:
-	case <-r.s.ctx.Done():
-		return r.s.ctx.Err()
-	}
-	defer func() { <-r.sem }()
-
+func (r *remuxer) produce(ctx context.Context, track string, n int) error {
 	s := r.s
 	seg := s.plan[n]
 	last := n == len(s.plan)-1
@@ -273,7 +316,7 @@ func (r *remuxer) produce(track string, n int) error {
 		}
 		if !s.Decision.AudioCopy && s.Decision.AudioCodec == "aac" {
 			out := filepath.Join(r.trackDir(track), strconv.Itoa(n)+".tmp.mp4")
-			if err := r.encodeAAC(a, n, out); err != nil {
+			if err := r.encodeAAC(ctx, a, n, out); err != nil {
 				os.Remove(out)
 				return err
 			}
@@ -314,7 +357,7 @@ func (r *remuxer) produce(track string, n int) error {
 	}
 	args = append(args, "-f", "mp4", "-movflags", "frag_keyframe+delay_moov+default_base_moof+frag_discont",
 		out)
-	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, s.m.cfg.FFmpeg, args...)
 	var stderr bytes.Buffer
@@ -351,7 +394,7 @@ const aacPreroll = 8
 // starts it with a priming frame and ends it with a padded one: every boundary
 // then overlaps by ~21 ms and the player resyncs its audio clock there, which
 // shows as a small audio and video stutter every segment.
-func (r *remuxer) encodeAAC(a *media.Stream, n int, out string) error {
+func (r *remuxer) encodeAAC(ctx context.Context, a *media.Stream, n int, out string) error {
 	s := r.s
 	rate := a.SampleRate
 	if rate <= 0 || rate > 96000 {
@@ -367,7 +410,7 @@ func (r *remuxer) encodeAAC(a *media.Stream, n int, out string) error {
 	}
 	from := max(first-aacPreroll, 0)
 
-	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
 	// Decode from exactly a grid point so the encoder's frames land on the grid,
