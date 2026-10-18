@@ -310,3 +310,30 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 	episodes, err = s.DB.ImportWatched(ctx, userID, marks)
 	return movies, episodes, err
 }
+
+// SimklWatchlist lists one status ("plantowatch", "watching", "completed"…)
+// of a user's Simkl watchlist across movies, shows and anime, refreshing
+// the token when it's rejected.
+func (s *Service) SimklWatchlist(ctx context.Context, userID, status string) (simkl.AllItems, error) {
+	var out simkl.AllItems
+	if !s.Simkl.Enabled() {
+		return out, errors.New("Simkl needs a client ID (Settings)")
+	}
+	a, err := s.DB.GetSimkl(ctx, userID)
+	if err != nil || a == nil {
+		return out, errors.New("link a Simkl account first (Account settings)")
+	}
+	for _, kind := range []string{"movies", "shows", "anime"} {
+		l, err := s.Simkl.Watchlist(ctx, a.AccessToken, kind, status)
+		if errors.Is(err, simkl.ErrUnauthorized) && a.RefreshToken != "" && s.refresh(ctx, a) == nil {
+			l, err = s.Simkl.Watchlist(ctx, a.AccessToken, kind, status)
+		}
+		if err != nil {
+			return out, err
+		}
+		out.Movies = append(out.Movies, l.Movies...)
+		out.Shows = append(out.Shows, l.Shows...)
+		out.Anime = append(out.Anime, l.Anime...)
+	}
+	return out, nil
+}

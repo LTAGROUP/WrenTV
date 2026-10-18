@@ -510,9 +510,61 @@ func TestStreamLookupPackAndPlayback(t *testing.T) {
 	}
 	a.Close()
 
-	// Without a debrid key streaming is off.
+	// Without a debrid key the addon still plays; with neither, streaming is off.
 	s.testProviders = []Provider{}
+	if !s.Active() {
+		t.Fatal("an addon should keep streaming on without debrid")
+	}
+	s.Cfg.Streaming.Addons = nil
 	if s.Active() {
-		t.Fatal("no providers should mean inactive")
+		t.Fatal("no providers, addons or Usenet should mean inactive")
+	}
+}
+
+// An addon that streams Usenet itself, like StreamNZB, plays with no debrid
+// service and no Usenet set up here.
+func TestAddonPlaysWithoutDebrid(t *testing.T) {
+	ctx := context.Background()
+	var addon *httptest.Server
+	addon = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/play/") {
+			w.Header().Set("Content-Type", "video/x-matroska")
+			w.Header().Set("Content-Range", "bytes 0-0/8000000000")
+			w.WriteHeader(http.StatusPartialContent)
+			w.Write([]byte{0})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"streams": []map[string]any{{
+			"name": "StreamNZB · main", "description": "Movie.2024.2160p.WEB-DL-GRP\n📦 15 GB · NZBGeek",
+			"url":           addon.URL + "/tok/play/abc",
+			"behaviorHints": map[string]any{"filename": "Movie.2024.2160p.WEB-DL-GRP.mkv", "videoSize": 15 << 30, "notWebReady": true},
+		}}})
+	}))
+	defer addon.Close()
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	cfg := &config.Config{Streaming: config.StreamingConfig{Enabled: true, Qualities: []string{"2160p"}, PerQuality: 1, Usenet: true,
+		Addons: []config.AddonConfig{{Name: "streamnzb", URL: addon.URL + "/tok/manifest.json", Enabled: true}}}}
+	s := New(Deps{Cfg: cfg, DB: d, TMDB: tmdb.New("test", "en-US", d), Hub: library.NewHub()})
+	s.testProviders = []Provider{}
+	if !s.Active() {
+		t.Fatal("an addon alone should turn streaming on")
+	}
+	lib, _ := d.StreamLibrary(ctx, "movies")
+	it := &db.Item{LibraryID: lib.ID, Kind: "movie", MatchKey: "tmdb:2", Title: "Movie", TMDBID: 2, IMDBID: "tt2", SeasonNumber: -1, EpisodeNumber: -1}
+	d.InsertItem(ctx, it)
+	if ready, err := s.Ensure(ctx, it, 10*time.Second); !ready || err != nil {
+		t.Fatalf("ensure = %v, %v", ready, err)
+	}
+	waitLookups(t, s)
+	sts, _ := d.StreamsForItem(ctx, it.ID)
+	if len(sts) != 1 || sts[0].Release != "Movie.2024.2160p.WEB-DL-GRP.mkv" && sts[0].Release != "Movie.2024.2160p.WEB-DL-GRP" {
+		t.Fatalf("streams = %+v", sts)
+	}
+	if u, _, err := s.linkFor(ctx, sts[0].ID, true); err != nil || u != addon.URL+"/tok/play/abc" {
+		t.Fatalf("link = %q, %v", u, err)
 	}
 }

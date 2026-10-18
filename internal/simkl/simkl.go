@@ -337,3 +337,44 @@ func firstOf(v ...string) string {
 	}
 	return ""
 }
+
+// Watchlist lists one watchlist status of one type ("movies", "shows",
+// "anime") without episodes.
+func (c *Client) Watchlist(ctx context.Context, access, kind, status string) (AllItems, error) {
+	var out AllItems
+	err := c.call(ctx, access, http.MethodGet, "/sync/all-items/"+kind+"/"+status, nil, nil, &out)
+	return out, err
+}
+
+// TrendingURL is where Simkl publishes its trending titles ("movies", "tv"
+// or "anime"; "today", "week" or "month"), free to read without a client ID.
+var TrendingURL = func(kind, interval string) string {
+	return "https://data.simkl.in/discover/trending/" + kind + "/" + interval + "_100.json"
+}
+
+// Trending is one title of a trending chart.
+type Trending struct {
+	Title     string         `json:"title"`
+	IDs       map[string]any `json:"ids"`
+	AnimeType string         `json:"anime_type"`
+}
+
+// Trending fetches a trending chart.
+func (c *Client) Trending(ctx context.Context, kind, interval string) ([]Trending, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, TrendingURL(kind, interval), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", c.userAgent())
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("simkl trending: %s", resp.Status)
+	}
+	var out []Trending
+	err = json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&out)
+	return out, err
+}

@@ -386,8 +386,7 @@ function streamingStatusLine(st, s) {
   const usenet = st.newsServers?.some((n) => n.enabled) && st.indexers?.some((i) => i.enabled && i.keySet);
   const keyless = st.indexers?.find((i) => i.enabled && !i.keySet);
   if (!usenet && keyless && st.newsServers?.some((n) => n.enabled)) return `<span class="error">Usenet is off: ${esc(keyless.name || 'an indexer')} needs its API key</span>`;
-  if (!usenet && !st.debrid.some((d) => d.keySet)) return '<span class="error">Needs a debrid API key or Usenet</span>';
-  if (!usenet && !st.addons.some((a) => a.enabled)) return '<span class="error">Needs at least one addon</span>';
+  if (!usenet && !st.addons.some((a) => a.enabled)) return '<span class="error">Needs an addon or Usenet</span>';
   return '<span class="muted">Starting…</span>';
 }
 
@@ -431,7 +430,7 @@ function streamingTab(s, libs) {
     </div>
 
     <div class="panel"><h2>Addons</h2>
-      <p class="small muted">Stremio addons that list streams for a title: torrents (Torrentio, Comet), or ready-to-play links from addons that use your debrid account themselves (AIOStreams, Meteor). Results from every enabled addon are merged.</p>
+      <p class="small muted">Stremio addons that list streams for a title: torrents (Torrentio, Comet), or ready-to-play links from addons that use your debrid account themselves (AIOStreams, Meteor) or stream Usenet on their own (StreamNZB, which needs no debrid key). Results from every enabled addon are merged.</p>
       <div class="addon-list"></div>
       <div class="addon-add"><input type="text" data-addon-url placeholder="https://…/manifest.json" autocomplete="off"><button type="button" class="btn" data-addon-add>Add addon</button></div>
       <p class="small error" data-addon-err hidden></p>
@@ -732,7 +731,7 @@ export async function viewSettings() {
     };
     const rm = $('[data-remove]', row);
     if (rm) rm.onclick = async () => {
-      if (!(await confirmDialog(`Disconnect ${debridName(prov)}?`, 'The key is removed when you save. Without any debrid key, streamed titles are hidden.', 'Disconnect'))) return;
+      if (!(await confirmDialog(`Disconnect ${debridName(prov)}?`, 'The key is removed when you save. Without any debrid key, torrents can\'t play; Usenet and addons that stream on their own still do.', 'Disconnect'))) return;
       keyEdits[prov] = '';
       $('[data-key]', row).value = '';
       acct.innerHTML = '<span class="muted">Disconnects when you save</span>';

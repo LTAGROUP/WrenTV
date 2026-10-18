@@ -351,6 +351,9 @@ var migrations = []string{
 	// Streams an addon hands over as a play link (AIOStreams, Meteor): the
 	// link is opened again whenever the stream starts.
 	`ALTER TABLE streams ADD COLUMN link TEXT NOT NULL DEFAULT '';`,
+	// Collections shown as rows on their library's page, in their own order.
+	`ALTER TABLE collections ADD COLUMN show_in_library INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE collections ADD COLUMN library_order INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // fkOff lists migrations (1-based) that rebuild tables. They run with

@@ -56,6 +56,7 @@ struct TitleCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .opacity(title.item == nil && !state.canStream ? 0.8 : 1)
                 .hoverLift()
+                .ambient(title.backdropPath ?? title.item?.backdropPath)
             Text(title.title).font(.callout).lineLimit(1)
             if let y = title.year { Text(String(y)).font(.caption).foregroundStyle(.secondary) }
         }

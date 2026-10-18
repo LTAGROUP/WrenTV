@@ -3,6 +3,7 @@ import { esc, $, $$, el, toast, icons, fmtRuntime, fmtDuration, fmtSize } from '
 import { openPlayer } from './player.js';
 import * as manage from './manage.js';
 import * as browse from './browse.js';
+import * as ambient from './ambient.js';
 import { viewStats } from './stats.js';
 
 const app = $('#app');
@@ -343,6 +344,7 @@ async function shell(view, seq) {
           <form class="search" id="search-form"><input type="search" name="q" placeholder="Search" autocomplete="off"></form></div>
         <div class="page" id="page"></div>
       </div></div>`;
+    ambient.mount($('.main'));
     $('#signout').onclick = signOut;
     $('#menu').onclick = () => $('.shell').classList.toggle('open');
     $('#search-form').onsubmit = (e) => {
@@ -358,6 +360,7 @@ async function shell(view, seq) {
       || (p === '/genres' && here === '/genre') || (p === '/collections' && here.startsWith('/collection/')));
   }
   const page = $('#page');
+  ambient.route(location.pathname);
   page.innerHTML = '<div class="center" style="min-height:50vh"><div class="spinner"></div></div>';
   window.scrollTo(0, 0);
   try {
@@ -390,6 +393,9 @@ export function progressBar(it) {
 // Images fade in once loaded instead of popping.
 export const lazyImg = (src, alt = '') => `<img loading="lazy" class="loading" onload="this.classList.remove('loading')" onerror="this.remove()" src="${src}" alt="${esc(alt)}">`;
 
+// bd marks a card's backdrop for the page's ambient artwork.
+export const bd = (path) => path ? ` data-bd="${esc(path)}"` : '';
+
 export function posterCard(it, extra = '') {
   const title = it.kind === 'season' ? (it.seasonNumber === 0 ? 'Specials' : `Season ${it.seasonNumber}`) : it.title;
   const sub = it.kind === 'show' ? (it.childCount ? `${it.childCount} episode${it.childCount > 1 ? 's' : ''}` : it.year || '')
@@ -397,7 +403,7 @@ export function posterCard(it, extra = '') {
   const corner = it.kind === 'show' || it.kind === 'season'
     ? (it.unwatchedCount ? `<div class="badge">${it.unwatchedCount}</div>` : it.childCount ? '<div class="watched"></div>' : '')
     : it.progress?.watched ? '<div class="watched"></div>' : '';
-  return `<a class="card" href="/item/${it.id}"><div class="poster">${it.posterPath ? lazyImg(img(it.posterPath), title) : `<div class="ph">${esc(title)}</div>`}${corner}${extra}${progressBar(it)}</div>
+  return `<a class="card" href="/item/${it.id}"${bd(it.backdropPath)}><div class="poster">${it.posterPath ? lazyImg(img(it.posterPath), title) : `<div class="ph">${esc(title)}</div>`}${corner}${extra}${progressBar(it)}</div>
     <div class="t" title="${esc(title)}">${esc(title)}</div><div class="s">${esc(sub)}</div></a>`;
 }
 
@@ -407,12 +413,12 @@ export function titleCard(v, rank) {
   const r = rank ? `<span class="rank">${rank}</span>` : '';
   if (v.item) return posterCard(v.item, r);
   if (canStream()) {
-    return `<a class="card" href="/item/stream" data-stream-title="${v.tmdbId}" data-media="${esc(v.mediaType)}">
+    return `<a class="card" href="/item/stream" data-stream-title="${v.tmdbId}" data-media="${esc(v.mediaType)}"${bd(v.backdropPath)}>
       <div class="poster">${v.posterPath ? lazyImg(img(v.posterPath), v.title) : `<div class="ph">${esc(v.title)}</div>`}${r}</div>
       <div class="t">${esc(v.title)}</div><div class="s">${esc(v.year || '')}</div></a>`;
   }
   const href = `https://www.themoviedb.org/${v.mediaType === 'show' ? 'tv' : 'movie'}/${v.tmdbId}`;
-  return `<a class="card ext" href="${href}" target="_blank" rel="noopener" title="Not in your library — open on TMDB">
+  return `<a class="card ext" href="${href}" target="_blank" rel="noopener" title="Not in your library — open on TMDB"${bd(v.backdropPath)}>
     <div class="poster">${v.posterPath ? lazyImg(img(v.posterPath), v.title) : `<div class="ph">${esc(v.title)}</div>`}${r}<span class="tag">Not in library</span></div>
     <div class="t">${esc(v.title)}</div><div class="s">${esc(v.year || '')}</div></a>`;
 }
@@ -427,7 +433,7 @@ function wideCard(it) {
   const pic = it.stillPath || it.backdropPath;
   const title = it.kind === 'episode' ? it.showTitle || it.title : it.title;
   const sub = [it.kind === 'episode' ? `S${it.seasonNumber} · E${it.episodeNumber} — ${it.title}` : it.year, timeLeft(it.progress)].filter(Boolean).join(' · ');
-  return `<a class="card wide" href="/item/${it.id}" data-play="${it.id}"><div class="thumb">${pic ? lazyImg(img(pic, 'w500')) : ''}
+  return `<a class="card wide" href="/item/${it.id}" data-play="${it.id}"${bd(it.backdropPath)}><div class="thumb">${pic ? lazyImg(img(pic, 'w500')) : ''}
     <div class="play-ov"><span></span></div>${progressBar(it)}</div>
     <div class="t">${esc(title)}</div><div class="s">${esc(sub)}</div></a>`;
 }
@@ -690,15 +696,22 @@ async function viewLibrary(id) {
   const params = new URLSearchParams({ sort, limit: '10000' });
   if (genre) params.set('genre', genre);
   if (unwatched) params.set('unwatched', '1');
-  const [res, genres] = await Promise.all([
+  const filtered = genre || unwatched || sort !== 'title';
+  const [res, genres, rows] = await Promise.all([
     api(`/api/libraries/${id}/items?${params}`),
     api(`/api/genres?libraryId=${encodeURIComponent(id)}`).catch(() => []),
+    filtered ? [] : api(`/api/libraries/${id}/rows`).catch(() => []),
   ]);
+  // Collection rows the admin picked for this library, above the grid.
+  const rowsHtml = rows.map((c) => shelf(c.collection.name, c.items.map((it) => posterCard(it)).join('') + (c.missing || []).map((v) => titleCard(v)).join(''),
+    { see: `/collection/${c.collection.id}` })).join('');
   const noun = lib?.type === 'shows' ? 'shows' : 'movies';
   const node = el(`<div>${libraryTabs(id, 'all')}<div class="page-head"><h1>${esc(lib?.name || '')} <span class="muted small">${res.total} ${noun}</span></h1>
-    <div class="toolbar"><button class="chip${unwatched ? ' on' : ''}" id="unwatched" aria-pressed="${unwatched}">Unwatched</button>
+    <div class="toolbar">${isAdmin() ? '<button class="btn" id="rows" title="Pick which collections show as rows here, and their order">Edit rows</button>' : ''}
+    <button class="chip${unwatched ? ' on' : ''}" id="unwatched" aria-pressed="${unwatched}">Unwatched</button>
     <select id="genre" data-caption="Genre"><option value="">All</option>${genres.map((g) => `<option value="${esc(g.genre)}" ${g.genre === genre ? 'selected' : ''}>${esc(g.genre)} (${g.count})</option>`).join('')}</select>
     <select id="sort" data-caption="Sort">${sorts.map(([k, v]) => `<option value="${k}" ${k === sort ? 'selected' : ''}>${v}</option>`).join('')}</select></div></div>
+    ${rowsHtml ? `<div class="lib-rows">${rowsHtml}</div><h2 class="grid-title">All ${noun}</h2>` : ''}
     ${res.items.length ? `<div class="grid">${res.items.map((it) => posterCard(it)).join('')}</div>`
       : genre || unwatched ? '<div class="empty"><h2>Nothing matches</h2><p>Try a different genre or turn off Unwatched.</p></div>'
       : '<div class="empty"><h2>This library is empty</h2><p>Items appear here as they are scanned.</p></div>'}</div>`);
@@ -710,6 +723,9 @@ async function viewLibrary(id) {
   $('#sort', node).onchange = (e) => nav({ sort: e.target.value === 'title' ? '' : e.target.value });
   $('#genre', node).onchange = (e) => nav({ genre: e.target.value });
   $('#unwatched', node).onclick = () => nav({ unwatched: unwatched ? '' : '1' });
+  $('#rows', node)?.addEventListener('click', () => browse.editLibraryRows(id));
+  bindPlayLinks(node);
+  bindShelves(node);
   return node;
 }
 

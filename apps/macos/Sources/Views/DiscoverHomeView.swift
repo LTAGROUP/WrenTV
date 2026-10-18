@@ -57,6 +57,7 @@ struct DiscoverHomeView: View {
             .padding(.bottom, 24)
         }
         .ignoresSafeArea(edges: .top)
+        .ambientBackdrop()
         .navigationTitle("Home")
         .toolbarBackground(.hidden, for: .windowToolbar)
         .task(id: state.refreshTick) {

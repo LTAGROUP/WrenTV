@@ -161,10 +161,11 @@ func (s *Service) provider(name string) Provider {
 	return nil
 }
 
-// Active reports whether streaming can be used: enabled, a debrid key or
-// Usenet, and TMDB.
+// Active reports whether streaming can be used: enabled, TMDB, and
+// something to play from: a debrid key, Usenet, or an addon. Addons like
+// StreamNZB serve their own play links, with no debrid account.
 func (s *Service) Active() bool {
-	return s.cfg().Enabled && (len(s.Providers()) > 0 || s.usenetOn()) && s.TMDB.Enabled()
+	return s.cfg().Enabled && (len(s.Providers()) > 0 || s.usenetOn() || len(s.addons()) > 0) && s.TMDB.Enabled()
 }
 
 func (s *Service) addons() []Addon {

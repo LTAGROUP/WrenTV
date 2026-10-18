@@ -145,6 +145,10 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
         return get("/api/genres/items", q)
     }
 
+    /** Collection rows the admin put on a library's page, in order (empty on servers without them). */
+    suspend fun libraryRows(library: String): List<CollectionShelf> =
+        try { get("/api/libraries/$library/rows") } catch (e: WrenTVException) { if (e.status == 404) emptyList() else throw e }
+
     suspend fun collections(library: String? = null): List<WrenCollection> =
         get("/api/collections", library?.let { mapOf("libraryId" to it) } ?: emptyMap())
 

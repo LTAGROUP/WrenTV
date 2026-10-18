@@ -47,8 +47,8 @@ func (s *Server) limitsFor(u *db.User) limits {
 }
 
 // withStreamingAccess adds the streaming libraries to what a user may see
-// when streaming is available to them, and hides them otherwise (no debrid
-// key, streaming off, or the user isn't allowed).
+// when streaming is available to them, and hides them otherwise (nothing
+// to play from, streaming off, or the user isn't allowed).
 func (s *Server) withStreamingAccess(ctx context.Context, p *auth.Principal) *auth.Principal {
 	streamIDs, err := s.DB.LibraryIDsBySource(ctx, "stream")
 	if err != nil || len(streamIDs) == 0 {

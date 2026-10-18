@@ -39,6 +39,7 @@ struct CatalogView: View {
                 ContentUnavailableView("Nothing matches", systemImage: "film.stack").padding(.top, 120)
             }
         }
+        .ambientBackdrop()
         .navigationTitle(label)
         .navigationSubtitle(genres.first { $0.id == genre }?.name ?? "")
         .toolbar {

@@ -78,10 +78,16 @@ type CollectionRules struct {
 	TitleContains  string   `json:"titleContains,omitempty"`
 
 	// TMDB: "collection" (a franchise), "list", "trending", "popular",
-	// "top_rated", "now_playing", "upcoming", "airing".
+	// "top_rated", "now_playing", "upcoming", "airing". Outside TMDB:
+	// "mdblist" and "simkl", named by SourceRef.
 	Source    string `json:"source,omitempty"`
 	SourceID  int    `json:"sourceId,omitempty"`
 	MediaType string `json:"mediaType,omitempty"` // "movie" or "show" for chart sources
+	// SourceRef names an MDBList list ("user/list" or its URL) or a Simkl
+	// chart ("trending/movies/week") or watchlist ("watchlist/plantowatch").
+	SourceRef string `json:"sourceRef,omitempty"`
+	// SimklUser is whose linked Simkl account a watchlist comes from.
+	SimklUser string `json:"simklUser,omitempty"`
 }
 
 // CollectionTitle is one entry of a TMDB-sourced collection, in source order.
@@ -94,26 +100,30 @@ type CollectionTitle struct {
 }
 
 type Collection struct {
-	ID           string            `json:"id"`
-	Name         string            `json:"name"`
-	Description  string            `json:"description"`
-	Kind         string            `json:"kind"`
-	Rules        CollectionRules   `json:"rules"`
-	LibraryID    string            `json:"libraryId,omitempty"`
-	PosterPath   string            `json:"posterPath,omitempty"`
-	BackdropPath string            `json:"backdropPath,omitempty"`
-	Sort         string            `json:"sort"`
-	ItemLimit    int               `json:"itemLimit"`
-	ShowOnHome   bool              `json:"showOnHome"`
-	HomeOrder    int               `json:"homeOrder"`
-	ShowMissing  bool              `json:"showMissing"`
-	VisibleFrom  string            `json:"visibleFrom"` // "MM-DD", empty = always
-	VisibleUntil string            `json:"visibleUntil"`
-	Titles       []CollectionTitle `json:"-"`
-	SyncedAt     int64             `json:"syncedAt"`
-	SyncError    string            `json:"syncError,omitempty"`
-	CreatedAt    int64             `json:"createdAt"`
-	UpdatedAt    int64             `json:"updatedAt"`
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	Kind         string          `json:"kind"`
+	Rules        CollectionRules `json:"rules"`
+	LibraryID    string          `json:"libraryId,omitempty"`
+	PosterPath   string          `json:"posterPath,omitempty"`
+	BackdropPath string          `json:"backdropPath,omitempty"`
+	Sort         string          `json:"sort"`
+	ItemLimit    int             `json:"itemLimit"`
+	ShowOnHome   bool            `json:"showOnHome"`
+	HomeOrder    int             `json:"homeOrder"`
+	ShowMissing  bool            `json:"showMissing"`
+	// ShowInLibrary puts the collection as a row on its library's page,
+	// ordered by LibraryOrder.
+	ShowInLibrary bool              `json:"showInLibrary"`
+	LibraryOrder  int               `json:"libraryOrder"`
+	VisibleFrom   string            `json:"visibleFrom"` // "MM-DD", empty = always
+	VisibleUntil  string            `json:"visibleUntil"`
+	Titles        []CollectionTitle `json:"-"`
+	SyncedAt      int64             `json:"syncedAt"`
+	SyncError     string            `json:"syncError,omitempty"`
+	CreatedAt     int64             `json:"createdAt"`
+	UpdatedAt     int64             `json:"updatedAt"`
 
 	// Filled by handlers.
 	ItemCount int  `json:"itemCount"`
@@ -134,13 +144,15 @@ func (c *Collection) ActiveOn(t time.Time) bool {
 }
 
 const collectionCols = `id, name, description, kind, rules, COALESCE(library_id,''), poster_path, backdrop_path, sort, item_limit,
-	show_on_home, home_order, show_missing, visible_from, visible_until, titles, synced_at, sync_error, created_at, updated_at`
+	show_on_home, home_order, show_missing, visible_from, visible_until, titles, synced_at, sync_error, created_at, updated_at,
+	show_in_library, library_order`
 
 func scanCollection(r interface{ Scan(...any) error }) (*Collection, error) {
 	c := &Collection{}
 	var rules, titles string
 	err := r.Scan(&c.ID, &c.Name, &c.Description, &c.Kind, &rules, &c.LibraryID, &c.PosterPath, &c.BackdropPath, &c.Sort, &c.ItemLimit,
-		&c.ShowOnHome, &c.HomeOrder, &c.ShowMissing, &c.VisibleFrom, &c.VisibleUntil, &titles, &c.SyncedAt, &c.SyncError, &c.CreatedAt, &c.UpdatedAt)
+		&c.ShowOnHome, &c.HomeOrder, &c.ShowMissing, &c.VisibleFrom, &c.VisibleUntil, &titles, &c.SyncedAt, &c.SyncError, &c.CreatedAt, &c.UpdatedAt,
+		&c.ShowInLibrary, &c.LibraryOrder)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -198,14 +210,16 @@ func (d *DB) SaveCollection(ctx context.Context, c *Collection) error {
 		c.Titles = []CollectionTitle{}
 	}
 	titles, _ := json.Marshal(c.Titles)
-	_, err := d.ExecContext(ctx, `INSERT INTO collections (`+strings.Replace(collectionCols, "COALESCE(library_id,'')", "library_id", 1)+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := d.ExecContext(ctx, `INSERT INTO collections (`+strings.Replace(collectionCols, "COALESCE(library_id,'')", "library_id", 1)+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, kind=excluded.kind, rules=excluded.rules,
 		library_id=excluded.library_id, poster_path=excluded.poster_path, backdrop_path=excluded.backdrop_path, sort=excluded.sort,
 		item_limit=excluded.item_limit, show_on_home=excluded.show_on_home, home_order=excluded.home_order, show_missing=excluded.show_missing,
 		visible_from=excluded.visible_from, visible_until=excluded.visible_until, titles=excluded.titles, synced_at=excluded.synced_at,
-		sync_error=excluded.sync_error, updated_at=excluded.updated_at`,
+		sync_error=excluded.sync_error, updated_at=excluded.updated_at, show_in_library=excluded.show_in_library,
+		library_order=excluded.library_order`,
 		c.ID, c.Name, c.Description, c.Kind, string(rules), nullStr(c.LibraryID), c.PosterPath, c.BackdropPath, c.Sort, c.ItemLimit,
-		c.ShowOnHome, c.HomeOrder, c.ShowMissing, c.VisibleFrom, c.VisibleUntil, string(titles), c.SyncedAt, c.SyncError, c.CreatedAt, c.UpdatedAt)
+		c.ShowOnHome, c.HomeOrder, c.ShowMissing, c.VisibleFrom, c.VisibleUntil, string(titles), c.SyncedAt, c.SyncError, c.CreatedAt, c.UpdatedAt,
+		c.ShowInLibrary, c.LibraryOrder)
 	return err
 }
 

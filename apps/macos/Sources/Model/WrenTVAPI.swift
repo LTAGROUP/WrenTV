@@ -107,6 +107,12 @@ struct WrenTVAPI: Sendable {
         try await get("/api/collections", query: library.map { [.init(name: "libraryId", value: $0)] } ?? [])
     }
 
+    /// Collections the owner shows as rows on a library's page, in order.
+    /// Older servers don't have them.
+    func libraryRows(_ library: String) async throws -> [CollectionShelf] {
+        do { return try await get("/api/libraries/\(library)/rows") } catch let e as WrenTVError where e.status == 404 { return [] }
+    }
+
     func collection(_ id: String, sort: String? = nil) async throws -> CollectionDetail {
         try await get("/api/collections/\(id)", query: sort.map { [.init(name: "sort", value: $0)] } ?? [])
     }

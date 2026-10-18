@@ -170,6 +170,7 @@ private fun OpenLinks(state: AppState, nav: Navigator) {
 private fun Main(state: AppState, nav: Navigator) {
     val holder = rememberSaveableStateHolder()
     val bar = remember { TopBarState() }
+    val ambient = remember { AmbientState() }
     val route = nav.current
     BackHandler(enabled = nav.stack.isNotEmpty() || nav.tab != Route.Home) { nav.back() }
     OpenLinks(state, nav)
@@ -185,8 +186,12 @@ private fun Main(state: AppState, nav: Navigator) {
             runCatching { page.requestFocus() }
         }
     }
-    CompositionLocalProvider(LocalTopBar provides bar, LocalRouteKey provides route.key) {
+    CompositionLocalProvider(LocalTopBar provides bar, LocalRouteKey provides route.key, LocalAmbient provides ambient) {
         Box(Modifier.fillMaxSize().onFocusChanged { anyFocus = it.hasFocus }) {
+            // Browsing pages take on the focused title's artwork.
+            if (route == Route.Home || route == Route.Collections || route == Route.Movies || route == Route.Shows || route is Route.Library) {
+                AmbientBackdrop(route.key)
+            }
             Box(Modifier.fillMaxSize().focusRequester(page).focusGroup()) {
                 holder.SaveableStateProvider(route.key) { Page(route) }
             }

@@ -1,7 +1,7 @@
 // Browsing beyond libraries: genres, collections, and the viewer's own settings.
 import { api, img } from './api.js';
 import { esc, $, $$, el, toast, modal, confirmDialog, icons } from './ui.js';
-import { go, render, setTitle, isAdmin, getLibraries, posterCard, titleCard, lazyImg, libraryTabs } from './app.js';
+import { go, render, setTitle, isAdmin, getLibraries, posterCard, titleCard, lazyImg, libraryTabs, bd } from './app.js';
 
 const qs = () => new URLSearchParams(location.search);
 
@@ -61,8 +61,14 @@ const kindLabel = (c) => c.kind === 'manual' ? 'Hand-picked' : c.kind === 'smart
 function sourceLabel(r) {
   const mt = r.mediaType === 'show' ? 'shows' : 'movies';
   return { collection: 'TMDB franchise', list: 'TMDB list', trending: `Trending ${mt}`, popular: `Popular ${mt}`, top_rated: `Top rated ${mt}`,
-    now_playing: 'In theaters', upcoming: 'Coming soon', airing: 'On the air' }[r.source] || 'TMDB';
+    now_playing: 'In theaters', upcoming: 'Coming soon', airing: 'On the air', mdblist: 'MDBList', simkl: 'Simkl' }[r.source] || 'TMDB';
 }
+
+// Simkl charts and watchlists a collection can follow.
+const simklRefs = [['trending/movies/today', 'Trending movies today'], ['trending/movies/week', 'Trending movies this week'],
+  ['trending/movies/month', 'Trending movies this month'], ['trending/tv/today', 'Trending shows today'], ['trending/tv/week', 'Trending shows this week'],
+  ['trending/tv/month', 'Trending shows this month'], ['trending/anime/week', 'Trending anime this week'], ['trending/anime/month', 'Trending anime this month'],
+  ['watchlist/plantowatch', 'My Simkl: Plan to watch'], ['watchlist/watching', 'My Simkl: Watching'], ['watchlist/completed', 'My Simkl: Completed']];
 
 const fmtMD = (md) => {
   if (!md) return '';
@@ -74,7 +80,8 @@ function collectionCard(c) {
   const tags = [];
   if (!c.active) tags.push(`Hidden until ${fmtMD(c.visibleFrom)}`);
   else if (c.showOnHome && isAdmin()) tags.push('On Home');
-  return `<a class="card coll-card" href="/collection/${c.id}"><div class="poster"><div class="stack">${c.posterPath ? lazyImg(img(c.posterPath), c.name) : `<div class="ph">${esc(c.name)}</div>`}
+  else if (c.showInLibrary && isAdmin()) tags.push('Library row');
+  return `<a class="card coll-card" href="/collection/${c.id}"${bd(c.backdropPath)}><div class="poster"><div class="stack">${c.posterPath ? lazyImg(img(c.posterPath), c.name) : `<div class="ph">${esc(c.name)}</div>`}
     ${tags.length ? `<span class="tag">${esc(tags[0])}</span>` : ''}</div></div>
     <div class="t" title="${esc(c.name)}">${esc(c.name)}</div><div class="s">${c.itemCount} title${c.itemCount === 1 ? '' : 's'} · ${esc(kindLabel(c))}</div></a>`;
 }
@@ -179,10 +186,10 @@ export async function editCollection(c, defaults = {}) {
   const gState = (g) => r.genres?.includes(g) ? 'in' : r.excludeGenres?.includes(g) ? 'ex' : '';
   const opt = (v, label, cur) => `<option value="${v}" ${String(cur ?? '') === String(v) ? 'selected' : ''}>${label}</option>`;
   const body = `
-    <div class="field"><label>Name</label><input type="text" name="name" value="${esc(c.name || '')}" placeholder="${c.kind === 'tmdb' ? 'Leave empty to use the TMDB name' : 'e.g. Date Night'}"></div>
+    <div class="field"><label>Name</label><input type="text" name="name" value="${esc(c.name || '')}" placeholder="${c.kind === 'tmdb' ? 'Leave empty to use the source\'s name' : 'e.g. Date Night'}"></div>
     <div class="field"><label>Description</label><input type="text" name="description" value="${esc(c.description || '')}"></div>
     <div class="rules">
-      <div class="field"><label>Type</label><select name="kind" ${isNew ? '' : 'disabled'}>${opt('manual', 'Hand-picked', c.kind)}${opt('smart', 'Smart (rules)', c.kind)}${opt('tmdb', 'From TMDB', c.kind)}</select></div>
+      <div class="field"><label>Type</label><select name="kind" ${isNew ? '' : 'disabled'}>${opt('manual', 'Hand-picked', c.kind)}${opt('smart', 'Smart (rules)', c.kind)}${opt('tmdb', 'From TMDB, MDBList or Simkl', c.kind)}</select></div>
       <div class="field"><label>Library</label><select name="libraryId">${opt('', 'All libraries', c.libraryId)}${libs.map((l) => opt(l.id, esc(l.name), c.libraryId)).join('')}</select></div>
     </div>
     <fieldset data-for="smart"><legend>Rules</legend>
@@ -204,8 +211,11 @@ export async function editCollection(c, defaults = {}) {
     <fieldset data-for="tmdb"><legend>Source</legend>
       <div class="rules">
         <div class="field"><label>From</label><select name="r.source">${[['collection', 'Franchise (movie series)'], ['list', 'TMDB list'], ['trending', 'Trending this week'], ['popular', 'Popular'],
-          ['top_rated', 'Top rated'], ['now_playing', 'In theaters (movies)'], ['upcoming', 'Coming soon (movies)'], ['airing', 'On the air (shows)']].map(([k, v]) => opt(k, v, r.source || 'collection')).join('')}</select></div>
+          ['top_rated', 'Top rated'], ['now_playing', 'In theaters (movies)'], ['upcoming', 'Coming soon (movies)'], ['airing', 'On the air (shows)'],
+          ['mdblist', 'MDBList list'], ['simkl', 'Simkl chart or watchlist']].map(([k, v]) => opt(k, v, r.source || 'collection')).join('')}</select></div>
         <div class="field" data-src="chart"><label>Of</label><select name="r.mediaType">${opt('movie', 'Movies', r.mediaType || 'movie')}${opt('show', 'Shows', r.mediaType)}</select></div>
+        <div class="field" data-src="mdblist"><label>MDBList link or user/list</label><input type="text" name="mdblist" value="${r.source === 'mdblist' ? esc(r.sourceRef || '') : ''}" placeholder="mdblist.com/lists/…"></div>
+        <div class="field" data-src="simkl"><label>Simkl</label><select name="simkl">${simklRefs.map(([k, v]) => opt(k, v, r.source === 'simkl' ? r.sourceRef : 'trending/movies/week')).join('')}</select></div>
         <div class="field" data-src="list"><label>List ID or link</label><input type="text" name="listId" value="${r.source === 'list' ? r.sourceId : ''}" placeholder="themoviedb.org/list/…"></div>
       </div>
       <div data-src="collection"><div class="field"><label>Franchise</label><input type="search" id="fq" placeholder="Search, e.g. Harry Potter" autocomplete="off"></div>
@@ -222,6 +232,7 @@ export async function editCollection(c, defaults = {}) {
       </div>
       <label class="check"><input type="checkbox" name="showOnHome" ${c.showOnHome ? 'checked' : ''}> Show as a row on everyone's Home screen</label>
       <div class="field" data-home><label>Home position (lower comes first)</label><input type="number" name="homeOrder" value="${c.homeOrder || 0}"></div>
+      <label class="check" data-librow><input type="checkbox" name="showInLibrary" ${c.showInLibrary ? 'checked' : ''}> Show as a row on the library's page (reorder rows there)</label>
     </fieldset>`;
 
   let franchise = r.source === 'collection' ? r.sourceId : 0;
@@ -247,6 +258,11 @@ export async function editCollection(c, defaults = {}) {
         } else if (rules.source === 'list') {
           rules.sourceId = Number(v('listId').match(/(\d+)/)?.[1] || 0);
           if (!rules.sourceId) throw new Error('Enter a TMDB list ID or link.');
+        } else if (rules.source === 'mdblist') {
+          rules.sourceRef = v('mdblist');
+          if (!rules.sourceRef) throw new Error('Enter an MDBList list link.');
+        } else if (rules.source === 'simkl') {
+          rules.sourceRef = v('simkl');
         }
       }
       let [from, until] = [v('visibleFrom'), v('visibleUntil')];
@@ -255,7 +271,8 @@ export async function editCollection(c, defaults = {}) {
       else if (w !== 'custom') [from, until] = w.split('|');
       const payload = { name: v('name'), description: v('description'), kind, rules, libraryId: v('libraryId'), sort: v('sort'),
         itemLimit: num('itemLimit'), showOnHome: f.elements.showOnHome.checked, homeOrder: num('homeOrder'),
-        showMissing: f.elements.showMissing.checked, visibleFrom: from, visibleUntil: until };
+        showMissing: f.elements.showMissing.checked, visibleFrom: from, visibleUntil: until,
+        showInLibrary: !!v('libraryId') && f.elements.showInLibrary.checked };
       if (kind !== 'tmdb' && !payload.name) throw new Error('Give the collection a name.');
       const saved = isNew ? await api('/api/collections', { method: 'POST', body: { ...payload, itemIds: defaults.itemIds } })
         : await api(`/api/collections/${c.id}`, { method: 'PATCH', body: payload });
@@ -276,6 +293,7 @@ export async function editCollection(c, defaults = {}) {
     }
     $('[data-custom]', f).hidden = f.elements.window.value !== 'custom';
     $('[data-home]', f).hidden = !f.elements.showOnHome.checked;
+    $('[data-librow]', f).hidden = !f.elements.libraryId.value;
   };
   f.addEventListener('change', sync);
   sync();
@@ -431,3 +449,35 @@ async function simklPanel(box) {
   }
 }
 
+
+// ---------------------------------------------------------------- library rows
+
+// editLibraryRows picks the collections shown as rows on a library's page
+// and their order, top to bottom.
+export async function editLibraryRows(libId) {
+  const all = (await api('/api/collections')).filter((c) => c.libraryId === libId || !c.libraryId);
+  const on = all.filter((c) => c.showInLibrary && c.libraryId === libId).sort((a, b) => a.libraryOrder - b.libraryOrder);
+  const off = all.filter((c) => !on.includes(c));
+  const row = (c, checked) => `<li class="row-pick" data-id="${c.id}"><label class="check" style="flex:1"><input type="checkbox" ${checked ? 'checked' : ''}>
+    <span>${esc(c.name)} <span class="small muted">${esc(kindLabel(c))}${c.libraryId ? '' : ' · all libraries, moves here'}</span></span></label>
+    <button type="button" class="btn ghost small" data-up title="Move up">↑</button><button type="button" class="btn ghost small" data-down title="Move down">↓</button></li>`;
+  const body = all.length ? `<p class="muted small">Ticked collections show as rows on this library's page, in this order. Add MDBList and Simkl lists with New collection.</p>
+    <ul class="row-picks" style="list-style:none;padding:0;margin:0">${on.map((c) => row(c, true)).join('')}${off.map((c) => row(c, false)).join('')}</ul>`
+    : '<p class="muted">No collections yet. Make one under Collections (hand-picked, smart, TMDB, MDBList or Simkl), then pick it here.</p>';
+  const p = modal('Library rows', body, {
+    ok: 'Save',
+    onOk: async (f) => {
+      const ids = $$('.row-pick', f).filter((li) => $('input', li).checked).map((li) => li.dataset.id);
+      await api(`/api/libraries/${libId}/rows`, { method: 'PUT', body: { ids } });
+      return true;
+    },
+  });
+  const f = $('.modal');
+  f.addEventListener('click', (e) => {
+    const li = e.target.closest('.row-pick');
+    if (!li) return;
+    if (e.target.closest('[data-up]') && li.previousElementSibling) li.parentNode.insertBefore(li, li.previousElementSibling);
+    if (e.target.closest('[data-down]') && li.nextElementSibling) li.parentNode.insertBefore(li.nextElementSibling, li);
+  });
+  if (await p) { toast('Rows saved.'); render(); }
+}

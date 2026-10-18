@@ -36,6 +36,8 @@ struct CollectionsView: View {
             }
         }
         .modifier(TitleIfStandalone(title: "Collections", standalone: !embedded))
+        // A library's page already has one.
+        .modifier(AmbientIfStandalone(standalone: !embedded))
         .task(id: "\(libraryId ?? "")|\(state.refreshTick)") {
             do { collections = try await state.api?.collections(library: libraryId) } catch { self.error = error.localizedDescription }
         }
@@ -80,6 +82,7 @@ struct CollectionCard: View {
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .hoverLift()
+                    .ambient(collection.backdropPath)
             }
             .padding(.top, 8)
             Text(collection.name).font(.callout).lineLimit(1)
@@ -366,5 +369,12 @@ private struct TitleIfStandalone: ViewModifier {
 
     func body(content: Content) -> some View {
         if standalone { content.navigationTitle(title) } else { content }
+    }
+}
+
+private struct AmbientIfStandalone: ViewModifier {
+    let standalone: Bool
+    func body(content: Content) -> some View {
+        if standalone { content.ambientBackdrop() } else { content }
     }
 }

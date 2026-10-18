@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -68,6 +69,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.wrentv.tv.data.CatalogPage
 import com.wrentv.tv.data.CollectionDetail
+import com.wrentv.tv.data.CollectionShelf
 import com.wrentv.tv.data.GenreCount
 import com.wrentv.tv.data.Item
 import com.wrentv.tv.data.TitleView
@@ -81,6 +83,8 @@ import com.wrentv.tv.ui.LandscapeCard
 import com.wrentv.tv.ui.Loading
 import com.wrentv.tv.ui.LocalAppState
 import com.wrentv.tv.ui.LocalNavigator
+import com.wrentv.tv.ui.Shelf
+import com.wrentv.tv.ui.ambient
 import com.wrentv.tv.ui.PageGutter
 import com.wrentv.tv.ui.PosterCard
 import com.wrentv.tv.ui.RemoteImage
@@ -232,7 +236,11 @@ fun CatalogScreen(type: String) {
 fun LibraryScreen(id: String) {
     val state = LocalAppState.current
     val library = state.libraries.firstOrNull { it.id == id }
-    var tab by rememberSaveable { mutableStateOf("titles") }
+    var chosen by rememberSaveable { mutableStateOf<String?>(null) }
+    val rows = rememberLoaded<List<CollectionShelf>>("rows:$id", state.refreshTick) { state.api?.libraryRows(id) }
+    val hasRows = !rows.value.isNullOrEmpty()
+    // Like Plex, a library with rows opens on them.
+    val tab = chosen ?: if (hasRows) "rows" else "titles"
     var genre by rememberSaveable { mutableStateOf<String?>(null) }
     var unwatched by rememberSaveable { mutableStateOf(false) }
     var picker by remember { mutableStateOf<String?>(null) }
@@ -250,12 +258,14 @@ fun LibraryScreen(id: String) {
 
     @Composable
     fun tabs() {
-        Chip(noun, tab == "titles", { tab = "titles" }, Modifier.rememberFocus("tab:titles", default = tab == "titles"))
-        Chip("Collections", tab == "collections", { tab = "collections" }, Modifier.rememberFocus("tab:collections"))
-        Chip("Genres", tab == "genres", { tab = "genres" }, Modifier.rememberFocus("tab:genres"))
+        if (hasRows) Chip("Recommended", tab == "rows", { chosen = "rows" }, Modifier.rememberFocus("tab:rows", default = tab == "rows"))
+        Chip(noun, tab == "titles", { chosen = "titles" }, Modifier.rememberFocus("tab:titles", default = tab == "titles"))
+        Chip("Collections", tab == "collections", { chosen = "collections" }, Modifier.rememberFocus("tab:collections"))
+        Chip("Genres", tab == "genres", { chosen = "genres" }, Modifier.rememberFocus("tab:genres"))
     }
 
     when (tab) {
+        "rows" -> LibraryRows(name, rows.value.orEmpty(), menu) { tabs() }
         "collections" -> CollectionsGrid(id, name) { tabs() }
         "genres" -> GenresGrid(id, name) { tabs() }
         else -> Row(Modifier.fillMaxSize()) {
@@ -291,6 +301,34 @@ fun LibraryScreen(id: String) {
         "genre" -> ChoicePanel("Genre", listOf(Choice<String?>(null, "All Genres")) + genres.value.orEmpty().map { Choice<String?>(it.genre, it.genre, "${it.count}") },
             genre, { picker = null }) { genre = it }
         "sort" -> ChoicePanel("Sort", SortOptions, sort, { picker = null }) { BrowsePrefs.librarySort = it }
+    }
+}
+
+/** A library's collection rows, each a carousel of posters. */
+@Composable
+private fun LibraryRows(name: String, rows: List<CollectionShelf>, menu: ItemMenuState, tabs: @Composable () -> Unit) {
+    val list = rememberLazyListState()
+    ReportScroll(list)
+    val nav = LocalNavigator.current
+    LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item("header") {
+            Column(Modifier.padding(start = PageGutter, end = PageGutter, top = TopBarSpace)) {
+                Text(name, style = MaterialTheme.typography.displaySmall, color = Wren.text)
+                Spacer(Modifier.height(16.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) { tabs() }
+            }
+        }
+        rows.forEach { row ->
+            item("row:${row.collection.id}") {
+                Shelf(row.collection.name) {
+                    items(row.items, key = { it.id }) { item ->
+                        PosterCard(item, { nav.push(Route.Detail(item.id, item)) },
+                            Modifier.rememberFocus("r:${row.collection.id}:${item.id}"), onLongClick = { menu.open(item) })
+                    }
+                    items(row.missing.orEmpty(), key = { it.id }) { t -> TitleCard(t, Modifier.rememberFocus("r:${row.collection.id}:${t.id}")) }
+                }
+            }
+        }
     }
 }
 
@@ -371,7 +409,7 @@ private fun CollectionCard(c: WrenCollection, onClick: () -> Unit, modifier: Mod
                 .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(10.dp)))
             Box(Modifier.align(Alignment.TopCenter).offset(y = (-4).dp).width(CardWidth - 8.dp).aspectRatio(2f / 3f)
                 .background(Color.White.copy(alpha = 0.09f), RoundedCornerShape(10.dp)))
-            ArtCard(onClick, Modifier.width(CardWidth).aspectRatio(2f / 3f).onFocusChanged { focused = it.hasFocus }) {
+            ArtCard(onClick, Modifier.width(CardWidth).aspectRatio(2f / 3f).onFocusChanged { focused = it.hasFocus }.ambient(c.backdropPath)) {
                 RemoteImage(api?.imageUrl(c.posterPath), Modifier.fillMaxSize())
                 if (c.posterPath == null) {
                     Text(c.name, style = MaterialTheme.typography.titleMedium, color = Wren.secondary, textAlign = TextAlign.Center,

@@ -75,6 +75,7 @@ struct LibraryHomeView: View {
             .padding(.bottom, 24)
         }
         .ignoresSafeArea(edges: .top)
+        .ambientBackdrop()
         .navigationTitle("Home")
         .toolbarBackground(.hidden, for: .windowToolbar)
         .task(id: state.refreshTick) { await load() }
@@ -156,6 +157,7 @@ struct LibraryView: View {
     @State private var unwatched = false
     @State private var genres: [GenreCount] = []
     @State private var items: [Item] = []
+    @State private var rows: [CollectionShelf] = []
     @State private var loaded = false
     @State private var filter = ""
 
@@ -171,6 +173,7 @@ struct LibraryView: View {
             default: titles
             }
         }
+        .ambientBackdrop()
         .navigationTitle(library.name)
         .navigationSubtitle(tab == "titles" && loaded ? "\(items.count) \(library.type == "shows" ? "shows" : "movies")" : "")
         .toolbar {
@@ -210,6 +213,14 @@ struct LibraryView: View {
     private var titles: some View {
         ScrollViewReader { proxy in
         ScrollView {
+            // The owner's collection rows, above everything, when nothing is filtered.
+            if showRows {
+                VStack(alignment: .leading, spacing: 30) {
+                    ForEach(rows, id: \.collection.id) { CollectionShelfView(row: $0) }
+                    Text("All \(library.type == "shows" ? "Shows" : "Movies")").font(.title3.bold()).padding(.horizontal, 28)
+                }
+                .padding(.top, 24)
+            }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 180), spacing: 22)], alignment: .leading, spacing: 26) {
                 ForEach(shown) { item in
                     NavigationLink(value: item) { PosterCard(item: item) }
@@ -219,6 +230,7 @@ struct LibraryView: View {
                 }
             }
             .padding(28)
+            .padding(.top, showRows ? -14 : 0)
             .padding(.trailing, sort == "title" ? 14 : 0)
             if loaded && items.isEmpty {
                 if genre != nil || unwatched {
@@ -245,7 +257,12 @@ struct LibraryView: View {
             }
             loaded = true
         }
+        .task(id: "\(library.id)|\(state.refreshTick)") {
+            rows = (try? await state.api?.libraryRows(library.id)) ?? []
+        }
     }
+
+    private var showRows: Bool { !rows.isEmpty && genre == nil && !unwatched && filter.isEmpty && sort == "title" }
 }
 
 /// A–Z down the edge of a title-sorted grid; a letter jumps to its first title.

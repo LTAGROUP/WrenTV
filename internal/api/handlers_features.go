@@ -349,6 +349,8 @@ type collectionReq struct {
 	ShowOnHome   *bool               `json:"showOnHome"`
 	HomeOrder    *int                `json:"homeOrder"`
 	ShowMissing  *bool               `json:"showMissing"`
+	ShowInLib    *bool               `json:"showInLibrary"`
+	LibraryOrder *int                `json:"libraryOrder"`
 	VisibleFrom  *string             `json:"visibleFrom"`
 	VisibleUntil *string             `json:"visibleUntil"`
 	ItemIDs      []string            `json:"itemIds"`
@@ -383,13 +385,21 @@ func (req collectionReq) apply(c *db.Collection) error {
 	if req.ShowMissing != nil {
 		c.ShowMissing = *req.ShowMissing
 	}
+	if req.ShowInLib != nil {
+		c.ShowInLibrary = *req.ShowInLib
+	}
+	if req.LibraryOrder != nil {
+		c.LibraryOrder = *req.LibraryOrder
+	}
 	switch {
 	case c.Name == "" && c.Kind != "tmdb":
 		return errors.New("name required")
 	case c.Kind != "manual" && c.Kind != "smart" && c.Kind != "tmdb":
 		return errors.New(`kind must be "manual", "smart" or "tmdb"`)
 	case c.Kind == "tmdb" && c.Rules.Source == "":
-		return errors.New("a TMDB source is required")
+		return errors.New("a source is required")
+	case c.Kind == "tmdb" && externalRef(c.Rules) != nil:
+		return externalRef(c.Rules)
 	case (c.VisibleFrom == "") != (c.VisibleUntil == ""):
 		return errors.New("set both visibility dates, or neither")
 	}
@@ -414,6 +424,7 @@ func (s *Server) handleCreateCollection(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, 400, err.Error())
 		return
 	}
+	ownWatchlist(r, c, db.CollectionRules{})
 	if c.Kind == "tmdb" {
 		if err := s.syncCollection(r.Context(), c); err != nil {
 			writeErr(w, 502, err.Error())
@@ -446,7 +457,8 @@ func (s *Server) handleUpdateCollection(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, 400, err.Error())
 		return
 	}
-	if c.Kind == "tmdb" && (req.Rules != nil && (before.Source != c.Rules.Source || before.SourceID != c.Rules.SourceID || before.MediaType != c.Rules.MediaType)) {
+	ownWatchlist(r, c, before)
+	if c.Kind == "tmdb" && (req.Rules != nil && (before.Source != c.Rules.Source || before.SourceID != c.Rules.SourceID || before.MediaType != c.Rules.MediaType || before.SourceRef != c.Rules.SourceRef)) {
 		if err := s.syncCollection(r.Context(), c); err != nil {
 			writeErr(w, 502, err.Error())
 			return
@@ -553,6 +565,20 @@ func (s *Server) handleSearchFranchises(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, 200, nonNil(res))
 }
 
+// ownWatchlist ties a Simkl watchlist collection to the account of the
+// admin who picked it; it stays with them until the source changes.
+func ownWatchlist(r *http.Request, c *db.Collection, before db.CollectionRules) {
+	ru := &c.Rules
+	switch {
+	case ru.Source != "simkl" || !strings.HasPrefix(ru.SourceRef, "watchlist/"):
+		ru.SimklUser = ""
+	case before.Source == ru.Source && before.SourceRef == ru.SourceRef && before.SimklUser != "":
+		ru.SimklUser = before.SimklUser
+	default:
+		ru.SimklUser = principal(r).User.ID
+	}
+}
+
 // syncCollection refreshes a TMDB collection's title list.
 func (s *Server) syncCollection(ctx context.Context, c *db.Collection) error {
 	if !s.TMDB.Enabled() {
@@ -567,6 +593,27 @@ func (s *Server) syncCollection(ctx context.Context, c *db.Collection) error {
 	}
 	var titles []tmdb.Title
 	switch ru.Source {
+	case "mdblist", "simkl":
+		var name string
+		var ts []db.CollectionTitle
+		var err error
+		if ru.Source == "mdblist" {
+			name, ts, err = mdblistTitles(ctx, ru.SourceRef)
+		} else {
+			name, ts, err = s.simklTitles(ctx, ru.SourceRef, ru.SimklUser)
+		}
+		if err != nil {
+			return err
+		}
+		if len(ts) > maxExternal {
+			ts = ts[:maxExternal]
+		}
+		s.withPosters(ctx, ts)
+		if c.Name == "" {
+			c.Name = name
+		}
+		c.Titles, c.SyncedAt, c.SyncError = ts, db.Now(), ""
+		return nil
 	case "collection":
 		f, err := s.TMDB.Collection(ctx, ru.SourceID)
 		if err != nil {
@@ -759,6 +806,77 @@ func (s *Server) homeCollections(ctx context.Context, r *http.Request) []map[str
 		out = append(out, map[string]any{"collection": c, "items": items, "missing": missing})
 	}
 	return out
+}
+
+// handleLibraryRows lists the collections shown as rows on a library's
+// page, in the admin's order, each with its first titles.
+func (s *Server) handleLibraryRows(w http.ResponseWriter, r *http.Request) {
+	ctx, lib := r.Context(), chi.URLParam(r, "id")
+	if !principal(r).CanAccess(lib) {
+		writeErr(w, 404, "library not found")
+		return
+	}
+	cs, err := s.DB.ListCollections(ctx)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	s.syncStaleCollections()
+	sort.SliceStable(cs, func(i, j int) bool { return cs[i].LibraryOrder < cs[j].LibraryOrder })
+	now := time.Now()
+	out := []map[string]any{}
+	for _, c := range cs {
+		if !c.ShowInLibrary || c.LibraryID != lib || !c.ActiveOn(now) || !visibleCollection(r, c) {
+			continue
+		}
+		items, missing, err := s.collectionItems(ctx, r, c, 30)
+		if err != nil || len(items)+len(missing) == 0 {
+			continue
+		}
+		c.ItemCount, c.Active = len(items), true
+		if len(missing) > 30 {
+			missing = missing[:30]
+		}
+		out = append(out, map[string]any{"collection": c, "items": items, "missing": missing})
+	}
+	writeJSON(w, 200, out)
+}
+
+// handleLibraryRowsOrder sets which collections are rows on a library's
+// page and their order: the listed ones, top to bottom; the rest are off.
+func (s *Server) handleLibraryRowsOrder(w http.ResponseWriter, r *http.Request) {
+	ctx, lib := r.Context(), chi.URLParam(r, "id")
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	cs, err := s.DB.ListCollections(ctx)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	pos := map[string]int{}
+	for i, id := range req.IDs {
+		pos[id] = i + 1
+	}
+	for _, c := range cs {
+		n, on := pos[c.ID]
+		if !on && !(c.ShowInLibrary && c.LibraryID == lib) {
+			continue
+		}
+		if on {
+			c.LibraryID = lib
+		}
+		c.ShowInLibrary, c.LibraryOrder = on, n
+		if err := s.DB.SaveCollection(ctx, c); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---------- stats ----------
