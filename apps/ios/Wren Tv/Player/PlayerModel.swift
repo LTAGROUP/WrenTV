@@ -93,6 +93,7 @@ final class PlayerModel {
     /// The subtitle the viewer had on, kept across stream restarts.
     @ObservationIgnored private var keptSubtitle: String?
     @ObservationIgnored private var sessionId: String?
+    @ObservationIgnored private var lastAutoRetry: Date?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var progressTask: Task<Void, Never>?
@@ -252,9 +253,14 @@ final class PlayerModel {
         }
         item.publisher(for: \.status).receive(on: DispatchQueue.main).sink { [weak self] status in
             if status == .failed {
-                self?.phase = .error(item.error?.localizedDescription ?? "Playback failed")
+                self?.failed(item.error?.localizedDescription ?? "Playback failed")
             }
         }.store(in: &subs)
+        NotificationCenter.default.publisher(for: AVPlayerItem.failedToPlayToEndTimeNotification, object: item)
+            .receive(on: DispatchQueue.main).sink { [weak self] n in
+                let err = n.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
+                self?.failed(err?.localizedDescription ?? "Playback failed")
+            }.store(in: &subs)
         player.publisher(for: \.timeControlStatus).receive(on: DispatchQueue.main).sink { [weak self] s in
             self?.buffering = s == .waitingToPlayAtSpecifiedRate
             self?.paused = s == .paused
@@ -398,6 +404,18 @@ final class PlayerModel {
         teardown()
         if let old { Task { await api.stopSession(old) } }
         start(at: position > 0 ? position : nil)
+    }
+
+    /// A stream that fails partway is tried again from the same spot once:
+    /// the server drops a post that lost articles and hands out another.
+    private func failed(_ message: String) {
+        guard phase == .playing else { return }
+        if !isOffline, lastAutoRetry.map({ Date().timeIntervalSince($0) > 120 }) ?? true {
+            lastAutoRetry = Date()
+            retry()
+            return
+        }
+        phase = .error(message)
     }
 
     private func restartStream(at pos: Double) {

@@ -132,6 +132,7 @@ class PlayerController(
     /** Audio codecs the server sent that didn't play here; they're converted to AAC instead. */
     private val failedAudio = mutableSetOf<String>()
     private var startedAt = 0.0
+    private var lastAutoRetry = 0L
 
     val isOffline: Boolean get() = localFile != null
     val currentChapter: Chapter? get() = chapters.lastOrNull { it.start <= position + 0.01 }
@@ -142,7 +143,10 @@ class PlayerController(
         player.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 buffering = state == Player.STATE_BUFFERING
-                if (state == Player.STATE_ENDED) finished()
+                if (state == Player.STATE_ENDED) {
+                    // A stream that breaks partway can end early instead of failing.
+                    if (!isOffline && duration > 0 && position < duration - 120) failed("The stream ended early.") else finished()
+                }
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -154,7 +158,7 @@ class PlayerController(
                 val audioOutput = error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
                     error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED
                 if (audioOutput && fallBackFromAudio()) return
-                phase = Phase.Failed(error.message ?: "Playback failed")
+                failed(error.message ?: "Playback failed")
             }
 
             override fun onTracksChanged(tracks: Tracks) {
@@ -392,6 +396,21 @@ class PlayerController(
         player.stop()
         old?.let { sid -> api?.let { a -> appScope.launch { runCatching { a.stopSession(sid) } } } }
         start(pos)
+    }
+
+    /**
+     * A stream that fails partway is tried again from the same spot once:
+     * the server drops a post that lost articles and hands out another.
+     */
+    private fun failed(message: String) {
+        if (phase != Phase.Playing) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!isOffline && (lastAutoRetry == 0L || now - lastAutoRetry > 120_000)) {
+            lastAutoRetry = now
+            retry()
+            return
+        }
+        phase = Phase.Failed(message)
     }
 
     /** Starts over after a failure, closing the failed stream on the server first. */
