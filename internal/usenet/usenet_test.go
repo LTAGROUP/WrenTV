@@ -365,6 +365,57 @@ func TestStoredRARVolumes(t *testing.T) {
 	}
 }
 
+// A big archive is mapped from a few of its volumes. From volume 23 on
+// they're laid out differently (as RAR5 headers grow at volume 128), and
+// where that starts has to be found.
+func TestManyRARVolumes(t *testing.T) {
+	s := newFakeServer(t)
+	const vols, per = 40, 50_000
+	var video []byte
+	var files []NZBFile
+	for i := 0; i < vols; i++ {
+		n := per
+		if i >= 23 {
+			n -= 100
+		}
+		chunk := append([]byte(nil), randomBytes(n, int64(10+i))...)
+		if i == 0 {
+			copy(chunk, []byte{0x1a, 0x45, 0xdf, 0xa3})
+		}
+		if i == vols-1 {
+			chunk = chunk[:per/3]
+		}
+		video = append(video, chunk...)
+		name := "Movie.rar"
+		if i > 0 {
+			name = fmt.Sprintf("Movie.r%02d", i-1)
+		}
+		vol := rar4Volume("Movie.2160p.mkv", chunk, i > 0, i < vols-1, i == 0)
+		files = append(files, s.post(name, vol, 20_000, fmt.Sprintf(`"%s" yEnc`, name)))
+	}
+	nzb := &NZB{Files: files}
+	pool := s.pool(4)
+	defer pool.Close()
+	vids, err := Inspect(context.Background(), pool, nzb, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := s.bodies.Load(); n > 16 {
+		t.Fatalf("inspect fetched %d articles for %d volumes", n, vols)
+	}
+	if len(vids) != 1 || vids[0].Size != int64(len(video)) {
+		t.Fatalf("videos %+v, want size %d", vids, len(video))
+	}
+	f := NewFile(pool, nzb, vids[0].Layout)
+	got := make([]byte, len(video))
+	if _, err := f.ReadAt(got, 0); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, video) {
+		t.Fatal("joined volumes differ from the video")
+	}
+}
+
 func TestParseNZB(t *testing.T) {
 	doc := `<?xml version="1.0" encoding="iso-8859-1" ?>
 <!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd">

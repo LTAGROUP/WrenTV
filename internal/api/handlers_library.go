@@ -279,6 +279,9 @@ func (s *Server) setWatchlist(w http.ResponseWriter, r *http.Request, on bool) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	if on && s.Streaming != nil {
+		s.Streaming.PrefetchWatchlist(principal(r).User.ID, it)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

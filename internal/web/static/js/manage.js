@@ -402,7 +402,7 @@ function streamingTab(s, libs) {
         debrid service and streams it through this server. Only the stream link is saved, never the video, unless download mode is on.</p>
       <p data-st-status>${streamingStatusLine(st, s)}</p>
       <label class="check"><input type="checkbox" name="stEnabled" ${st.enabled ? 'checked' : ''}> Enable streaming</label>
-      <label class="check"><input type="checkbox" name="stPrefetch" ${st.prefetch ? 'checked' : ''}> When an episode plays, find streams for the rest of the season in the background</label>
+      <label class="check"><input type="checkbox" name="stPrefetch" ${st.prefetch ? 'checked' : ''}> Find streams in the background before they're played: watchlist titles, and the rest of a season once an episode plays</label>
     </div>
 
     <div class="panel"><h2>Debrid services</h2>

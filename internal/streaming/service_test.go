@@ -238,6 +238,163 @@ func TestReadyOnFirstBestStream(t *testing.T) {
 	}
 }
 
+// Torrents found while slow posts are still read stand in for them: one
+// is kept, after whatever the posts find.
+func TestTorrentStandsInForSlowPosts(t *testing.T) {
+	ctx := context.Background()
+	h := func(c string) string { return strings.Repeat(c, 40) }
+	defer func(d time.Duration) { torrentAfter = d }(torrentAfter)
+	torrentAfter = 100 * time.Millisecond
+	var addon *httptest.Server
+	addon = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/play/"):
+			time.Sleep(500 * time.Millisecond)
+			http.Redirect(w, r, addon.URL+"/cdn/Movie.2024.mkv", http.StatusFound)
+			return
+		case strings.HasPrefix(r.URL.Path, "/cdn/"):
+			w.Header().Set("Content-Type", "video/x-matroska")
+			w.Header().Set("Content-Range", "bytes 0-0/8000000000")
+			w.WriteHeader(http.StatusPartialContent)
+			w.Write([]byte{0})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"streams": []map[string]any{
+			{"title": "Movie.2024.2160p.REMUX-GRP\n👤 900 💾 50 GB", "infoHash": h("a")},
+			{"title": "Movie.2024.2160p.WEB-DL-GRP\n👤 500 💾 15 GB", "infoHash": h("b")},
+			{"title": "Movie.2024.2160p.BluRay.x265-OTHER\n👤 50 💾 20 GB", "infoHash": h("c")},
+			{"name": "[TB⚡] AIOStreams 2160p", "description": "🎥 WEB-DL 📦 15 GB", "url": addon.URL + "/play/u1",
+				"behaviorHints": map[string]any{"filename": "Movie.2024.2160p.WEB-DL-NZB.mkv", "videoSize": 15 << 30},
+				"streamData":    map[string]any{"type": "usenet", "folderName": "Movie.2024.2160p.WEB-DL-NZB", "service": map[string]any{"id": "torbox", "cached": true}}},
+		}})
+	}))
+	defer addon.Close()
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	cfg := &config.Config{Streaming: config.StreamingConfig{Enabled: true, Qualities: []string{"2160p"}, PerQuality: 2, Usenet: true,
+		Addons: []config.AddonConfig{{Name: "fake", URL: addon.URL + "/manifest.json", Enabled: true}}}}
+	file := func(n string) []RemoteFile { return []RemoteFile{{ID: "1", Name: n + ".mkv", Size: 1000}} }
+	prov := &fakeProvider{cdn: "http://cdn", cached: map[string][]RemoteFile{h("a"): file("a"), h("b"): file("b"), h("c"): file("c")}}
+	s := New(Deps{Cfg: cfg, DB: d, TMDB: tmdb.New("test", "en-US", d), Hub: library.NewHub()})
+	s.testProviders = []Provider{prov}
+	lib, _ := d.StreamLibrary(ctx, "movies")
+	it := &db.Item{LibraryID: lib.ID, Kind: "movie", MatchKey: "tmdb:4", Title: "Movie", TMDBID: 4, IMDBID: "tt4", SeasonNumber: -1, EpisodeNumber: -1}
+	d.InsertItem(ctx, it)
+	if ready, err := s.Ensure(ctx, it, 10*time.Second); !ready || err != nil {
+		t.Fatalf("ensure = %v, %v", ready, err)
+	}
+	waitLookups(t, s)
+	sts, _ := d.StreamsForItem(ctx, it.ID)
+	var got []string
+	for _, st := range sts {
+		got = append(got, fmt.Sprintf("%d/%s", st.Rank, st.Kind))
+	}
+	if want := "0/usenet 100/torrent"; strings.Join(got, " ") != want {
+		t.Fatalf("streams = %v, want %s", got, want)
+	}
+}
+
+// Someone waiting to play gets the best quality's top post first; the
+// other qualities are looked up once it's ready.
+func TestBestPostFirst(t *testing.T) {
+	ctx := context.Background()
+	var mu sync.Mutex
+	var log []string
+	var addon *httptest.Server
+	addon = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/play/"):
+			id := strings.TrimPrefix(r.URL.Path, "/play/")
+			mu.Lock()
+			log = append(log, id+" start")
+			mu.Unlock()
+			time.Sleep(200 * time.Millisecond)
+			mu.Lock()
+			log = append(log, id+" end")
+			mu.Unlock()
+			http.Redirect(w, r, addon.URL+"/cdn/Movie.2024.mkv", http.StatusFound)
+			return
+		case strings.HasPrefix(r.URL.Path, "/cdn/"):
+			w.Header().Set("Content-Type", "video/x-matroska")
+			w.Header().Set("Content-Range", "bytes 0-0/8000000000")
+			w.WriteHeader(http.StatusPartialContent)
+			w.Write([]byte{0})
+			return
+		}
+		post := func(id, name string) map[string]any {
+			return map[string]any{"name": "[TB⚡] AIOStreams", "description": "🎥 WEB-DL 📦 15 GB", "url": addon.URL + "/play/" + id,
+				"behaviorHints": map[string]any{"filename": name + ".mkv", "videoSize": 15 << 30},
+				"streamData":    map[string]any{"type": "usenet", "folderName": name, "service": map[string]any{"id": "torbox", "cached": true}}}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"streams": []map[string]any{
+			post("a", "Movie.2024.2160p.WEB-DL-AAA"), post("b", "Movie.2024.2160p.WEB-DL-BBB"), post("c", "Movie.2024.1080p.WEB-DL-CCC"),
+		}})
+	}))
+	defer addon.Close()
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	cfg := &config.Config{Streaming: config.StreamingConfig{Enabled: true, Qualities: []string{"2160p", "1080p"}, PerQuality: 2, Usenet: true,
+		Addons: []config.AddonConfig{{Name: "fake", URL: addon.URL + "/manifest.json", Enabled: true}}}}
+	s := New(Deps{Cfg: cfg, DB: d, TMDB: tmdb.New("test", "en-US", d), Hub: library.NewHub()})
+	s.testProviders = []Provider{&fakeProvider{cdn: "http://cdn"}}
+	lib, _ := d.StreamLibrary(ctx, "movies")
+	it := &db.Item{LibraryID: lib.ID, Kind: "movie", MatchKey: "tmdb:5", Title: "Movie", TMDBID: 5, IMDBID: "tt5", SeasonNumber: -1, EpisodeNumber: -1}
+	d.InsertItem(ctx, it)
+	if ready, err := s.Ensure(ctx, it, 10*time.Second); !ready || err != nil {
+		t.Fatalf("ensure = %v, %v", ready, err)
+	}
+	waitLookups(t, s)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(log) != 6 || log[0] != "a start" || log[1] != "a end" {
+		t.Fatalf("lookups = %v; the top 4K post should go alone first", log)
+	}
+	if sts, _ := d.StreamsForItem(ctx, it.ID); len(sts) != 3 {
+		t.Fatalf("streams = %d", len(sts))
+	}
+}
+
+// A watchlisted movie is looked up in the background before anyone plays it.
+func TestWatchlistPrefetch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := func(c string) string { return strings.Repeat(c, 40) }
+	addon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"streams": []map[string]any{
+			{"title": "Movie.2024.2160p.WEB-DL-GRP\n👤 500 💾 15 GB", "infoHash": h("a")},
+		}})
+	}))
+	defer addon.Close()
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	cfg := &config.Config{Streaming: config.StreamingConfig{Enabled: true, Qualities: []string{"2160p"}, PerQuality: 1, Prefetch: true,
+		Addons: []config.AddonConfig{{Name: "fake", URL: addon.URL + "/manifest.json", Enabled: true}}}}
+	s := New(Deps{Cfg: cfg, DB: d, TMDB: tmdb.New("test", "en-US", d), Hub: library.NewHub()})
+	s.testProviders = []Provider{&fakeProvider{cdn: "http://cdn", cached: map[string][]RemoteFile{h("a"): {{ID: "1", Name: "a.mkv", Size: 1000}}}}}
+	s.Start(ctx)
+	lib, _ := d.StreamLibrary(ctx, "movies")
+	it := &db.Item{LibraryID: lib.ID, Kind: "movie", MatchKey: "tmdb:6", Title: "Movie", TMDBID: 6, IMDBID: "tt6", SeasonNumber: -1, EpisodeNumber: -1}
+	d.InsertItem(ctx, it)
+	s.PrefetchWatchlist("u1", it)
+	for range 300 {
+		if sts, _ := d.StreamsForItem(ctx, it.ID); len(sts) == 1 {
+			waitLookups(t, s)
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("watchlisted movie wasn't looked up")
+}
+
 func TestStreamLookupPackAndPlayback(t *testing.T) {
 	ctx := context.Background()
 	hashA := strings.Repeat("a", 40) // 1080p season pack

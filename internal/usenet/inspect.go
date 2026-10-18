@@ -25,6 +25,10 @@ type head struct {
 	partSize int64
 	data     []byte
 	err      error
+	// lazy is a RAR volume left unread for now: in a big archive the
+	// middle volumes are laid out alike, so most are worked out from
+	// their neighbours (see rarVideos).
+	lazy bool
 }
 
 // ErrUnplayable means a post has no video that can be streamed.
@@ -105,12 +109,17 @@ func Inspect(ctx context.Context, pool *Pool, nzb *NZB, keep func(name string) b
 			}
 		}
 		var rest []int
+		bySet := map[string][]int{}
 		for _, i := range later {
-			if err := bad[rarSet(nzb.Files[i].Name())]; err != nil {
+			set := rarSet(nzb.Files[i].Name())
+			if err := bad[set]; err != nil {
 				heads[i] = head{err: err}
 				continue
 			}
-			rest = append(rest, i)
+			bySet[set] = append(bySet[set], i)
+		}
+		for _, vols := range bySet {
+			rest = append(rest, unreadMiddle(nzb, heads, vols)...)
 		}
 		read(rest)
 		if ctx.Err() != nil {
@@ -132,7 +141,7 @@ func Inspect(ctx context.Context, pool *Pool, nzb *NZB, keep func(name string) b
 		}
 		name := bestName(h.name, nzb.Files[i].Name())
 		switch {
-		case isRAR(h.data):
+		case isRAR(h.data) || h.lazy:
 			key := rarSet(name)
 			if _, ok := rarVolume(name); !ok {
 				key = "\x00obfuscated" // nameless volumes: one archive, in post order
@@ -179,6 +188,27 @@ func Inspect(ctx context.Context, pool *Pool, nzb *NZB, keep func(name string) b
 		return 0
 	})
 	return videos, nil
+}
+
+// unreadMiddle takes the volumes after the first of a big archive and
+// returns the ones to read now: the two at each end. The rest are marked
+// lazy. Volumes that aren't numbered one after another are all read.
+func unreadMiddle(nzb *NZB, heads []head, vols []int) []int {
+	if len(vols) <= 8 {
+		return vols
+	}
+	vols = slices.Clone(vols)
+	num := func(i int) int { n, _ := rarVolume(nzb.Files[i].Name()); return n }
+	slices.SortFunc(vols, func(a, b int) int { return num(a) - num(b) })
+	for k := 1; k < len(vols); k++ {
+		if num(vols[k]) != num(vols[k-1])+1 {
+			return vols
+		}
+	}
+	for _, i := range vols[2 : len(vols)-2] {
+		heads[i] = head{lazy: true}
+	}
+	return append(vols[:2:2], vols[len(vols)-2:]...)
 }
 
 func readHead(ctx context.Context, pool *Pool, f NZBFile) head {
@@ -262,11 +292,18 @@ func rarVideos(ctx context.Context, pool *Pool, nzb *NZB, heads []head, files []
 	}
 	f := NewFile(pool, nzb, lay)
 	f.max, f.ctx = 16, ctx
-	// The first article of each volume is already here.
-	for k, v := range vols {
-		e := &segEntry{done: make(chan struct{}), data: heads[v.file].data}
+	put := func(k int, data []byte) {
+		e := &segEntry{done: make(chan struct{}), data: data}
 		close(e.done)
+		f.mu.Lock()
 		f.cache[segKey{k, 0}] = e
+		f.mu.Unlock()
+	}
+	// The first article of each volume read so far is already here.
+	for k, v := range vols {
+		if !heads[v.file].lazy {
+			put(k, heads[v.file].data)
+		}
 	}
 	// Volumes are read side by side: a header that doesn't fit in the
 	// first article needs another fetch, and big posts have a hundred.
@@ -275,6 +312,9 @@ func rarVideos(ctx context.Context, pool *Pool, nzb *NZB, heads []head, files []
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8)
 	for k := range vols {
+		if heads[vols[k].file].lazy {
+			continue
+		}
 		wg.Add(1)
 		go func(k int) {
 			defer wg.Done()
@@ -288,6 +328,77 @@ func rarVideos(ctx context.Context, pool *Pool, nzb *NZB, heads []head, files []
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", vols[k].name, err)
 		}
+	}
+	// Unread volumes between two read ones that agree are taken to agree
+	// too; where the two differ, the one halfway is read and each half
+	// looked at again. A 600-volume archive takes about thirty reads.
+	load := func(k int) error {
+		h := readHead(ctx, pool, nzb.Files[vols[k].file])
+		if h.err != nil {
+			return fmt.Errorf("%s: %w", vols[k].name, h.err)
+		}
+		lay.Files[k] = FileLayout{Index: vols[k].file, Size: h.size, PartSize: h.partSize}
+		put(k, h.data)
+		info, err := readRARVolume(fileReader{f: f, file: k}, h.size)
+		if err != nil {
+			return fmt.Errorf("%s: %w", vols[k].name, err)
+		}
+		infos[k] = info
+		return nil
+	}
+	alike := func(a, b int) bool {
+		fa, fb := lay.Files[a], lay.Files[b]
+		if fa.Size != fb.Size || fa.PartSize != fb.PartSize || !slices.Equal(infos[a].Entries, infos[b].Entries) {
+			return false
+		}
+		segs := len(nzb.Files[vols[a].file].Segments)
+		for k := a + 1; k < b; k++ {
+			if len(nzb.Files[vols[k].file].Segments) != segs {
+				return false
+			}
+		}
+		return true
+	}
+	var fill func(a, b int) error
+	fill = func(a, b int) error {
+		if b-a < 2 {
+			return nil
+		}
+		// Long runs are split anyway, as a check on the guess.
+		if b-a <= 32 && alike(a, b) {
+			for k := a + 1; k < b; k++ {
+				lay.Files[k] = FileLayout{Index: vols[k].file, Size: lay.Files[a].Size, PartSize: lay.Files[a].PartSize}
+				infos[k] = &rarVolumeInfo{Entries: slices.Clone(infos[a].Entries), Number: -1}
+			}
+			return nil
+		}
+		m := (a + b) / 2
+		if err := load(m); err != nil {
+			return err
+		}
+		var e1, e2 error
+		var fw sync.WaitGroup
+		fw.Add(1)
+		go func() { defer fw.Done(); e1 = fill(a, m) }()
+		e2 = fill(m, b)
+		fw.Wait()
+		return errors.Join(e1, e2)
+	}
+	for a := 0; a < len(vols); a++ {
+		if !heads[vols[a].file].lazy {
+			continue
+		}
+		b := a
+		for b < len(vols) && heads[vols[b].file].lazy {
+			b++
+		}
+		if a == 0 || b == len(vols) {
+			return nil, errors.New("RAR: unread volumes at the end of the archive")
+		}
+		if err := fill(a-1, b); err != nil {
+			return nil, err
+		}
+		a = b
 	}
 	// Nameless volumes are in post order, unless RAR5 numbers them.
 	if !named {

@@ -102,6 +102,8 @@ type lookup struct {
 	ready chan struct{} // every quality has a stream; more may follow
 	found int
 	err   error
+	// urgent is a lookup someone is waiting to play; see resolve.
+	urgent bool
 }
 
 func New(d Deps) *Service {
@@ -120,6 +122,7 @@ func (s *Service) Start(ctx context.Context) {
 		go s.prefetchWorker(ctx, i)
 	}
 	go s.downloadLoop(ctx)
+	go s.watchlistLoop(ctx)
 	if s.Active() {
 		_, _ = s.Libraries(ctx)
 	}
@@ -187,7 +190,19 @@ const orderWait = 3 * time.Second
 
 // torrentAfter is how long torrents wait for Usenet posts that have found
 // nothing yet before they're tried alongside.
-const torrentAfter = 10 * time.Second
+var torrentAfter = 10 * time.Second
+
+// soloPosts is how many of the best quality's top posts are read one at a
+// time, with all connections, while someone waits to play.
+const soloPosts = 3
+
+// urgentKey marks a post someone is waiting on: it isn't held to the
+// background share of connections.
+type urgentKey struct{}
+
+// standInRank is added to the rank of a torrent stored while Usenet posts
+// are still being read, so the posts it stood in for play first.
+const standInRank = 100
 
 func (s *Service) qualities() []string {
 	q := s.cfg().Qualities
@@ -408,7 +423,7 @@ func (s *Service) Ensure(ctx context.Context, it *db.Item, wait time.Duration) (
 			s.mu.Unlock()
 			return false, ErrNoStreams
 		}
-		lk = s.startLookup(it)
+		lk = s.startLookup(it, true)
 	}
 	s.mu.Unlock()
 	t := time.NewTimer(wait)
@@ -442,12 +457,12 @@ func (s *Service) topUp(it *db.Item) {
 	if l, err := s.DB.GetStreamLookup(context.Background(), it.ID); err == nil && time.Since(time.Unix(l.LookedAt, 0)) < 6*time.Hour {
 		return
 	}
-	s.startLookup(it)
+	s.startLookup(it, false)
 }
 
 // startLookup runs a lookup in the background. Callers hold s.mu.
-func (s *Service) startLookup(it *db.Item) *lookup {
-	lk := &lookup{done: make(chan struct{}), ready: make(chan struct{})}
+func (s *Service) startLookup(it *db.Item, urgent bool) *lookup {
+	lk := &lookup{done: make(chan struct{}), ready: make(chan struct{}), urgent: urgent}
 	s.lookups[it.ID] = lk
 	go s.runLookup(it, lk)
 	return lk
@@ -457,7 +472,7 @@ func (s *Service) runLookup(it *db.Item, lk *lookup) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	var once sync.Once
-	lk.found, lk.err = s.resolve(ctx, it, func() {
+	lk.found, lk.err = s.resolve(ctx, it, lk.urgent, func() {
 		once.Do(func() {
 			close(lk.ready)
 			s.Hub.Publish(library.Event{Type: "stream.updated", LibraryID: it.LibraryID, ItemID: it.ID})
@@ -469,7 +484,7 @@ func (s *Service) runLookup(it *db.Item, lk *lookup) {
 	s.mu.Unlock()
 	if lk.found > 0 {
 		s.Hub.Publish(library.Event{Type: "stream.updated", LibraryID: it.LibraryID, ItemID: it.ID})
-	} else {
+	} else if lk.urgent {
 		s.notify("stream.unavailable", map[string]any{"itemId": it.ID, "title": it.Title, "error": errString(lk.err)})
 	}
 }
@@ -617,7 +632,7 @@ func (s *Service) checkCached(ctx context.Context, rels []Release, qualities []s
 // perQuality per quality, Usenet first, then torrents, each in rank order.
 // ready is called once the best quality has a stream, or once it can't be
 // found and another quality has one (see readyGrace). It returns how many streams the item has.
-func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, error) {
+func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready func()) (int, error) {
 	per := s.perQuality()
 	sts, _ := s.DB.StreamsForItem(ctx, it.ID)
 	have := map[string][]*db.Stream{}
@@ -655,10 +670,21 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 			best = q
 		}
 	}
+	// Someone waiting to play gets the best quality's top posts first,
+	// one at a time and with every connection; the other qualities start
+	// once playback can (or the best one has run out of posts).
+	urgent = urgent && ready != nil && len(have[best]) == 0
+	lead := make(chan struct{})
+	var leadOnce sync.Once
+	unlead := func() { leadOnce.Do(func() { close(lead) }) }
+	if !urgent {
+		unlead()
+	}
 	var mu sync.Mutex
 	var readyOnce sync.Once
 	found := len(sts)
 	fire := func() {
+		unlead()
 		if ready != nil {
 			readyOnce.Do(ready)
 		}
@@ -679,6 +705,12 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 		wg.Add(1)
 		go func(q string) {
 			defer wg.Done()
+			if q != best {
+				select {
+				case <-lead:
+				case <-ctx.Done():
+				}
+			}
 			settled := false
 			defer func() {
 				if !settled {
@@ -698,16 +730,24 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 				}
 			}
 			need := per - len(have[q])
-			// keep stores a stream that was found; qmu is held.
+			// keep stores a stream that was found; qmu is held. A stand-in
+			// is a torrent found while posts are still being read: it's
+			// ranked after anything they find and doesn't take their place.
 			var qmu sync.Mutex
-			keep := func(r Release, p *pick) {
-				if err := s.store(ctx, it, q, rank, p); err != nil {
+			keep := func(r Release, p *pick, standIn bool) {
+				at := rank
+				if standIn {
+					at = rank + standInRank
+				}
+				if err := s.store(ctx, it, q, at, p); err != nil {
 					slog.Warn("store stream", "item", it.ID, "err", err)
 					return
 				}
 				skip[releaseKey(r)], skip[sameRelease(r.Name)] = true, true
-				rank++
-				need--
+				if !standIn {
+					rank++
+					need--
+				}
 				mu.Lock()
 				found++
 				mu.Unlock()
@@ -735,9 +775,13 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 			var picks []*pick
 			var done, stored []bool
 			next := 0
+			solo := urgent && q == best
 			postsDone := make(chan struct{})
 			go func() {
 				defer close(postsDone)
+				if q == best {
+					defer unlead()
+				}
 				for _, r := range Rank(nzbs, q, maxSize, season) {
 					slots <- struct{}{}
 					qmu.Lock()
@@ -759,14 +803,18 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 					go func(k int, r Release) {
 						defer pwg.Done()
 						defer func() { <-slots }()
-						p, _ := s.add(ctx, r, caches, season, episode, maxSize)
+						actx := ctx
+						if solo && k < soloPosts {
+							actx = context.WithValue(ctx, urgentKey{}, true)
+						}
+						p, _ := s.add(actx, r, caches, season, episode, maxSize)
 						qmu.Lock()
 						defer qmu.Unlock()
 						picks[k], done[k] = p, true
 						for ; next < len(done) && done[next]; next++ {
 							if p := picks[next]; p != nil && !stored[next] && need > 0 && !seen(tried[next]) {
 								stored[next] = true
-								keep(tried[next], p)
+								keep(tried[next], p, false)
 							}
 						}
 						// A find waiting on a slow post ranked above it is stored
@@ -777,11 +825,17 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 								defer qmu.Unlock()
 								if !stored[k] && need > 0 && ctx.Err() == nil && !seen(tried[k]) {
 									stored[k] = true
-									keep(tried[k], p)
+									keep(tried[k], p, false)
 								}
 							})
 						}
 					}(k, r)
+					if solo && k < soloPosts {
+						pwg.Wait()
+						qmu.Lock()
+						solo = !settled
+						qmu.Unlock()
+					}
 				}
 				pwg.Wait()
 			}()
@@ -800,8 +854,17 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 			}
 			defer func() { <-postsDone }()
 
-			tries := 0
+			tries, standIn, counted := 0, false, false
 			for _, r := range Rank(rels, q, maxSize, season) {
+				if standIn && !counted {
+					// One stand-in is enough; the posts may fill the rest.
+					// What they leave, it takes a place of.
+					<-postsDone
+					qmu.Lock()
+					need--
+					qmu.Unlock()
+					counted = true
+				}
 				qmu.Lock()
 				enough := need <= 0 || tries >= need*3+3
 				qmu.Unlock()
@@ -818,9 +881,16 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 				if tried {
 					tries++
 				}
+				early := false
+				select {
+				case <-postsDone:
+				default:
+					early = true
+				}
 				qmu.Lock()
 				if p != nil && need > 0 && !seen(r) {
-					keep(r, p)
+					keep(r, p, early)
+					standIn = standIn || early
 				}
 				qmu.Unlock()
 			}
@@ -1004,55 +1074,121 @@ func (s *Service) Prefetch(it *db.Item) {
 			}
 			return a.EpisodeNumber - b.EpisodeNumber
 		})
-		want := len(s.qualities()) * s.perQuality()
 		for _, ep := range eps {
-			if ep.ID == it.ID {
-				continue
-			}
-			if sts, _ := s.DB.StreamsForItem(ctx, ep.ID); len(sts) >= want {
-				continue
-			}
-			if l, err := s.DB.GetStreamLookup(ctx, ep.ID); err == nil && time.Since(time.Unix(l.LookedAt, 0)) < 24*time.Hour {
-				continue
-			}
-			s.mu.Lock()
-			if s.queued[ep.ID] {
-				s.mu.Unlock()
-				continue
-			}
-			s.queued[ep.ID] = true
-			s.mu.Unlock()
-			select {
-			case s.prefetchQ <- ep.ID:
-			default:
-				s.mu.Lock()
-				delete(s.queued, ep.ID)
-				s.mu.Unlock()
+			if ep.ID != it.ID {
+				s.queue(ctx, ep)
 			}
 		}
 	}()
 }
 
-func (s *Service) prefetchWorker(ctx context.Context, n int) {
+// queue adds an item to the background lookups unless it has all its
+// streams, was looked up in the last day, or is already queued.
+func (s *Service) queue(ctx context.Context, it *db.Item) {
+	if sts, _ := s.DB.StreamsForItem(ctx, it.ID); len(sts) >= len(s.qualities())*s.perQuality() {
+		return
+	}
+	if l, err := s.DB.GetStreamLookup(ctx, it.ID); err == nil && time.Since(time.Unix(l.LookedAt, 0)) < 24*time.Hour {
+		return
+	}
+	s.mu.Lock()
+	if s.queued[it.ID] || s.lookups[it.ID] != nil {
+		s.mu.Unlock()
+		return
+	}
+	s.queued[it.ID] = true
+	s.mu.Unlock()
+	select {
+	case s.prefetchQ <- it.ID:
+	default:
+		s.mu.Lock()
+		delete(s.queued, it.ID)
+		s.mu.Unlock()
+	}
+}
+
+// PrefetchWatchlist queues a watchlisted title for lookup, so it plays at
+// once when picked: a movie, or the user's next episode of a show. Usenet
+// posts take a while to look over the first time; after that they're kept.
+func (s *Service) PrefetchWatchlist(userID string, it *db.Item) {
+	if !s.cfg().Prefetch || !s.Active() {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		libs, err := s.Libraries(ctx)
+		if err != nil || !slices.ContainsFunc(libs, func(l *db.Library) bool { return l.ID == it.LibraryID }) {
+			return // not a streaming title
+		}
+		switch it.Kind {
+		case "movie":
+			s.queue(ctx, it)
+		case "show":
+			if ep, err := s.DB.FirstUnwatched(ctx, userID, it.ID); err == nil {
+				s.queue(ctx, ep)
+			}
+		}
+	}()
+}
+
+// watchlistLoop looks up watchlisted titles a little after start and then
+// every few hours, so new posts and dropped streams are caught up on.
+func (s *Service) watchlistLoop(ctx context.Context) {
+	t := time.NewTimer(time.Minute)
+	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case id := <-s.prefetchQ:
-			// Workers beyond the configured count idle, so the limit can change live.
-			for n >= max(s.cfg().Limits.PrefetchWorkers, 1) {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(5 * time.Second):
+		case <-t.C:
+		}
+		users, items, err := s.DB.Watchlisted(ctx)
+		if err == nil {
+			for k, id := range items {
+				if it, err := s.DB.GetItem(ctx, id); err == nil {
+					s.PrefetchWatchlist(users[k], it)
 				}
 			}
+		}
+		t.Reset(6 * time.Hour)
+	}
+}
+
+func (s *Service) prefetchWorker(ctx context.Context, n int) {
+	for {
+		// Workers beyond the configured count idle, so the limit can change
+		// live. They wait before taking work, not holding it.
+		if n >= max(s.cfg().Limits.PrefetchWorkers, 1) {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case id := <-s.prefetchQ:
 			if it, err := s.DB.GetItem(ctx, id); err == nil && s.Active() {
-				lctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-				if found, _ := s.resolve(lctx, it, nil); found > 0 {
-					s.Hub.Publish(library.Event{Type: "stream.updated", LibraryID: it.LibraryID, ItemID: it.ID})
+				// Run as an ordinary lookup, so a play meanwhile waits on it
+				// rather than starting another. One that played meanwhile
+				// isn't looked up again.
+				s.mu.Lock()
+				var lk *lookup
+				if s.lookups[id] == nil {
+					if l, err := s.DB.GetStreamLookup(ctx, id); err != nil || time.Since(time.Unix(l.LookedAt, 0)) > time.Hour {
+						lk = s.startLookup(it, false)
+					}
 				}
-				cancel()
+				s.mu.Unlock()
+				if lk != nil {
+					select {
+					case <-lk.done:
+					case <-ctx.Done():
+					}
+				}
 			}
 			s.mu.Lock()
 			delete(s.queued, id)

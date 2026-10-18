@@ -177,7 +177,8 @@ type StreamingConfig struct {
 	NewsServers []NewsServerConfig `yaml:"news_servers"`
 	// MaxSizeGB skips releases larger than this per quality (0 = no limit).
 	MaxSizeGB map[string]float64 `yaml:"max_size_gb"`
-	// Prefetch resolves the rest of the season after an episode is played.
+	// Prefetch looks streams up ahead of play: the rest of the season after
+	// an episode is played, and what's on watchlists.
 	Prefetch bool `yaml:"prefetch"`
 	// Mode: "stream" stores only the stream; "download" also saves the file
 	// into the download library, which then replaces the stream.

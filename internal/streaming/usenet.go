@@ -191,7 +191,10 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 	if pool.Empty() {
 		return nil, false
 	}
-	ctx, cancel := context.WithTimeout(usenet.Background(ctx), 30*time.Second)
+	if ctx.Value(urgentKey{}) == nil {
+		ctx = usenet.Background(ctx)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	t := time.Now()
 	fail := func(step string, err error) (*pick, bool) {

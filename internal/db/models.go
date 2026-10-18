@@ -868,6 +868,31 @@ func (d *DB) NextEpisode(ctx context.Context, userID, showID string) (*Item, err
 		ORDER BY i.season_number, i.episode_number LIMIT 1`, showID, userID))
 }
 
+// Watchlisted lists every user's watchlist, newest added first.
+func (d *DB) Watchlisted(ctx context.Context) (users, items []string, err error) {
+	rows, err := d.QueryContext(ctx, `SELECT user_id, item_id FROM watchlist ORDER BY added_at DESC`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u, i string
+		if err := rows.Scan(&u, &i); err != nil {
+			return nil, nil, err
+		}
+		users, items = append(users, u), append(items, i)
+	}
+	return users, items, rows.Err()
+}
+
+// FirstUnwatched is a show's first episode the user hasn't watched,
+// whether or not it has a file yet.
+func (d *DB) FirstUnwatched(ctx context.Context, userID, showID string) (*Item, error) {
+	return scanItem(d.QueryRowContext(ctx, `SELECT `+itemCols+` FROM items i WHERE i.show_id=? AND i.kind='episode' AND i.season_number > 0
+		AND NOT EXISTS (SELECT 1 FROM watch_state w WHERE w.item_id=i.id AND w.user_id=? AND w.watched=1)
+		ORDER BY i.season_number, i.episode_number LIMIT 1`, showID, userID))
+}
+
 // SetWatchlist adds an item to (or removes it from) a user's watchlist.
 func (d *DB) SetWatchlist(ctx context.Context, userID, itemID string, on bool) error {
 	if !on {
