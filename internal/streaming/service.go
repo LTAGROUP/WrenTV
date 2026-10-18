@@ -670,35 +670,12 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 				}
 			}
 			need := per - len(have[q])
-			posts := Rank(nzbs, q, maxSize, season)
-			cands := append(posts, Rank(rels, q, maxSize, season)...)
-			// Usenet posts go first but get their own small budget: a post is
-			// only known to play once its files are read, which takes seconds,
-			// and torrents must still be tried when posts fail.
-			tries, postTries := 0, 0
-			for i, r := range cands {
-				isPost := i < len(posts)
-				if need == 0 || ctx.Err() != nil || (!isPost && tries >= need*3+3) {
-					break
-				}
-				if isPost && (postTries >= need+2 || time.Since(started) > postTime) {
-					continue
-				}
-				if skip[releaseKey(r)] || (sameRelease(r.Name) != "" && skip[sameRelease(r.Name)]) {
-					continue
-				}
-				p, tried := s.add(ctx, r, caches, season, episode, maxSize)
-				if tried && isPost {
-					postTries++
-				} else if tried {
-					tries++
-				}
-				if p == nil {
-					continue
-				}
+			// keep stores a stream that was found; qmu is held.
+			var qmu sync.Mutex
+			keep := func(r Release, p *pick) {
 				if err := s.store(ctx, it, q, rank, p); err != nil {
 					slog.Warn("store stream", "item", it.ID, "err", err)
-					continue
+					return
 				}
 				skip[releaseKey(r)], skip[sameRelease(r.Name)] = true, true
 				rank++
@@ -712,6 +689,71 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, 
 				}
 				if season > 0 {
 					s.fillSeason(ctx, it, q, p) // a season pack covers the other episodes too
+				}
+			}
+			seen := func(r Release) bool {
+				return skip[releaseKey(r)] || (sameRelease(r.Name) != "" && skip[sameRelease(r.Name)])
+			}
+
+			// Usenet posts go first, as many at once as are still wanted:
+			// a post is only known to play once its files are read, which
+			// takes seconds. Found ones are stored in rank order. Posts get
+			// their own small budget so torrents are still tried when they
+			// fail.
+			var pwg sync.WaitGroup
+			slots := make(chan struct{}, max(need, 1))
+			var tried []Release
+			var picks []*pick
+			var done []bool
+			next := 0
+			for _, r := range Rank(nzbs, q, maxSize, season) {
+				slots <- struct{}{}
+				qmu.Lock()
+				stop := need <= 0 || ctx.Err() != nil || len(tried) >= need+2 || time.Since(started) > postTime
+				dup := !stop && seen(r)
+				k := len(tried)
+				if !stop && !dup {
+					tried, picks, done = append(tried, r), append(picks, nil), append(done, false)
+				}
+				qmu.Unlock()
+				if stop || dup {
+					<-slots
+					if stop {
+						break
+					}
+					continue
+				}
+				pwg.Add(1)
+				go func(k int, r Release) {
+					defer pwg.Done()
+					defer func() { <-slots }()
+					p, _ := s.add(ctx, r, caches, season, episode, maxSize)
+					qmu.Lock()
+					defer qmu.Unlock()
+					picks[k], done[k] = p, true
+					for ; next < len(done) && done[next]; next++ {
+						if p := picks[next]; p != nil && need > 0 && !seen(tried[next]) {
+							keep(tried[next], p)
+						}
+					}
+				}(k, r)
+			}
+			pwg.Wait()
+
+			tries := 0
+			for _, r := range Rank(rels, q, maxSize, season) {
+				if need <= 0 || ctx.Err() != nil || tries >= need*3+3 {
+					break
+				}
+				if seen(r) {
+					continue
+				}
+				p, tried := s.add(ctx, r, caches, season, episode, maxSize)
+				if tried {
+					tries++
+				}
+				if p != nil {
+					keep(r, p)
 				}
 			}
 		}(q)

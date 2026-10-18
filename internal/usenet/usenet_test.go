@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakeServer is a news server holding a few articles.
@@ -22,6 +23,8 @@ type fakeServer struct {
 	articles map[string][]byte
 	gone     map[string]bool // answered 451, as Giganews does for takedowns
 	logins   atomic.Int32
+	limit    int32 // more logins than this at once get 481, as Giganews answers
+	authed   atomic.Int32
 	open     atomic.Int32
 	peak     atomic.Int32
 	bodies   atomic.Int32
@@ -75,8 +78,15 @@ func (s *fakeServer) serve(c net.Conn) {
 		case cmd == "AUTHINFO" && len(f) == 3 && strings.EqualFold(f[1], "USER"):
 			fmt.Fprint(w, "381 more\r\n")
 		case cmd == "AUTHINFO" && len(f) == 3 && strings.EqualFold(f[1], "PASS"):
-			if f[2] == "secret" {
+			if f[2] == "secret" && s.limit > 0 && s.authed.Add(1) > s.limit {
+				s.authed.Add(-1)
+				fmt.Fprint(w, "481 Too many connections\r\n")
+			} else if f[2] == "secret" {
+				if s.limit == 0 {
+					s.authed.Add(1)
+				}
 				authed = true
+				defer s.authed.Add(-1)
 				s.logins.Add(1)
 				fmt.Fprint(w, "281 ok\r\n")
 			} else {
@@ -381,5 +391,94 @@ func TestEndpoint(t *testing.T) {
 	}
 	if got := stripKey("https://api.nzbgeek.info/api?t=get&id=abc&apikey=SECRET"); strings.Contains(got, "SECRET") || !strings.Contains(got, "id=abc") {
 		t.Errorf("stripKey kept %q", got)
+	}
+}
+
+// An account allowing fewer connections than set up still plays: logins
+// refused for that are waited out on our own connections, not taken as a
+// bad password.
+func TestLearnsConnectionLimit(t *testing.T) {
+	s := newFakeServer(t)
+	s.limit = 3
+	video := append([]byte{0x1a, 0x45, 0xdf, 0xa3}, randomBytes(640_000, 5)...)
+	nzb := &NZB{Files: []NZBFile{s.post("Movie.2020.1080p.mkv", video, 64000, `"Movie.2020.1080p.mkv" yEnc`)}}
+	pool := s.pool(10)
+	defer pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	errs := make([]error, 30)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = pool.Body(ctx, nzb.Files[0].Segments[i%10].ID)
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("read %d: %v", i, err)
+		}
+	}
+	if _, err := pool.Body(ctx, nzb.Files[0].Segments[0].ID); err != nil {
+		t.Fatalf("server left paused: %v", err)
+	}
+}
+
+// Short reads after a seek fetch little beyond what they need, and the
+// articles every reopen reads again (the header) stay cached.
+func TestReadAheadAndCache(t *testing.T) {
+	s := newFakeServer(t)
+	video := append([]byte{0x1a, 0x45, 0xdf, 0xa3}, randomBytes(64000*200, 6)...)
+	nzb := &NZB{Files: []NZBFile{s.post("Movie.2020.1080p.mkv", video, 64000, `"Movie.2020.1080p.mkv" yEnc`)}}
+	pool := s.pool(8)
+	defer pool.Close()
+	ctx := context.Background()
+	vids, err := Inspect(ctx, pool, nzb, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := NewFile(pool, nzb, vids[0].Layout)
+	f.max = 12
+	settle := func() int32 {
+		for i := 0; i < 100; i++ {
+			n := s.bodies.Load()
+			time.Sleep(20 * time.Millisecond)
+			if s.bodies.Load() == n {
+				return n
+			}
+		}
+		return s.bodies.Load()
+	}
+	base := settle()
+	var buf bytes.Buffer
+	if _, err := f.WriteRange(ctx, &buf, 64000*100, 100); err != nil {
+		t.Fatal(err)
+	}
+	if n := settle() - base; n > 3 {
+		t.Fatalf("a 100-byte read fetched %d articles", n)
+	}
+	// Read the header, then move through the file reading it again each time.
+	for i := 0; i < 40; i++ {
+		buf.Reset()
+		if _, err := f.WriteRange(ctx, &buf, 0, 10); err != nil {
+			t.Fatal(err)
+		}
+		buf.Reset()
+		if _, err := f.WriteRange(ctx, &buf, int64(64000*(120+i*2)), 10); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := settle()
+	buf.Reset()
+	if _, err := f.WriteRange(ctx, &buf, 0, 10); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(buf.Bytes(), video[:10]) {
+		t.Fatal("header bytes differ")
+	}
+	if settle() != before {
+		t.Fatal("header article was dropped from the cache")
 	}
 }

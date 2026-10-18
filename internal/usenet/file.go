@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"time"
 )
@@ -45,7 +46,7 @@ type File struct {
 
 	mu    sync.Mutex
 	cache map[segKey]*segEntry
-	order []segKey // oldest first
+	order []segKey // least recently used first
 	max   int
 }
 
@@ -58,7 +59,7 @@ type segEntry struct {
 }
 
 func NewFile(pool *Pool, nzb *NZB, lay *Layout) *File {
-	return &File{pool: pool, nzb: nzb, lay: lay, Ahead: 32, cache: map[segKey]*segEntry{}, max: 64}
+	return &File{pool: pool, nzb: nzb, lay: lay, Ahead: 32, cache: map[segKey]*segEntry{}, max: 96}
 }
 
 func (f *File) Size() int64     { return f.lay.Size }
@@ -116,6 +117,12 @@ func (f *File) start(k segKey) *segEntry {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if e := f.cache[k]; e != nil {
+		// Every segment the remuxer makes reopens the file and reads its
+		// header and index again; keeping what's used, not just what's new,
+		// keeps those here.
+		if i := slices.Index(f.order, k); i >= 0 && i < len(f.order)-1 {
+			f.order = append(slices.Delete(f.order, i, i+1), k)
+		}
 		return e
 	}
 	e := &segEntry{done: make(chan struct{})}
@@ -237,13 +244,16 @@ func (f *File) WriteRange(ctx context.Context, w io.Writer, off, n int64) (int64
 		if len(sp) == 0 {
 			return written, io.EOF
 		}
-		ahead := max(f.Ahead, 1)
-		for i := 0; i < min(ahead, len(sp)); i++ {
-			f.start(sp[i].key)
-		}
+		// Read-ahead starts small and doubles as the read goes on: players
+		// probe with many short reads, and a seek shouldn't queue tens of
+		// megabytes ahead of the bytes it's waiting for.
+		ahead, started := min(2, max(f.Ahead, 1)), 0
 		for i, s := range sp {
-			if j := i + ahead; j < len(sp) {
-				f.start(sp[j].key)
+			if i > 0 && ahead < f.Ahead {
+				ahead = min(ahead*2, f.Ahead)
+			}
+			for ; started < len(sp) && started <= i+ahead; started++ {
+				f.start(sp[started].key)
 			}
 			data, err := f.segment(ctx, s.key)
 			if err != nil {
