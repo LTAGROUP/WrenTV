@@ -77,3 +77,19 @@ func TestPreferredSubtitle(t *testing.T) {
 		}
 	}
 }
+
+func TestChooseStreamRank(t *testing.T) {
+	web := withHEVC(media.ClientCaps{Engines: []string{"avplayer"}, NativeVideo: []string{"h264"}, NativeAudio: []string{"aac"}, NativeContainers: []string{"mp4"}})
+	stream := func(id string, rank int, size int64) *db.MediaFile {
+		return &db.MediaFile{ID: id, StreamID: id, Width: 3840, Height: 2160, StreamRank: rank, Size: size}
+	}
+	best, second := stream("best", 0, 10<<30), stream("second", 1, 50<<30)
+	// Playing the second choice once probes it; the first stays the default.
+	second.Probe, second.ProbedAt = probed("x", 3840, 2160, "hevc", 60000).Probe, 1
+	if got := chooseFile([]*db.MediaFile{second, best}, playRequest{Caps: web}).ID; got != "best" {
+		t.Fatalf("got %s, want the first-ranked stream", got)
+	}
+	if got := chooseFile([]*db.MediaFile{second, best}, playRequest{Caps: web, FileID: "second"}).ID; got != "second" {
+		t.Fatalf("explicit choice: got %s", got)
+	}
+}

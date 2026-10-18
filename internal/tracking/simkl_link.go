@@ -1,0 +1,312 @@
+package tracking
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/LTAGROUP/wrentv/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/simkl"
+)
+
+// pendingLink is a device code waiting for the user to approve it on simkl.com.
+type pendingLink struct {
+	UserCode  string `json:"userCode"`
+	URL       string `json:"url"`
+	URLFull   string `json:"urlComplete"`
+	ExpiresAt int64  `json:"expiresAt"`
+	Error     string `json:"error,omitempty"`
+	cancel    context.CancelFunc
+}
+
+// SimklStatus is what the apps show on the Simkl settings page.
+type SimklStatus struct {
+	Available bool             `json:"available"` // the server has a Simkl app configured
+	Linked    bool             `json:"linked"`
+	Account   *db.SimklAccount `json:"account,omitempty"`
+	Pending   *pendingLink     `json:"pending,omitempty"`
+	Importing bool             `json:"importing"`
+}
+
+func (s *Service) SimklStatus(ctx context.Context, userID string) (SimklStatus, error) {
+	st := SimklStatus{Available: s.Simkl.Enabled()}
+	a, err := s.DB.GetSimkl(ctx, userID)
+	if err != nil {
+		return st, err
+	}
+	st.Linked, st.Account = a != nil, a
+	s.mu.Lock()
+	if p := s.links[userID]; p != nil {
+		c := *p
+		st.Pending = &c
+	}
+	st.Importing = s.imports[userID]
+	s.mu.Unlock()
+	return st, nil
+}
+
+// LinkSimkl starts the device sign-in. The server polls Simkl until the user
+// approves the code, then stores the account and imports their history.
+func (s *Service) LinkSimkl(ctx context.Context, userID string) (*pendingLink, error) {
+	if !s.Simkl.Enabled() {
+		return nil, errors.New("Simkl isn't set up on this server")
+	}
+	d, err := s.Simkl.StartDevice(ctx)
+	if err != nil {
+		return nil, err
+	}
+	life := time.Duration(d.ExpiresIn) * time.Second
+	if life <= 0 || life > 15*time.Minute {
+		life = 15 * time.Minute
+	}
+	pctx, cancel := context.WithTimeout(context.Background(), life)
+	p := &pendingLink{UserCode: d.UserCode, URL: d.URL, URLFull: d.URLFull, ExpiresAt: s.now().Add(life).Unix(), cancel: cancel}
+	if p.URL == "" {
+		p.URL = "https://simkl.com/pin"
+	}
+	s.mu.Lock()
+	if old := s.links[userID]; old != nil {
+		old.cancel()
+	}
+	s.links[userID] = p
+	s.mu.Unlock()
+	go s.pollLink(pctx, userID, p, d)
+	c := *p
+	return &c, nil
+}
+
+func (s *Service) pollLink(ctx context.Context, userID string, p *pendingLink, d simkl.Device) {
+	defer p.cancel()
+	done := func(msg string) {
+		s.mu.Lock()
+		if s.links[userID] == p {
+			if msg == "" {
+				delete(s.links, userID)
+			} else {
+				p.Error = msg
+			}
+		}
+		s.mu.Unlock()
+	}
+	interval := time.Duration(d.Interval) * time.Second
+	if s.pollEvery > 0 {
+		interval = s.pollEvery
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			s.mu.Lock()
+			if s.links[userID] == p {
+				delete(s.links, userID) // expired or cancelled
+			}
+			s.mu.Unlock()
+			return
+		case <-time.After(interval):
+		}
+		t, err := s.Simkl.PollDevice(ctx, d.DeviceCode)
+		switch {
+		case errors.Is(err, simkl.ErrPending):
+			continue
+		case errors.Is(err, simkl.ErrSlowDown):
+			interval += 5 * time.Second
+			continue
+		case errors.Is(err, simkl.ErrExpired):
+			done("The code expired. Start again.")
+			return
+		case err != nil:
+			if ctx.Err() != nil {
+				continue
+			}
+			slog.Warn("simkl link", "user", userID, "err", err)
+			done(err.Error())
+			return
+		}
+		a := &db.SimklAccount{UserID: userID, AccessToken: t.Access, RefreshToken: t.Refresh, ExpiresAt: t.Expires}
+		a.Username, _ = s.Simkl.Username(ctx, t.Access)
+		if err := s.DB.LinkSimkl(context.Background(), a); err != nil {
+			done(err.Error())
+			return
+		}
+		done("")
+		slog.Info("simkl linked", "user", userID, "account", a.Username)
+		s.Import(userID)
+		return
+	}
+}
+
+// CancelLink drops a pending sign-in.
+func (s *Service) CancelLink(userID string) {
+	s.mu.Lock()
+	if p := s.links[userID]; p != nil {
+		p.cancel()
+		delete(s.links, userID)
+	}
+	s.mu.Unlock()
+}
+
+func (s *Service) UnlinkSimkl(ctx context.Context, userID string) error {
+	s.CancelLink(userID)
+	return s.DB.UnlinkSimkl(ctx, userID)
+}
+
+// ---------- history import ----------
+
+// Import pulls the user's Simkl history in the background and marks every
+// matching movie and episode in the library watched. Titles already watched
+// here are left alone, and nothing is ever marked unwatched.
+func (s *Service) Import(userID string) bool {
+	s.mu.Lock()
+	if s.imports[userID] {
+		s.mu.Unlock()
+		return false
+	}
+	s.imports[userID] = true
+	s.mu.Unlock()
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			delete(s.imports, userID)
+			s.mu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		defer cancel()
+		_ = s.DB.SetSimklImport(ctx, userID, "running", 0, 0)
+		movies, eps, err := s.runImport(ctx, userID)
+		status := "done"
+		if err != nil {
+			status = err.Error()
+			slog.Warn("simkl import", "user", userID, "err", err)
+		} else {
+			slog.Info("simkl import", "user", userID, "movies", movies, "episodes", eps)
+		}
+		_ = s.DB.SetSimklImport(context.Background(), userID, status, movies, eps)
+	}()
+	return true
+}
+
+type matcher struct {
+	tmdb  map[string]string // kind:tmdb → id
+	imdb  map[string]string
+	title map[string]string // kind:title:year → id
+}
+
+func normTitle(t string) string { return strings.Join(strings.Fields(strings.ToLower(t)), " ") }
+
+func newMatcher(items []db.ExternalItem) *matcher {
+	m := &matcher{tmdb: map[string]string{}, imdb: map[string]string{}, title: map[string]string{}}
+	for _, it := range items {
+		if it.TMDBID > 0 {
+			m.tmdb[it.Kind+":"+strconv.Itoa(it.TMDBID)] = it.ID
+		}
+		if it.IMDBID != "" {
+			m.imdb[it.Kind+":"+it.IMDBID] = it.ID
+		}
+		m.title[it.Kind+":"+normTitle(it.Title)+":"+strconv.Itoa(it.Year)] = it.ID
+	}
+	return m
+}
+
+func (m *matcher) find(kind string, md *simkl.Media) string {
+	if md == nil {
+		return ""
+	}
+	if v := md.ID("tmdb"); v != "" {
+		if id := m.tmdb[kind+":"+v]; id != "" {
+			return id
+		}
+	}
+	if v := md.ID("imdb"); v != "" {
+		if id := m.imdb[kind+":"+v]; id != "" {
+			return id
+		}
+	}
+	if md.Title != "" && md.Year > 0 {
+		return m.title[kind+":"+normTitle(md.Title)+":"+strconv.Itoa(md.Year)]
+	}
+	return ""
+}
+
+func when(ts string) int64 {
+	if t, err := time.Parse(time.RFC3339, ts); err == nil && t.Unix() > 0 {
+		return t.Unix()
+	}
+	return 0
+}
+
+func (s *Service) runImport(ctx context.Context, userID string) (movies, episodes int, err error) {
+	var a *db.SimklAccount
+	if a, err = s.DB.GetSimkl(ctx, userID); err != nil || a == nil {
+		return 0, 0, errors.New("Simkl isn't linked")
+	}
+	items, err := s.DB.ExternalItems(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	m := newMatcher(items)
+	fetch := func(kind, status string) (simkl.AllItems, error) {
+		var out simkl.AllItems
+		var ferr error
+		call := func(access string) error {
+			out, ferr = s.Simkl.AllItems(ctx, access, kind, status)
+			return ferr
+		}
+		if err := call(a.AccessToken); errors.Is(err, simkl.ErrUnauthorized) && a.RefreshToken != "" {
+			if s.refresh(ctx, a) == nil {
+				_ = call(a.AccessToken)
+			}
+		}
+		return out, ferr
+	}
+
+	// Movies the user finished.
+	marks := map[string]int64{}
+	got, err := fetch("movies", "completed")
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, li := range got.Movies {
+		if id := m.find("movie", li.Movie); id != "" {
+			marks[id] = when(li.LastWatchedAt)
+		}
+	}
+	if movies, err = s.DB.ImportWatched(ctx, userID, marks); err != nil {
+		return movies, 0, err
+	}
+
+	// Episodes watched, in every list a show can be in.
+	marks = map[string]int64{}
+	episodesOf := map[string]map[[2]int]string{}
+	for _, kind := range []string{"shows", "anime"} {
+		for _, status := range []string{"watching", "completed", "hold", "dropped"} {
+			got, err := fetch(kind, status)
+			if err != nil {
+				return movies, 0, err
+			}
+			for _, li := range append(got.Shows, got.Anime...) {
+				showID := m.find("show", li.Show)
+				if showID == "" {
+					continue
+				}
+				eps, ok := episodesOf[showID]
+				if !ok {
+					if eps, err = s.DB.EpisodeIDs(ctx, showID); err != nil {
+						return movies, 0, err
+					}
+					episodesOf[showID] = eps
+				}
+				for _, se := range li.Seasons {
+					for _, ep := range se.Episodes {
+						if id := eps[[2]int{se.Number, ep.Number}]; id != "" {
+							marks[id] = when(ep.WatchedAt)
+						}
+					}
+				}
+			}
+		}
+	}
+	episodes, err = s.DB.ImportWatched(ctx, userID, marks)
+	return movies, episodes, err
+}

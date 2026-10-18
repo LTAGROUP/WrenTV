@@ -72,13 +72,22 @@ func TestStreamingMigration(t *testing.T) {
 	if err := d.PutStream(ctx, st, &MediaFile{ItemID: it.ID, LibraryID: lib.ID, Height: 1080}); err != nil {
 		t.Fatal(err)
 	}
-	// Replacing the quality's stream replaces its file too.
-	st2 := &Stream{ItemID: it.ID, Quality: "1080p", InfoHash: "ghi"}
+	// Storing the same release again replaces it and its file.
+	st2 := &Stream{ItemID: it.ID, Quality: "1080p", InfoHash: "def"}
 	if err := d.PutStream(ctx, st2, &MediaFile{ItemID: it.ID, LibraryID: lib.ID, Height: 1080}); err != nil {
 		t.Fatal(err)
 	}
 	fs, _ := d.FilesForItem(ctx, it.ID)
 	if len(fs) != 1 || fs[0].StreamID != st2.ID {
+		t.Fatalf("files = %+v", fs)
+	}
+	// Another release is another option at the same quality, after the first.
+	st3 := &Stream{ItemID: it.ID, Quality: "1080p", InfoHash: "ghi", Kind: "usenet", Rank: 1}
+	if err := d.PutStream(ctx, st3, &MediaFile{ItemID: it.ID, LibraryID: lib.ID, Height: 1080, Size: 1 << 40}); err != nil {
+		t.Fatal(err)
+	}
+	fs, _ = d.FilesForItem(ctx, it.ID)
+	if len(fs) != 2 || fs[0].StreamID != st2.ID || fs[1].StreamRank != 1 {
 		t.Fatalf("files = %+v", fs)
 	}
 	items, _, _ := d.QueryItems(ctx, ItemQuery{LibraryID: lib.ID, Kind: "movie"})

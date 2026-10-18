@@ -262,8 +262,12 @@ func (s *Server) handleWatchlist(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, nonNil(items))
 }
 
-func (s *Server) handleWatchlistAdd(w http.ResponseWriter, r *http.Request)    { s.setWatchlist(w, r, true) }
-func (s *Server) handleWatchlistRemove(w http.ResponseWriter, r *http.Request) { s.setWatchlist(w, r, false) }
+func (s *Server) handleWatchlistAdd(w http.ResponseWriter, r *http.Request) {
+	s.setWatchlist(w, r, true)
+}
+func (s *Server) handleWatchlistRemove(w http.ResponseWriter, r *http.Request) {
+	s.setWatchlist(w, r, false)
+}
 
 func (s *Server) setWatchlist(w http.ResponseWriter, r *http.Request, on bool) {
 	it, ok := s.itemFor(r)
@@ -492,11 +496,18 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	if err := s.DB.SetProgress(r.Context(), principal(r).User.ID, it.ID, req.Position, req.Duration); err != nil {
+	u := principal(r).User
+	prefs, _ := s.DB.GetPrefs(r.Context(), u.ID)
+	at := prefs.WatchedAt()
+	justWatched, err := s.DB.SetProgress(r.Context(), u.ID, it.ID, req.Position, req.Duration, at)
+	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	_ = s.DB.TrackPlay(r.Context(), principal(r).User.ID, it.ID, req.Position, req.Duration)
+	_ = s.DB.TrackPlay(r.Context(), u.ID, it.ID, req.Position, req.Duration, at)
+	if s.Tracking != nil {
+		s.Tracking.Progress(r.Context(), u, it, req.Position, req.Duration, at, justWatched, clientName(r))
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -516,6 +527,9 @@ func (s *Server) handleWatched(w http.ResponseWriter, r *http.Request) {
 	if err := s.DB.SetWatched(r.Context(), principal(r).User.ID, it.ID, req.Watched); err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	if s.Tracking != nil {
+		s.Tracking.Marked(r.Context(), principal(r).User, it, req.Watched)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

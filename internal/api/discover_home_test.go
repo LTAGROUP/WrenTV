@@ -58,7 +58,7 @@ func TestDiscoverHome(t *testing.T) {
 	if err := d.InsertItem(ctx, movie); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SetProgress(ctx, u.ID, movie.ID, 600, 6000); err != nil {
+	if _, err := d.SetProgress(ctx, u.ID, movie.ID, 600, 6000, 0.9); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{}

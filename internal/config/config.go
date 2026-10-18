@@ -41,6 +41,7 @@ type Config struct {
 	LiveTV       LiveTVConfig       `yaml:"live_tv"`
 	Users        UserLimitsConfig   `yaml:"users"`
 	Webhooks     []WebhookConfig    `yaml:"webhooks"`
+	Simkl        SimklConfig        `yaml:"simkl"`
 	Scanner      ScannerConfig      `yaml:"scanner"`
 	Markers      MarkersConfig      `yaml:"markers"`
 
@@ -165,6 +166,12 @@ type StreamingConfig struct {
 	Addons []AddonConfig `yaml:"addons"`
 	// Qualities resolved and stored for every title, best first.
 	Qualities []string `yaml:"qualities"`
+	// PerQuality is how many streams each quality keeps for users to choose
+	// from; the first plays by default.
+	PerQuality int `yaml:"per_quality"`
+	// Usenet also searches TorBox's Usenet cache (needs a TorBox plan with
+	// Usenet) and prefers it over torrents.
+	Usenet bool `yaml:"usenet"`
 	// MaxSizeGB skips releases larger than this per quality (0 = no limit).
 	MaxSizeGB map[string]float64 `yaml:"max_size_gb"`
 	// Prefetch resolves the rest of the season after an episode is played.
@@ -222,6 +229,13 @@ func DefaultAddons() []AddonConfig {
 	}
 }
 
+// SimklConfig lets users link Simkl accounts for scrobbling and importing
+// watch history. ClientID is an AUTH V2 app registered at
+// simkl.com/settings/developer.
+type SimklConfig struct {
+	ClientID string `yaml:"client_id"`
+}
+
 type WebhookConfig struct {
 	URL string `yaml:"url" json:"url"`
 	// Secret signs the payload: X-WrenTV-Signature: sha256=<hex hmac>.
@@ -258,6 +272,8 @@ func defaults() Config {
 			ProviderOrder:   []string{"torbox", "alldebrid", "realdebrid"},
 			Addons:          DefaultAddons(),
 			Qualities:       []string{"2160p", "1080p"},
+			PerQuality:      3,
+			Usenet:          true,
 			MaxSizeGB:       map[string]float64{"2160p": 0, "1080p": 0},
 			Prefetch:        true,
 			Mode:            "stream",

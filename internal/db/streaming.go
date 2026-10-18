@@ -10,15 +10,19 @@ import (
 // ---------- streams ----------
 
 // Stream is a release stored for a movie or episode at one quality: the
-// torrent (info hash) and the file inside it. No bytes are stored; the
-// stream plays through whichever debrid account has it cached. Provider,
+// torrent (info hash) or Usenet post (TorBox's hash and NZB link) and the
+// file inside it. A quality keeps a few, best first (Rank 0). No bytes are
+// stored; the stream plays through whichever debrid account has it cached. Provider,
 // ProviderRef and ProviderFile remember where it was last found, so playback
 // doesn't have to look it up again.
 type Stream struct {
 	ID           string `json:"id"`
 	ItemID       string `json:"itemId"`
 	Quality      string `json:"quality"`
+	Rank         int    `json:"rank"`
+	Kind         string `json:"kind"` // "torrent" or "usenet"
 	InfoHash     string `json:"infoHash"`
+	NZB          string `json:"-"`
 	FileIdx      int    `json:"fileIdx"`
 	FileName     string `json:"fileName"`
 	Size         int64  `json:"size"`
@@ -33,12 +37,12 @@ type Stream struct {
 }
 
 const streamCols = `id, item_id, quality, info_hash, file_idx, file_name, size, release, addon, provider, provider_ref, provider_file,
-	failures, created_at, updated_at`
+	failures, created_at, updated_at, rank, kind, nzb`
 
 func scanStream(r interface{ Scan(...any) error }) (*Stream, error) {
 	st := &Stream{}
 	err := r.Scan(&st.ID, &st.ItemID, &st.Quality, &st.InfoHash, &st.FileIdx, &st.FileName, &st.Size, &st.Release, &st.Addon,
-		&st.Provider, &st.ProviderRef, &st.ProviderFile, &st.Failures, &st.CreatedAt, &st.UpdatedAt)
+		&st.Provider, &st.ProviderRef, &st.ProviderFile, &st.Failures, &st.CreatedAt, &st.UpdatedAt, &st.Rank, &st.Kind, &st.NZB)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -50,7 +54,7 @@ func (d *DB) GetStream(ctx context.Context, id string) (*Stream, error) {
 }
 
 func (d *DB) StreamsForItem(ctx context.Context, itemID string) ([]*Stream, error) {
-	rows, err := d.QueryContext(ctx, `SELECT `+streamCols+` FROM streams WHERE item_id=? ORDER BY quality DESC`, itemID)
+	rows, err := d.QueryContext(ctx, `SELECT `+streamCols+` FROM streams WHERE item_id=? ORDER BY quality DESC, rank`, itemID)
 	if err != nil {
 		return nil, err
 	}
@@ -66,8 +70,9 @@ func (d *DB) StreamsForItem(ctx context.Context, itemID string) ([]*Stream, erro
 	return out, rows.Err()
 }
 
-// PutStream stores the stream for an item and quality (replacing an older
-// one) together with the media_files row that makes it playable.
+// PutStream stores a stream for an item and quality together with the
+// media_files row that makes it playable. The same file stored again
+// replaces the old row.
 func (d *DB) PutStream(ctx context.Context, st *Stream, f *MediaFile) error {
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
@@ -75,17 +80,21 @@ func (d *DB) PutStream(ctx context.Context, st *Stream, f *MediaFile) error {
 	}
 	defer tx.Rollback()
 	// The old stream's file goes with it (ON DELETE CASCADE).
-	if _, err := tx.ExecContext(ctx, `DELETE FROM streams WHERE item_id=? AND quality=?`, st.ItemID, st.Quality); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM streams WHERE item_id=? AND quality=? AND info_hash=? AND file_name=?`,
+		st.ItemID, st.Quality, st.InfoHash, st.FileName); err != nil {
 		return err
 	}
 	if st.ID == "" {
 		st.ID = NewID()
 	}
+	if st.Kind == "" {
+		st.Kind = "torrent"
+	}
 	now := Now()
 	st.CreatedAt, st.UpdatedAt = now, now
-	if _, err := tx.ExecContext(ctx, `INSERT INTO streams (`+streamCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	if _, err := tx.ExecContext(ctx, `INSERT INTO streams (`+streamCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		st.ID, st.ItemID, st.Quality, st.InfoHash, st.FileIdx, st.FileName, st.Size, st.Release, st.Addon, st.Provider,
-		st.ProviderRef, st.ProviderFile, st.Failures, st.CreatedAt, st.UpdatedAt); err != nil {
+		st.ProviderRef, st.ProviderFile, st.Failures, st.CreatedAt, st.UpdatedAt, st.Rank, st.Kind, st.NZB); err != nil {
 		return err
 	}
 	if f.ID == "" {
@@ -93,9 +102,10 @@ func (d *DB) PutStream(ctx context.Context, st *Stream, f *MediaFile) error {
 	}
 	f.StreamID = st.ID
 	f.Path = "stream:" + st.ID
+	f.StreamRank = st.Rank
 	if _, err := tx.ExecContext(ctx, `INSERT INTO media_files (id, item_id, library_id, path, size, mtime, stream_id,
-		container, video_codec, width, height, hdr) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, f.ID, f.ItemID, f.LibraryID, f.Path, f.Size, now,
-		f.StreamID, f.Container, f.VideoCodec, f.Width, f.Height, f.HDR); err != nil {
+		container, video_codec, width, height, hdr, stream_rank, tag) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, f.ID, f.ItemID, f.LibraryID, f.Path,
+		f.Size, now, f.StreamID, f.Container, f.VideoCodec, f.Width, f.Height, f.HDR, f.StreamRank, f.Tag); err != nil {
 		return err
 	}
 	return tx.Commit()

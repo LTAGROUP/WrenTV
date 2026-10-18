@@ -322,6 +322,32 @@ var migrations = []string{
 		PRIMARY KEY (user_id, item_id)
 	);
 	CREATE INDEX watchlist_recent ON watchlist(user_id, added_at DESC);`,
+	// Several streams per quality (rank 0 plays by default), from torrents
+	// or Usenet. Streams stored before this are dropped and looked up again.
+	`DELETE FROM media_files WHERE stream_id IS NOT NULL;
+	DELETE FROM streams;
+	DELETE FROM stream_lookups;
+	DROP INDEX streams_item_quality;
+	ALTER TABLE streams ADD COLUMN kind TEXT NOT NULL DEFAULT 'torrent';
+	ALTER TABLE streams ADD COLUMN nzb TEXT NOT NULL DEFAULT '';
+	ALTER TABLE streams ADD COLUMN rank INTEGER NOT NULL DEFAULT 0;
+	CREATE INDEX streams_item ON streams(item_id, quality, rank);
+	ALTER TABLE media_files ADD COLUMN stream_rank INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE media_files ADD COLUMN tag TEXT NOT NULL DEFAULT '';`,
+	// Linked Simkl accounts, for scrobbling and importing watch history.
+	`CREATE TABLE simkl_accounts (
+		user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		access_token TEXT NOT NULL,
+		refresh_token TEXT NOT NULL DEFAULT '',
+		expires_at INTEGER NOT NULL DEFAULT 0,
+		username TEXT NOT NULL DEFAULT '',
+		scrobble INTEGER NOT NULL DEFAULT 1,
+		linked_at INTEGER NOT NULL,
+		import_status TEXT NOT NULL DEFAULT '',
+		import_at INTEGER NOT NULL DEFAULT 0,
+		import_movies INTEGER NOT NULL DEFAULT 0,
+		import_episodes INTEGER NOT NULL DEFAULT 0
+	);`,
 }
 
 // fkOff lists migrations (1-based) that rebuild tables. They run with

@@ -672,15 +672,19 @@ type MediaFile struct {
 	DVProfile  int     `json:"dvProfile,omitempty"`
 	Probe      string  `json:"-"`
 	ProbedAt   int64   `json:"-"`
+	// StreamRank orders a quality's streams (0 is the best); Tag says
+	// where a stream comes from ("Usenet · Remux").
+	StreamRank int    `json:"streamRank,omitempty"`
+	Tag        string `json:"tag,omitempty"`
 }
 
 const fileCols = `id, item_id, library_id, path, size, mtime, COALESCE(stream_id,''), container, duration,
-	video_codec, width, height, hdr, dv_profile, probe, probed_at`
+	video_codec, width, height, hdr, dv_profile, probe, probed_at, stream_rank, tag`
 
 func scanFile(r interface{ Scan(...any) error }) (*MediaFile, error) {
 	f := &MediaFile{}
 	err := r.Scan(&f.ID, &f.ItemID, &f.LibraryID, &f.Path, &f.Size, &f.MTime, &f.StreamID, &f.Container,
-		&f.Duration, &f.VideoCodec, &f.Width, &f.Height, &f.HDR, &f.DVProfile, &f.Probe, &f.ProbedAt)
+		&f.Duration, &f.VideoCodec, &f.Width, &f.Height, &f.HDR, &f.DVProfile, &f.Probe, &f.ProbedAt, &f.StreamRank, &f.Tag)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -696,7 +700,7 @@ func (d *DB) FileByPath(ctx context.Context, path string) (*MediaFile, error) {
 }
 
 func (d *DB) FilesForItem(ctx context.Context, itemID string) ([]*MediaFile, error) {
-	return d.queryFiles(ctx, `SELECT `+fileCols+` FROM media_files WHERE item_id=? ORDER BY height DESC, size DESC`, itemID)
+	return d.queryFiles(ctx, `SELECT `+fileCols+` FROM media_files WHERE item_id=? ORDER BY height DESC, stream_rank, size DESC`, itemID)
 }
 
 func (d *DB) FilesForLibrary(ctx context.Context, libraryID string) ([]*MediaFile, error) {
@@ -799,16 +803,20 @@ type WatchState struct {
 	UpdatedAt int64   `json:"updatedAt"`
 }
 
-func (d *DB) SetProgress(ctx context.Context, userID, itemID string, pos, dur float64) error {
-	watched := dur > 0 && pos/dur >= 0.92
+// SetProgress records a position; reaching watchedAt (a fraction of dur)
+// marks the item watched. It reports whether this report did that.
+func (d *DB) SetProgress(ctx context.Context, userID, itemID string, pos, dur, watchedAt float64) (bool, error) {
+	watched := dur > 0 && pos/dur >= watchedAt
+	var was bool
 	if watched {
 		pos = 0
+		_ = d.QueryRowContext(ctx, `SELECT watched FROM watch_state WHERE user_id=? AND item_id=?`, userID, itemID).Scan(&was)
 	}
 	_, err := d.ExecContext(ctx, `INSERT INTO watch_state (user_id, item_id, position, duration, watched, updated_at) VALUES (?,?,?,?,?,?)
 		ON CONFLICT(user_id, item_id) DO UPDATE SET position=excluded.position, duration=excluded.duration,
 		watched=MAX(watch_state.watched, excluded.watched), updated_at=excluded.updated_at`,
 		userID, itemID, pos, dur, watched, Now())
-	return err
+	return watched && !was, err
 }
 
 // SetWatched marks an item (and for shows/seasons, every episode under it).

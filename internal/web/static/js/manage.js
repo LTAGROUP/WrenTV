@@ -436,7 +436,10 @@ function streamingTab(s, libs) {
         <div class="field"><label>Movies go to</label><select name="stMovieLib">${libOpts('movies', st.movieLibrary)}</select></div>
         <div class="field"><label>Shows go to</label><select name="stShowLib">${libOpts('shows', st.showLibrary)}</select></div>
         <div class="field"><label>Download quality</label><select name="stDlQuality">${QUALITIES.map(([q, label]) => `<option value="${q}" ${q === st.downloadQuality ? 'selected' : ''}>${label}</option>`).join('')}</select></div>
+        <div class="field"><label>Versions per quality</label><select name="stPerQuality">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${n === (st.perQuality || 3) ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
       </div>
+      <label class="check"><input type="checkbox" name="stUsenet" ${st.usenet !== false ? 'checked' : ''}> Prefer TorBox Usenet (needs a TorBox plan with Usenet)</label>
+      <p class="small muted">Each title gets this many 4K and 1080p versions to choose from. The best one plays unless the viewer picks another.</p>
     </div>
 
     <div class="panel"><h2>Limits</h2>
@@ -653,8 +656,10 @@ export async function viewSettings() {
     </div>
 
     <div data-tab="integrations">
-      <div class="panel"><h2>Webhooks</h2><p class="small muted">Called on server events: <code>stream.unavailable</code>, <code>download.completed</code>, <code>download.failed</code>, and library changes.</p>
+      <div class="panel"><h2>Webhooks</h2><p class="small muted">Called on server events: <code>playback.start</code>, <code>playback.pause</code>, <code>playback.resume</code>, <code>playback.stop</code>, <code>playback.watched</code>, <code>item.watched</code>, <code>stream.unavailable</code>, <code>download.completed</code>, <code>download.failed</code>, and library changes.</p>
         <div class="hooks"></div><button type="button" class="btn small" data-addhook>Add webhook</button></div>
+      <div class="panel"><h2>Simkl</h2><p class="small muted">Lets people link their Simkl account in their settings, to import watch history and scrobble what they watch. Register an app at <a href="https://simkl.com/settings/developer/" target="_blank" rel="noopener">simkl.com/settings/developer</a> (AUTH V2, type “TV, devices &amp; command line”) and paste its client ID.</p>
+        <div class="field"><label>Client ID</label><input name="simklClientId" value="${esc(s.simklClientId || '')}" autocomplete="off" spellcheck="false"></div></div>
       <div class="panel"><h2>Integration key</h2><p class="small muted">Lets other services manage libraries on this server (header <code>X-WrenTV-Key</code>).</p>
         <div class="mono">${esc(s.integrationKey)}</div></div>
     </div>
@@ -793,6 +798,8 @@ export async function viewSettings() {
       movieLibrary: v.stMovieLib,
       showLibrary: v.stShowLib,
       downloadQuality: v.stDlQuality,
+      perQuality: int(v.stPerQuality),
+      usenet: !!v.stUsenet,
       limits: {
         bandwidthMbps: num(v.lBandwidth), perStreamMbps: num(v.lPerStream), downloadMbps: num(v.lDownload),
         maxStreams: int(v.lStreams), maxDownloads: int(v.lDownloads), prefetchWorkers: int(v.lPrefetch),
@@ -814,6 +821,7 @@ export async function viewSettings() {
     if (s.remoteAccess) {
       body.remoteAccess = { enabled: !!v.remoteEnabled, upnp: !!v.remoteUpnp, publicPort: Number(v.remotePort) || 0 };
     }
+    if (v.simklClientId !== undefined) body.simklClientId = v.simklClientId.trim();
     if (v.tmdbApiKey) body.tmdbApiKey = v.tmdbApiKey;
     if (v.omdbApiKey) body.omdbApiKey = v.omdbApiKey;
     const err = $('[data-err]', node);

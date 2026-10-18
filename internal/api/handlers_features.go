@@ -38,6 +38,7 @@ func (s *Server) handlePatchPrefs(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AudioLanguage    *string `json:"audioLanguage"`
 		SubtitleLanguage *string `json:"subtitleLanguage"`
+		WatchedPercent   *int    `json:"watchedPercent"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, 400, err.Error())
@@ -48,6 +49,13 @@ func (s *Server) handlePatchPrefs(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SubtitleLanguage != nil {
 		p.SubtitleLanguage = db.NormalizeLang(*req.SubtitleLanguage)
+	}
+	if req.WatchedPercent != nil {
+		if *req.WatchedPercent < 50 || *req.WatchedPercent > 98 {
+			writeErr(w, 400, "watchedPercent must be between 50 and 98")
+			return
+		}
+		p.WatchedPercent = *req.WatchedPercent
 	}
 	if err := s.DB.SetPrefs(r.Context(), uid, p); err != nil {
 		writeErr(w, 500, err.Error())

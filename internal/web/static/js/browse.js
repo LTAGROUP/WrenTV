@@ -356,8 +356,12 @@ export async function viewAccount() {
       <p class="small muted">Wren TV starts playback with an audio track in this language when the file has one.</p>
       <div class="field"><label>Subtitles</label>
         <select id="subs">${`<option value="">Off</option>` + sorted.map((c) => `<option value="${c}" ${c === prefs.subtitleLanguage ? 'selected' : ''}>${esc(name(c))}</option>`).join('')}</select></div>
-      <p class="small muted" style="margin:0">Subtitles in this language turn on by themselves when the file has them. Both settings are saved to your account, so they apply on every device and browser you sign in with. You can still switch tracks while watching.</p>
+      <p class="small muted">Subtitles in this language turn on by themselves when the file has them. Both settings are saved to your account, so they apply on every device and browser you sign in with. You can still switch tracks while watching.</p>
+      <div class="field"><label>Counts as watched at</label>
+        <select id="watched">${[50, 60, 70, 75, 80, 85, 90, 95, 98].map((v) => `<option value="${v}" ${v === (prefs.watchedPercent || 90) ? 'selected' : ''}>${v}%</option>`).join('')}</select></div>
+      <p class="small muted" style="margin:0">How far into a movie or episode you need to get before it's marked watched and drops off Continue Watching. Lower it if you usually stop when the credits start.</p>
     </div>
+    <div class="panel" style="max-width:640px;margin-top:18px" id="simkl"></div>
     <div class="panel" style="max-width:640px;margin-top:18px"><h2>Sign in a TV</h2>
       <p class="small muted">On the TV, choose “Sign in with your phone”. Scan its QR code, or enter the code it shows here.</p>
       <a class="btn" href="/link">Enter a TV code</a>
@@ -370,6 +374,60 @@ export async function viewAccount() {
   };
   $('#audio', node).onchange = save('audioLanguage');
   $('#subs', node).onchange = save('subtitleLanguage');
+  $('#watched', node).onchange = async (e) => {
+    try {
+      await api('/api/me/prefs', { method: 'PATCH', body: { watchedPercent: Number(e.target.value) } });
+      toast('Saved.');
+    } catch (err) { toast(err.message); }
+  };
+  simklPanel($('#simkl', node));
   return node;
+}
+
+// simklPanel links a Simkl account: scrobbling while you watch, and an
+// import of the history you already have there.
+async function simklPanel(box) {
+  let st;
+  try { st = await api('/api/me/simkl'); } catch { box.remove(); return; }
+  if (!st.available && !st.linked) { box.remove(); return; }
+  const a = st.account;
+  const ago = (t) => t ? new Date(t * 1000).toLocaleString() : '';
+  let body;
+  if (st.linked) {
+    const imp = st.importing || a.importStatus === 'running' ? 'Importing your history…'
+      : a.importStatus === 'done' ? `Last import ${ago(a.importAt)}: ${a.importMovies} movies and ${a.importEpisodes} episodes marked watched.`
+      : a.importStatus ? `Import failed: ${esc(a.importStatus)}` : '';
+    body = `<p>Linked to <b>${esc(a.username || 'your Simkl account')}</b>.</p>
+      <label class="check"><input type="checkbox" id="sk-scrobble" ${a.scrobble ? 'checked' : ''}> Send what I watch to Simkl</label>
+      <p class="small muted">Simkl shows what you're watching while you play, and marks it watched when you pass your “counts as watched” point. Marking something watched by hand updates Simkl too.</p>
+      ${imp ? `<p class="small muted">${imp}</p>` : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="sk-import" ${st.importing ? 'disabled' : ''}>Import history again</button>
+      <button class="btn danger" id="sk-unlink">Disconnect</button></div>`;
+  } else if (st.pending && !st.pending.error) {
+    const url = st.pending.urlComplete || st.pending.url;
+    body = `<p>Open <a href="${esc(url)}" target="_blank" rel="noopener">${esc(st.pending.url.replace(/^https?:\/\//, ''))}</a> and enter</p>
+      <p style="font-size:28px;font-weight:700;letter-spacing:2px;margin:6px 0 12px">${esc(st.pending.userCode)}</p>
+      <p class="small muted">Waiting for you to approve it on Simkl…</p>
+      <button class="btn" id="sk-cancel">Cancel</button>`;
+  } else {
+    body = `<p class="small muted">Link your Simkl account to import what you've already watched and keep Simkl up to date as you watch here.</p>
+      ${st.pending?.error ? `<p class="small" style="color:var(--danger,#e66)">${esc(st.pending.error)}</p>` : ''}
+      <button class="btn primary" id="sk-link">Connect Simkl</button>`;
+  }
+  box.innerHTML = `<h2>Simkl</h2>${body}`;
+  const again = () => simklPanel(box);
+  const act = (sel, fn) => { const b = $(sel, box); if (b) b.onclick = async () => { try { await fn(); } catch (err) { toast(err.message); } again(); }; };
+  act('#sk-link', async () => {
+    const p = await api('/api/me/simkl/link', { method: 'POST' });
+    if (p.urlComplete) window.open(p.urlComplete, '_blank', 'noopener');
+  });
+  act('#sk-cancel', () => api('/api/me/simkl/link', { method: 'DELETE' }));
+  act('#sk-unlink', () => api('/api/me/simkl', { method: 'DELETE' }));
+  act('#sk-import', () => api('/api/me/simkl/import', { method: 'POST' }));
+  const cb = $('#sk-scrobble', box);
+  if (cb) cb.onchange = async () => { try { await api('/api/me/simkl', { method: 'PATCH', body: { scrobble: cb.checked } }); toast('Saved.'); } catch (err) { toast(err.message); } };
+  if ((st.pending && !st.pending.error) || st.importing || a?.importStatus === 'running') {
+    setTimeout(() => { if (box.isConnected) again(); }, 3000);
+  }
 }
 

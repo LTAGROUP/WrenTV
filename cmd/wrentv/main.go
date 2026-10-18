@@ -37,9 +37,11 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/markers"
 	"github.com/LTAGROUP/wrentv/internal/metadata/omdb"
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
+	"github.com/LTAGROUP/wrentv/internal/simkl"
 	"github.com/LTAGROUP/wrentv/internal/stream"
-	"github.com/LTAGROUP/wrentv/internal/thumbs"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
+	"github.com/LTAGROUP/wrentv/internal/thumbs"
+	"github.com/LTAGROUP/wrentv/internal/tracking"
 	"github.com/LTAGROUP/wrentv/internal/webhook"
 )
 
@@ -240,6 +242,8 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	hooks := webhook.New(func() []config.WebhookConfig { return cfg.Webhooks })
 	streamer := streaming.New(streaming.Deps{Cfg: cfg, DB: d, TMDB: tm, Scanner: scanner, Hub: hub, Hooks: hooks, Server: serverInfo, HTTPPort: port})
 	streamer.Start(ctx)
+	tracker := tracking.New(d, simkl.New(func() string { return cfg.Simkl.ClientID }, version), hooks, serverInfo)
+	tracker.Start(ctx)
 	if cfg.Streaming.Enabled && !streamer.Active() {
 		slog.Warn("streaming is enabled but needs a debrid API key and a TMDB key to work")
 	}
@@ -251,7 +255,7 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	srv := &api.Server{
 		Version: version, Cfg: cfg, DB: d, Scanner: scanner, Watcher: watcher, TMDB: tm, Streams: streams,
 		OMDb: omdb.New(func() string { return cfg.Metadata.OMDbAPIKey }, d), Markers: analyzer,
-		Streaming: streamer, LiveTV: live, Hub: hub, Hooks: hooks, Images: images.New(filepath.Join(dataDir, "images")),
+		Streaming: streamer, LiveTV: live, Hub: hub, Hooks: hooks, Tracking: tracker, Images: images.New(filepath.Join(dataDir, "images")),
 		Thumbs: thumbs.New(filepath.Join(cfg.DataDir, "cache", "thumbs"), cfg.Transcode.FFmpegPath),
 	}
 	switch cfg.Auth.Mode {

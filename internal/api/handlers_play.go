@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -272,6 +273,13 @@ func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
 	sid := chi.URLParam(r, "sid")
 	if sess := s.Streams.Get(sid); sess != nil && (sess.UserID == principal(r).User.ID || principal(r).IsAdmin()) {
 		s.Streams.Stop(sid)
+		if s.Tracking != nil {
+			s.Tracking.Stopped(sess.UserID, sess.ItemID)
+		}
+	} else if s.Tracking != nil {
+		if itemID := s.DB.PlayItemBySession(r.Context(), sid, principal(r).User.ID); itemID != "" {
+			s.Tracking.Stopped(principal(r).User.ID, itemID)
+		}
 	}
 	s.LiveTV.Stop(sid, principal(r).User.ID, principal(r).IsAdmin())
 	w.WriteHeader(http.StatusNoContent)
@@ -288,11 +296,11 @@ func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 		}
 	}
 	type rank struct {
-		tier, streamed, fit, height int
-		size                        int64
+		tier, streamed, fit, height, srank int
+		size                               int64
 	}
 	rankOf := func(f *db.MediaFile) rank {
-		rk := rank{tier: 1, size: -f.Size}
+		rk := rank{tier: 1, size: -f.Size, srank: f.StreamRank}
 		h, w := fileHeight(f), f.Width
 		fits := req.MaxWidth <= 0 || (w > 0 && w <= req.MaxWidth*11/10) || (w == 0 && h > 0 && h*16/9 <= req.MaxWidth*11/10)
 		if f.Probe != "" {
@@ -319,6 +327,13 @@ func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 	}
 	less := func(a, b rank) bool {
 		switch {
+		// A quality's streams keep their order (best first) unless one is
+		// known to need transcoding: playing another once doesn't make it
+		// the default.
+		case a.streamed == 1 && b.streamed == 1 && a.fit == b.fit && a.height == b.height && a.tier < 2 && b.tier < 2:
+			if a.srank != b.srank {
+				return a.srank < b.srank
+			}
 		case a.tier != b.tier:
 			return a.tier < b.tier
 		case a.streamed != b.streamed:
@@ -426,7 +441,7 @@ func versionLabel(f *db.MediaFile) string {
 		parts = append(parts, fmt.Sprintf("%d MB", max(1, f.Size>>20)))
 	}
 	if f.StreamID != "" {
-		parts = append(parts, "Stream")
+		parts = append(parts, cmp.Or(f.Tag, "Stream"))
 	}
 	if len(parts) == 0 {
 		return displayFileName(f.Path)

@@ -65,7 +65,7 @@ func TestFeaturesSmoke(t *testing.T) {
 	if err := d.StartPlay(ctx, PlayStart{SessionID: "s1", UserID: u.ID, Item: m, Method: "direct", Client: "Chrome on macOS", Duration: 6000}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.TrackPlay(ctx, u.ID, m.ID, 4, 6000); err != nil {
+	if err := d.TrackPlay(ctx, u.ID, m.ID, 4, 6000, 0.9); err != nil {
 		t.Fatal(err)
 	}
 	st, err := d.Stats(ctx, time.Now().Add(-24*time.Hour).Unix(), 2, 0)

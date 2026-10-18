@@ -30,6 +30,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/stream"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
 	"github.com/LTAGROUP/wrentv/internal/thumbs"
+	"github.com/LTAGROUP/wrentv/internal/tracking"
 	"github.com/LTAGROUP/wrentv/internal/web"
 	"github.com/LTAGROUP/wrentv/internal/webhook"
 )
@@ -48,6 +49,7 @@ type Server struct {
 	LiveTV    *livetv.Service
 	Hub       *library.Hub
 	Hooks     *webhook.Sender
+	Tracking  *tracking.Service // Simkl and playback webhooks
 	Images    *images.Cache
 	Thumbs    *thumbs.Manager // seek thumbnails
 	Direct    *direct.Manager // automatic HTTPS addresses (supabase mode)
@@ -158,6 +160,12 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/livetv/channels/{id}/play", s.handleLivePlay)
 		r.Get("/api/me/prefs", s.handleGetPrefs)
 		r.Patch("/api/me/prefs", s.handlePatchPrefs)
+		r.Get("/api/me/simkl", s.handleSimklStatus)
+		r.Patch("/api/me/simkl", s.handleSimklPatch)
+		r.Post("/api/me/simkl/link", s.handleSimklLink)
+		r.Delete("/api/me/simkl/link", s.handleSimklCancelLink)
+		r.Delete("/api/me/simkl", s.handleSimklUnlink)
+		r.Post("/api/me/simkl/import", s.handleSimklImport)
 		r.Get("/api/genres", s.handleGenres)
 		r.Get("/api/genres/items", s.handleGenreItems)
 		r.Get("/api/collections", s.handleCollections)

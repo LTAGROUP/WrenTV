@@ -186,3 +186,31 @@ func EpisodeFiles(files []RemoteFile, season int) map[int]RemoteFile {
 	}
 	return out
 }
+
+var nonAlnumRE = regexp.MustCompile(`[^a-z0-9]+`)
+
+// sameRelease normalizes a release name, so one release found both on
+// Usenet and as a torrent is offered once.
+func sameRelease(name string) string {
+	if n := nonAlnumRE.ReplaceAllString(strings.ToLower(name), ""); n != "" {
+		return "name:" + n
+	}
+	return ""
+}
+
+// ReleaseTag describes where a stream comes from for version pickers:
+// "Usenet · Remux", "Torrent · WEB-DL".
+func ReleaseTag(kind, name string) string {
+	tag := "Torrent"
+	if kind == "usenet" {
+		tag = "Usenet"
+	}
+	t := strings.ToLower(name)
+	for _, s := range []struct{ marker, label string }{{"remux", "Remux"}, {"bluray", "BluRay"}, {"blu-ray", "BluRay"},
+		{"web-dl", "WEB-DL"}, {"webdl", "WEB-DL"}, {"webrip", "WEBRip"}, {"hdtv", "HDTV"}} {
+		if strings.Contains(t, s.marker) {
+			return tag + " · " + s.label
+		}
+	}
+	return tag
+}

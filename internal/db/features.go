@@ -17,9 +17,25 @@ type Prefs struct {
 	AudioLanguage string `json:"audioLanguage"`
 	// SubtitleLanguage turns subtitles on in this language ("fr"); empty is off.
 	SubtitleLanguage string `json:"subtitleLanguage"`
+	// WatchedPercent is how far into a movie or episode (50–98) playback must
+	// get before it counts as watched.
+	WatchedPercent int `json:"watchedPercent"`
 }
 
-func DefaultPrefs() Prefs { return Prefs{AudioLanguage: "en"} }
+// DefaultWatchedPercent is the watched threshold for users who haven't set one.
+const DefaultWatchedPercent = 90
+
+func DefaultPrefs() Prefs {
+	return Prefs{AudioLanguage: "en", WatchedPercent: DefaultWatchedPercent}
+}
+
+// WatchedAt is the fraction of the runtime that counts as watched.
+func (p Prefs) WatchedAt() float64 {
+	if p.WatchedPercent < 50 || p.WatchedPercent > 98 {
+		return DefaultWatchedPercent / 100.0
+	}
+	return float64(p.WatchedPercent) / 100
+}
 
 func (d *DB) GetPrefs(ctx context.Context, userID string) (Prefs, error) {
 	p := DefaultPrefs()
@@ -334,7 +350,7 @@ func (d *DB) StartPlay(ctx context.Context, p PlayStart) error {
 // TrackPlay adds watch time from a progress report. Time counts only as far
 // as the position advanced, capped by wall-clock time, so pauses and seeks
 // don't inflate it.
-func (d *DB) TrackPlay(ctx context.Context, userID, itemID string, pos, dur float64) error {
+func (d *DB) TrackPlay(ctx context.Context, userID, itemID string, pos, dur, watchedAt float64) error {
 	now := Now()
 	var id string
 	var last int64
@@ -351,10 +367,18 @@ func (d *DB) TrackPlay(ctx context.Context, userID, itemID string, pos, dur floa
 	if delta < 0 {
 		delta = 0
 	}
-	completed := dur > 0 && pos/dur >= 0.9
+	completed := dur > 0 && pos/dur >= watchedAt
 	_, err = d.ExecContext(ctx, `UPDATE play_history SET last_seen_at=?, position_end=?, duration=CASE WHEN ? > 0 THEN ? ELSE duration END,
 		played_seconds=played_seconds+?, completed=MAX(completed, ?) WHERE id=?`, now, pos, dur, dur, delta, completed, id)
 	return err
+}
+
+// PlayItemBySession returns the item a user's session played, if recorded.
+func (d *DB) PlayItemBySession(ctx context.Context, sessionID, userID string) string {
+	var id sql.NullString
+	_ = d.QueryRowContext(ctx, `SELECT item_id FROM play_history WHERE session_id=? AND user_id=? ORDER BY last_seen_at DESC LIMIT 1`,
+		sessionID, userID).Scan(&id)
+	return id.String
 }
 
 // PlayBySession returns the latest position recorded for a live session.

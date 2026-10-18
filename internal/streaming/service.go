@@ -1,10 +1,11 @@
 // Package streaming lets a server act as a shared Stremio-style client.
 //
 // Any movie or show can be searched and played. When a title is played the
-// server asks its Stremio addons (Torrentio, Comet, …) for releases, keeps
-// those already cached on the owner's debrid accounts (TorBox, AllDebrid,
-// Real-Debrid), and stores the best one per quality (2160p and 1080p) as a
-// stream: just the info hash and the file, never the media. Bytes are
+// server asks its Stremio addons (Torrentio, Comet, …) for releases and
+// TorBox for cached Usenet posts, keeps those already cached on the owner's
+// debrid accounts (TorBox, AllDebrid, Real-Debrid), and stores the best few
+// per quality (2160p and 1080p, Usenet first) as streams users can choose
+// between: just the info hash or NZB and the file, never the media. Bytes are
 // proxied from the debrid CDN on demand. After an episode plays, the rest of
 // its season is looked up in the background; a season pack fills every
 // episode at once. Streamed titles live in "streaming" libraries and give
@@ -23,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -90,6 +92,7 @@ type cachedLink struct {
 
 type lookup struct {
 	done  chan struct{}
+	ready chan struct{} // every quality has a stream; more may follow
 	found int
 	err   error
 }
@@ -173,6 +176,9 @@ func (s *Service) qualities() []string {
 	}
 	return q
 }
+
+// perQuality is how many streams each quality keeps.
+func (s *Service) perQuality() int { return max(s.cfg().PerQuality, 1) }
 
 func (s *Service) maxSize(q string) int64 {
 	return int64(s.cfg().MaxSizeGB[q] * (1 << 30))
@@ -361,12 +367,17 @@ func (s *Service) syncEpisodes(ctx context.Context, show *db.Item, sh *tmdb.Show
 
 // Ensure makes sure a streaming movie or episode has streams, looking them
 // up if needed. It waits up to wait; ready=false means the lookup is still
-// running. ErrNoStreams means nothing cached was found.
+// running. ErrNoStreams means nothing cached was found. A lookup is ready
+// once every quality has its first stream; the other choices keep coming
+// in the background.
 func (s *Service) Ensure(ctx context.Context, it *db.Item, wait time.Duration) (ready bool, err error) {
 	if !s.Active() {
 		return false, ErrDisabled
 	}
 	if sts, _ := s.DB.StreamsForItem(ctx, it.ID); len(sts) > 0 {
+		if len(sts) < len(s.qualities())*s.perQuality() {
+			s.topUp(it)
+		}
 		return true, nil
 	}
 	s.mu.Lock()
@@ -377,14 +388,14 @@ func (s *Service) Ensure(ctx context.Context, it *db.Item, wait time.Duration) (
 			s.mu.Unlock()
 			return false, ErrNoStreams
 		}
-		lk = &lookup{done: make(chan struct{})}
-		s.lookups[it.ID] = lk
-		go s.runLookup(it, lk)
+		lk = s.startLookup(it)
 	}
 	s.mu.Unlock()
 	t := time.NewTimer(wait)
 	defer t.Stop()
 	select {
+	case <-lk.ready:
+		return true, nil
 	case <-lk.done:
 		if lk.err != nil {
 			return false, lk.err
@@ -400,10 +411,38 @@ func (s *Service) Ensure(ctx context.Context, it *db.Item, wait time.Duration) (
 	}
 }
 
+// topUp looks for more choices for an item that has fewer than it keeps,
+// as when a stream was dropped. Recent lookups aren't repeated.
+func (s *Service) topUp(it *db.Item) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lookups[it.ID] != nil {
+		return
+	}
+	if l, err := s.DB.GetStreamLookup(context.Background(), it.ID); err == nil && time.Since(time.Unix(l.LookedAt, 0)) < 6*time.Hour {
+		return
+	}
+	s.startLookup(it)
+}
+
+// startLookup runs a lookup in the background. Callers hold s.mu.
+func (s *Service) startLookup(it *db.Item) *lookup {
+	lk := &lookup{done: make(chan struct{}), ready: make(chan struct{})}
+	s.lookups[it.ID] = lk
+	go s.runLookup(it, lk)
+	return lk
+}
+
 func (s *Service) runLookup(it *db.Item, lk *lookup) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	lk.found, lk.err = s.resolve(ctx, it)
+	var once sync.Once
+	lk.found, lk.err = s.resolve(ctx, it, func() {
+		once.Do(func() {
+			close(lk.ready)
+			s.Hub.Publish(library.Event{Type: "stream.updated", LibraryID: it.LibraryID, ItemID: it.ID})
+		})
+	})
 	close(lk.done)
 	s.mu.Lock()
 	delete(s.lookups, it.ID)
@@ -449,47 +488,181 @@ type pick struct {
 	file RemoteFile
 }
 
-// resolve looks up and stores every missing quality of an item. It returns
-// how many qualities the item now has.
-func (s *Service) resolve(ctx context.Context, it *db.Item) (int, error) {
-	have := map[string]bool{}
-	if sts, _ := s.DB.StreamsForItem(ctx, it.ID); len(sts) > 0 {
-		for _, st := range sts {
-			have[st.Quality] = true
+// usenetProvider is the debrid service that serves Usenet, when Usenet is on.
+func (s *Service) usenetProvider() UsenetProvider {
+	if !s.cfg().Usenet {
+		return nil
+	}
+	for _, p := range s.Providers() {
+		if u, ok := p.(UsenetProvider); ok {
+			return u
 		}
 	}
-	missing := slices.DeleteFunc(slices.Clone(s.qualities()), func(q string) bool { return have[q] })
+	return nil
+}
+
+// search asks the addons for torrents and TorBox for cached Usenet posts at once.
+func (s *Service) search(ctx context.Context, imdb string, season, episode int) (torrents, usenet []Release, err error) {
+	var wg sync.WaitGroup
+	if u := s.usenetProvider(); u != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var uerr error
+			if usenet, uerr = u.SearchUsenet(ctx, imdb, season, episode); uerr != nil {
+				slog.Info("usenet search failed", "imdb", imdb, "err", uerr)
+			}
+		}()
+	}
+	torrents, err = Search(ctx, s.addons(), imdb, season, episode)
+	wg.Wait()
+	if len(usenet) > 0 {
+		err = nil
+	}
+	return torrents, usenet, err
+}
+
+// cacheState is what one provider said about the torrents of a lookup.
+type cacheState struct {
+	known  bool // false: the provider can't tell, so adding is the test
+	cached map[string]bool
+	busy   atomic.Bool // rate limited: skip it for this lookup
+}
+
+// checkCached asks each provider in one go which of the top torrents of
+// every quality it has cached.
+func (s *Service) checkCached(ctx context.Context, rels []Release, qualities []string, season int) map[string]*cacheState {
+	var hashes []string
+	seen := map[string]bool{}
+	for _, q := range qualities {
+		cands := Rank(rels, q, s.maxSize(q), season)
+		for _, r := range cands[:min(len(cands), 40)] {
+			if !seen[r.InfoHash] {
+				seen[r.InfoHash] = true
+				hashes = append(hashes, r.InfoHash)
+			}
+		}
+	}
+	out := map[string]*cacheState{}
+	for _, p := range s.Providers() {
+		cs := &cacheState{known: true, cached: map[string]bool{}}
+		out[p.Name()] = cs
+		if len(hashes) == 0 || ctx.Err() != nil {
+			continue
+		}
+		res, known, err := p.Check(ctx, hashes)
+		if err != nil {
+			slog.Debug("cache check", "provider", p.Name(), "err", err)
+			cs.busy.Store(errors.Is(err, ErrRateLimited))
+		}
+		cs.known = known
+		for h, ok := range res {
+			cs.cached[h] = ok
+		}
+	}
+	return out
+}
+
+// resolve looks up and stores the missing streams of an item: up to
+// perQuality per quality, Usenet first, then torrents, each in rank order.
+// ready is called once every quality has a stream (or none could be found)
+// and at least one was stored. It returns how many streams the item has.
+func (s *Service) resolve(ctx context.Context, it *db.Item, ready func()) (int, error) {
+	per := s.perQuality()
+	sts, _ := s.DB.StreamsForItem(ctx, it.ID)
+	have := map[string][]*db.Stream{}
+	for _, st := range sts {
+		have[st.Quality] = append(have[st.Quality], st)
+	}
+	var missing []string
+	for _, q := range s.qualities() {
+		if len(have[q]) < per {
+			missing = append(missing, q)
+		}
+	}
 	if len(missing) == 0 {
-		return len(have), nil
+		return len(sts), nil
 	}
 	imdb, season, episode, err := s.target(ctx, it)
 	if err != nil {
-		s.recordLookup(ctx, it.ID, len(have), err)
-		return len(have), err
+		s.recordLookup(ctx, it.ID, len(sts), err)
+		return len(sts), err
 	}
-	rels, err := Search(ctx, s.addons(), imdb, season, episode)
+	rels, nzbs, err := s.search(ctx, imdb, season, episode)
 	if err != nil && len(rels) == 0 {
-		s.recordLookup(ctx, it.ID, len(have), err)
-		return len(have), err
+		s.recordLookup(ctx, it.ID, len(sts), err)
+		return len(sts), err
 	}
-	checked := map[string]map[string]bool{}
-	found := len(have)
+	caches := s.checkCached(ctx, rels, missing, season)
+
+	var mu sync.Mutex
+	found := len(sts)
+	unsettled := len(missing)
+	settle := func() {
+		mu.Lock()
+		unsettled--
+		done := unsettled == 0 && found > 0
+		mu.Unlock()
+		if done && ready != nil {
+			ready()
+		}
+	}
+	var wg sync.WaitGroup
 	for _, q := range missing {
-		cands := Rank(rels, q, s.maxSize(q), season)
-		p := s.findCached(ctx, cands, season, episode, s.maxSize(q), checked)
-		if p == nil {
-			continue
-		}
-		if err := s.store(ctx, it, q, p); err != nil {
-			slog.Warn("store stream", "item", it.ID, "err", err)
-			continue
-		}
-		found++
-		if season > 0 {
-			s.fillSeason(ctx, it, q, p) // a season pack covers the other episodes too
-		}
+		wg.Add(1)
+		go func(q string) {
+			defer wg.Done()
+			settled := false
+			defer func() {
+				if !settled {
+					settle()
+				}
+			}()
+			maxSize := s.maxSize(q)
+			rank, skip := 0, map[string]bool{"": true}
+			for _, st := range have[q] {
+				rank = max(rank, st.Rank+1)
+				skip[st.InfoHash], skip[sameRelease(st.Release)] = true, true
+			}
+			need := per - len(have[q])
+			cands := append(Rank(nzbs, q, maxSize, season), Rank(rels, q, maxSize, season)...)
+			tries := 0
+			for _, r := range cands {
+				if need == 0 || ctx.Err() != nil || tries >= need*3+3 {
+					break
+				}
+				if skip[r.InfoHash] || (sameRelease(r.Name) != "" && skip[sameRelease(r.Name)]) {
+					continue
+				}
+				p, tried := s.add(ctx, r, caches, season, episode, maxSize)
+				if tried {
+					tries++
+				}
+				if p == nil {
+					continue
+				}
+				if err := s.store(ctx, it, q, rank, p); err != nil {
+					slog.Warn("store stream", "item", it.ID, "err", err)
+					continue
+				}
+				skip[r.InfoHash], skip[sameRelease(r.Name)] = true, true
+				rank++
+				need--
+				mu.Lock()
+				found++
+				mu.Unlock()
+				if !settled {
+					settled = true
+					settle()
+				}
+				if season > 0 {
+					s.fillSeason(ctx, it, q, p) // a season pack covers the other episodes too
+				}
+			}
+		}(q)
 	}
-	slog.Info("stream lookup", "title", it.Title, "season", season, "episode", episode, "releases", len(rels), "qualities", found)
+	wg.Wait()
+	slog.Info("stream lookup", "title", it.Title, "season", season, "episode", episode, "releases", len(rels), "usenet", len(nzbs), "streams", found)
 	s.recordLookup(ctx, it.ID, found, nil)
 	return found, nil
 }
@@ -498,75 +671,58 @@ func (s *Service) recordLookup(ctx context.Context, itemID string, found int, er
 	_ = s.DB.PutStreamLookup(ctx, db.StreamLookup{ItemID: itemID, LookedAt: db.Now(), Found: found, Error: errString(err)})
 }
 
-// findCached returns the best ranked release some provider has cached.
-// checked memoizes bulk cache checks across the qualities of one lookup.
-func (s *Service) findCached(ctx context.Context, cands []Release, season, episode int, maxSize int64, checked map[string]map[string]bool) *pick {
-	if len(cands) == 0 {
-		return nil
+// add puts a cached release on a debrid account and finds its video.
+// tried reports whether a provider was asked to add it.
+func (s *Service) add(ctx context.Context, r Release, caches map[string]*cacheState, season, episode int, maxSize int64) (*pick, bool) {
+	fits := func(tor *Torrent) (RemoteFile, bool) {
+		f, ok := PickFile(tor.Files, r.FileName, season, episode)
+		return f, ok && (maxSize <= 0 || f.Size <= maxSize)
 	}
+	if r.NZB != "" {
+		u := s.usenetProvider()
+		if u == nil {
+			return nil, false
+		}
+		tor, err := u.AddUsenet(ctx, r.InfoHash, r.NZB, r.Name)
+		if err != nil {
+			slog.Debug("usenet add", "release", r.Name, "err", err)
+			return nil, true
+		}
+		if f, ok := fits(tor); ok {
+			return &pick{rel: r, prov: u, tor: tor, file: f}, true
+		}
+		return nil, true
+	}
+	tried := false
 	for _, p := range s.Providers() {
-		if ctx.Err() != nil {
-			return nil
+		cs := caches[p.Name()]
+		if cs == nil || cs.busy.Load() || (cs.known && !cs.cached[r.InfoHash]) {
+			continue
 		}
-		top := cands[:min(len(cands), 40)]
-		cached := checked[p.Name()]
-		if cached == nil {
-			cached = map[string]bool{}
-			checked[p.Name()] = cached
+		tried = true
+		tor, err := p.Add(ctx, r.InfoHash, r.Magnet())
+		if err != nil {
+			if errors.Is(err, ErrRateLimited) {
+				cs.busy.Store(true)
+			}
+			continue
 		}
-		var hashes []string
-		for _, r := range top {
-			if _, seen := cached[r.InfoHash]; !seen {
-				hashes = append(hashes, r.InfoHash)
-			}
-		}
-		ok := true
-		if len(hashes) > 0 {
-			res, known, err := p.Check(ctx, hashes)
-			if err != nil {
-				slog.Debug("cache check", "provider", p.Name(), "err", err)
-				if errors.Is(err, ErrRateLimited) {
-					continue
-				}
-			}
-			if known {
-				for _, h := range hashes {
-					cached[h] = res[h]
-				}
-			} else {
-				ok = false // the provider can't tell; try adding instead
-			}
-		}
-		tries := 0
-		for _, r := range top {
-			if ok && !cached[r.InfoHash] {
-				continue
-			}
-			if tries++; tries > 3 {
-				break
-			}
-			tor, err := p.Add(ctx, r.InfoHash, r.Magnet())
-			if err != nil {
-				if errors.Is(err, ErrRateLimited) {
-					break
-				}
-				continue
-			}
-			f, found := PickFile(tor.Files, r.FileName, season, episode)
-			if !found || (maxSize > 0 && f.Size > maxSize) {
-				continue
-			}
-			return &pick{rel: r, prov: p, tor: tor, file: f}
+		if f, ok := fits(tor); ok {
+			return &pick{rel: r, prov: p, tor: tor, file: f}, true
 		}
 	}
-	return nil
+	return nil, tried
 }
 
-func (s *Service) store(ctx context.Context, it *db.Item, q string, p *pick) error {
-	st := &db.Stream{ItemID: it.ID, Quality: q, InfoHash: p.rel.InfoHash, FileName: p.file.Name, Size: p.file.Size,
-		Release: p.rel.Name, Addon: p.rel.Addon, Provider: p.prov.Name(), ProviderRef: p.tor.Ref, ProviderFile: p.file.ID, FileIdx: p.rel.FileIdx}
+func (s *Service) store(ctx context.Context, it *db.Item, q string, rank int, p *pick) error {
+	st := &db.Stream{ItemID: it.ID, Quality: q, Rank: rank, Kind: "torrent", InfoHash: p.rel.InfoHash, NZB: p.rel.NZB, FileName: p.file.Name,
+		Size: p.file.Size, Release: p.rel.Name, Addon: p.rel.Addon, Provider: p.prov.Name(), ProviderRef: p.tor.Ref,
+		ProviderFile: p.file.ID, FileIdx: p.rel.FileIdx}
+	if p.rel.NZB != "" {
+		st.Kind = "usenet"
+	}
 	// Codec and HDR are guessed from the names until the first play probes it.
-	f := &db.MediaFile{ItemID: it.ID, LibraryID: it.LibraryID, Path: p.file.Name, Size: p.file.Size}
+	f := &db.MediaFile{ItemID: it.ID, LibraryID: it.LibraryID, Path: p.file.Name, Size: p.file.Size, Tag: ReleaseTag(st.Kind, p.rel.Name)}
 	library.GuessFromName(f)
 	if f.HDR == "" {
 		g := &db.MediaFile{Path: p.rel.Name + ".mkv"}
@@ -581,7 +737,8 @@ func (s *Service) store(ctx context.Context, it *db.Item, q string, p *pick) err
 	return s.DB.PutStream(ctx, st, f)
 }
 
-// fillSeason stores a season pack's other episodes at the same quality.
+// fillSeason stores a season pack's other episodes at the same quality,
+// after the choices those episodes already have.
 func (s *Service) fillSeason(ctx context.Context, it *db.Item, q string, p *pick) {
 	byEp := EpisodeFiles(p.tor.Files, it.SeasonNumber)
 	if len(byEp) < 2 {
@@ -591,6 +748,7 @@ func (s *Service) fillSeason(ctx context.Context, it *db.Item, q string, p *pick
 	if err != nil {
 		return
 	}
+	per := s.perQuality()
 	n := 0
 	for _, ep := range eps {
 		f, ok := byEp[ep.EpisodeNumber]
@@ -598,7 +756,15 @@ func (s *Service) fillSeason(ctx context.Context, it *db.Item, q string, p *pick
 			continue
 		}
 		sts, _ := s.DB.StreamsForItem(ctx, ep.ID)
-		if slices.ContainsFunc(sts, func(st *db.Stream) bool { return st.Quality == q }) {
+		rank, count, dup := 0, 0, false
+		for _, st := range sts {
+			if st.Quality == q {
+				count++
+				rank = max(rank, st.Rank+1)
+				dup = dup || st.InfoHash == p.rel.InfoHash
+			}
+		}
+		if dup || count >= per {
 			continue
 		}
 		if m := s.maxSize(q); m > 0 && f.Size > m {
@@ -606,7 +772,7 @@ func (s *Service) fillSeason(ctx context.Context, it *db.Item, q string, p *pick
 		}
 		pp := *p
 		pp.file = f
-		if s.store(ctx, ep, q, &pp) == nil {
+		if s.store(ctx, ep, q, rank, &pp) == nil {
 			n++
 		}
 	}
@@ -640,7 +806,7 @@ func (s *Service) Prefetch(it *db.Item) {
 			}
 			return a.EpisodeNumber - b.EpisodeNumber
 		})
-		want := len(s.qualities())
+		want := len(s.qualities()) * s.perQuality()
 		for _, ep := range eps {
 			if ep.ID == it.ID {
 				continue
@@ -685,7 +851,7 @@ func (s *Service) prefetchWorker(ctx context.Context, n int) {
 			}
 			if it, err := s.DB.GetItem(ctx, id); err == nil && s.Active() {
 				lctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-				if found, _ := s.resolve(lctx, it); found > 0 {
+				if found, _ := s.resolve(lctx, it, nil); found > 0 {
 					s.Hub.Publish(library.Event{Type: "stream.updated", LibraryID: it.LibraryID, ItemID: it.ID})
 				}
 				cancel()
@@ -828,7 +994,17 @@ func (s *Service) linkFor(ctx context.Context, streamID string, force bool) (str
 		return u, st.Size, nil
 	}
 	if p := s.provider(st.Provider); p != nil && st.ProviderRef != "" {
-		u, err := p.Link(ctx, st.ProviderRef, st.ProviderFile)
+		var u string
+		var err error
+		if st.Kind == "usenet" {
+			if up, ok := p.(UsenetProvider); ok {
+				u, err = up.LinkUsenet(ctx, st.ProviderRef, st.ProviderFile)
+			} else {
+				err = ErrStale
+			}
+		} else {
+			u, err = p.Link(ctx, st.ProviderRef, st.ProviderFile)
+		}
 		if err == nil {
 			return remember(u)
 		}
@@ -845,25 +1021,46 @@ func (s *Service) linkFor(ctx context.Context, streamID string, force bool) (str
 	if it.Kind == "episode" {
 		season, episode = it.SeasonNumber, it.EpisodeNumber
 	}
-	magnet := Release{InfoHash: st.InfoHash}.Magnet()
-	for _, p := range s.Providers() {
-		if cached, ok, err := p.Check(ctx, []string{st.InfoHash}); ok && err == nil && !cached[st.InfoHash] {
-			continue
+	if st.Kind == "usenet" {
+		// The post expired from the account: add it again from its NZB.
+		for _, p := range s.Providers() {
+			up, ok := p.(UsenetProvider)
+			if !ok || st.NZB == "" {
+				continue
+			}
+			tor, err := up.AddUsenet(ctx, st.InfoHash, st.NZB, st.Release)
+			if err != nil {
+				break
+			}
+			if f, ok := PickFile(tor.Files, st.FileName, season, episode); ok {
+				if u, err := up.LinkUsenet(ctx, tor.Ref, f.ID); err == nil {
+					_ = s.DB.SetStreamProvider(ctx, st.ID, p.Name(), tor.Ref, f.ID)
+					return remember(u)
+				}
+			}
+			break
 		}
-		tor, err := p.Add(ctx, st.InfoHash, magnet)
-		if err != nil {
-			continue
+	} else {
+		magnet := Release{InfoHash: st.InfoHash}.Magnet()
+		for _, p := range s.Providers() {
+			if cached, ok, err := p.Check(ctx, []string{st.InfoHash}); ok && err == nil && !cached[st.InfoHash] {
+				continue
+			}
+			tor, err := p.Add(ctx, st.InfoHash, magnet)
+			if err != nil {
+				continue
+			}
+			f, ok := PickFile(tor.Files, st.FileName, season, episode)
+			if !ok {
+				continue
+			}
+			u, err := p.Link(ctx, tor.Ref, f.ID)
+			if err != nil {
+				continue
+			}
+			_ = s.DB.SetStreamProvider(ctx, st.ID, p.Name(), tor.Ref, f.ID)
+			return remember(u)
 		}
-		f, ok := PickFile(tor.Files, st.FileName, season, episode)
-		if !ok {
-			continue
-		}
-		u, err := p.Link(ctx, tor.Ref, f.ID)
-		if err != nil {
-			continue
-		}
-		_ = s.DB.SetStreamProvider(ctx, st.ID, p.Name(), tor.Ref, f.ID)
-		return remember(u)
 	}
 	if n, _ := s.DB.StreamFailed(ctx, st.ID); n >= 2 {
 		_ = s.DB.DeleteStream(ctx, st.ID)

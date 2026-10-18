@@ -24,11 +24,13 @@ type Addon struct {
 	BaseURL string // manifest URL without /manifest.json
 }
 
-// Release is one torrent an addon offered for a title.
+// Release is one torrent an addon offered for a title, or a Usenet post
+// (NZB set, InfoHash is TorBox's hash for it).
 type Release struct {
 	Name     string // release name
 	Text     string // everything the addon said about it (for quality matching)
 	InfoHash string
+	NZB      string
 	FileIdx  int // file index inside the torrent, -1 if unknown
 	FileName string
 	Size     int64

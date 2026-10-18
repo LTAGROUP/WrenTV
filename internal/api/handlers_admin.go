@@ -63,6 +63,7 @@ type settingsView struct {
 	UserDefaults    config.UserLimitsConfig `json:"userDefaults"`
 	Webhooks        []config.WebhookConfig  `json:"webhooks"`
 	IntegrationKey  string                  `json:"integrationKey"`
+	SimklClientID   string                  `json:"simklClientId"`
 	RemoteAccess    *remoteAccessView       `json:"remoteAccess,omitempty"`
 	LiveTV          liveTVView              `json:"liveTv"`
 	RestartRequired bool                    `json:"restartRequired,omitempty"`
@@ -75,6 +76,8 @@ type streamingView struct {
 	Debrid          []debridView           `json:"debrid"`
 	Addons          []config.AddonConfig   `json:"addons"`
 	Qualities       []string               `json:"qualities"`
+	PerQuality      int                    `json:"perQuality"`
+	Usenet          bool                   `json:"usenet"`
 	MaxSizeGB       map[string]float64     `json:"maxSizeGB"`
 	Prefetch        bool                   `json:"prefetch"`
 	Mode            string                 `json:"mode"`
@@ -122,7 +125,7 @@ func (s *Server) settings() settingsView {
 	}
 	st := c.Streaming
 	sv := streamingView{Enabled: st.Enabled, Active: s.Streaming.Active(), Addons: nonNil(st.Addons), Qualities: nonNil(st.Qualities),
-		MaxSizeGB: st.MaxSizeGB, Prefetch: st.Prefetch, Mode: st.Mode, MovieLibrary: st.MovieLibrary, ShowLibrary: st.ShowLibrary,
+		PerQuality: max(st.PerQuality, 1), Usenet: st.Usenet, MaxSizeGB: st.MaxSizeGB, Prefetch: st.Prefetch, Mode: st.Mode, MovieLibrary: st.MovieLibrary, ShowLibrary: st.ShowLibrary,
 		DownloadQuality: st.DownloadQuality, Limits: st.Limits, Debrid: []debridView{}}
 	if sv.MaxSizeGB == nil {
 		sv.MaxSizeGB = map[string]float64{}
@@ -139,7 +142,7 @@ func (s *Server) settings() settingsView {
 	return settingsView{
 		ServerName: c.ServerName, PublicURL: c.PublicURL, HWAccel: c.Transcode.HWAccel, TMDBKeySet: c.Metadata.TMDBAPIKey != "",
 		OMDbKeySet: c.Metadata.OMDbAPIKey != "", Fingerprint: c.Markers.Fingerprint, Streaming: sv, UserDefaults: c.Users,
-		Webhooks: hooks, IntegrationKey: c.IntegrationKey, RemoteAccess: s.remoteAccess(), LiveTV: s.liveTVView(),
+		Webhooks: hooks, IntegrationKey: c.IntegrationKey, SimklClientID: c.Simkl.ClientID, RemoteAccess: s.remoteAccess(), LiveTV: s.liveTVView(),
 	}
 }
 
@@ -178,6 +181,8 @@ type streamingPatch struct {
 	ProviderOrder   *[]string               `json:"providerOrder"`
 	Addons          *[]config.AddonConfig   `json:"addons"`
 	Qualities       *[]string               `json:"qualities"`
+	PerQuality      *int                    `json:"perQuality"`
+	Usenet          *bool                   `json:"usenet"`
 	MaxSizeGB       *map[string]float64     `json:"maxSizeGB"`
 	Prefetch        *bool                   `json:"prefetch"`
 	Mode            *string                 `json:"mode"`
@@ -239,6 +244,15 @@ func (s *Server) applyStreaming(r *http.Request, p *streamingPatch) error {
 			c.MaxSizeGB[q] = v
 		}
 	}
+	if p.PerQuality != nil {
+		if *p.PerQuality < 1 || *p.PerQuality > 5 {
+			return fmt.Errorf("keep between 1 and 5 streams per quality")
+		}
+		c.PerQuality = *p.PerQuality
+	}
+	if p.Usenet != nil {
+		c.Usenet = *p.Usenet
+	}
 	if p.Prefetch != nil {
 		c.Prefetch = *p.Prefetch
 	}
@@ -293,6 +307,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		LiveTV       *liveTVPatch             `json:"liveTv"`
 		UserDefaults *config.UserLimitsConfig `json:"userDefaults"`
 		Webhooks     *[]config.WebhookConfig  `json:"webhooks"`
+		SimklID      *string                  `json:"simklClientId"`
 		RemoteAccess *struct {
 			Enabled    *bool `json:"enabled"`
 			UPnP       *bool `json:"upnp"`
@@ -365,6 +380,9 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		c.Webhooks = hooks
+	}
+	if req.SimklID != nil {
+		c.Simkl.ClientID = strings.TrimSpace(*req.SimklID)
 	}
 	if ra := req.RemoteAccess; ra != nil {
 		if ra.Enabled != nil {

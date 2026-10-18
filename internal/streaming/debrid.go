@@ -28,7 +28,21 @@ type Provider interface {
 	Link(ctx context.Context, ref, fileID string) (string, error)
 }
 
-// Torrent is a torrent on a provider's account.
+// UsenetProvider is a debrid service that also serves the Usenet posts it
+// has cached (TorBox). Usenet streams come first: they start as fast as a
+// cached torrent and don't depend on seeders.
+type UsenetProvider interface {
+	Provider
+	// SearchUsenet lists the cached posts of a title (IMDb id; with season
+	// and episode for shows).
+	SearchUsenet(ctx context.Context, imdbID string, season, episode int) ([]Release, error)
+	// AddUsenet adds a cached post to the account and lists its files.
+	AddUsenet(ctx context.Context, hash, nzb, name string) (*Torrent, error)
+	// LinkUsenet returns a direct URL for one file of an added post.
+	LinkUsenet(ctx context.Context, ref, fileID string) (string, error)
+}
+
+// Torrent is a torrent (or Usenet download) on a provider's account.
 type Torrent struct {
 	Ref   string
 	Files []RemoteFile
