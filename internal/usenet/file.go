@@ -45,11 +45,16 @@ type File struct {
 	Ahead int
 	// ctx is for reads that have none of their own (fileReader).
 	ctx context.Context
+	// Fill zero-fills a few missing articles instead of failing; see holes.go.
+	Fill bool
+
+	holeMu sync.Mutex // held while a hole's patch is worked out
 
 	mu    sync.Mutex
 	cache map[segKey]*segEntry
 	order []segKey // least recently used first
 	max   int
+	holes map[segKey]*hole
 }
 
 type segKey struct{ file, seg int }
@@ -192,7 +197,13 @@ func (f *File) fetch(ctx context.Context, k segKey) ([]byte, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		body, err := f.pool.Body(ctx, nf.Segments[k.seg].ID)
 		if err != nil {
-			if errors.Is(err, ErrMissing) || ctx.Err() != nil {
+			if errors.Is(err, ErrMissing) {
+				if zeros, ok := f.fillHole(k); ok {
+					return zeros, nil
+				}
+				return nil, err
+			}
+			if ctx.Err() != nil {
 				return nil, err
 			}
 			last = err
@@ -214,6 +225,12 @@ func (f *File) fetch(ctx context.Context, k segKey) ([]byte, error) {
 
 // ReadAtContext reads len(p) bytes at off, fetching the articles together.
 func (f *File) ReadAtContext(ctx context.Context, p []byte, off int64) (int, error) {
+	return f.read(ctx, p, off, true)
+}
+
+// read is ReadAtContext; patch false leaves filled holes as plain zeros,
+// for working out the patches themselves.
+func (f *File) read(ctx context.Context, p []byte, off int64, patch bool) (int, error) {
 	if off >= f.lay.Size {
 		return 0, io.EOF
 	}
@@ -233,7 +250,11 @@ func (f *File) ReadAtContext(ctx context.Context, p []byte, off int64) (int, err
 		if s.to > int64(len(data)) {
 			return n, fmt.Errorf("usenet: article %d is short", s.key.seg+1)
 		}
-		n += copy(p[n:], data[s.from:s.to])
+		m := copy(p[n:], data[s.from:s.to])
+		if patch && f.isHole(s.key) {
+			f.patchHole(ctx, s.key, p[n:n+m], off+int64(n))
+		}
+		n += m
 	}
 	if n < len(p) {
 		return n, io.EOF
@@ -270,6 +291,7 @@ func (f *File) WriteRange(ctx context.Context, w io.Writer, off, n int64) (int64
 			most = min(most, 4)
 		}
 		ahead, started := min(2, most), 0
+		pos := off
 		for i, s := range sp {
 			if i > 0 && ahead < most {
 				ahead = min(ahead*2, most)
@@ -284,7 +306,13 @@ func (f *File) WriteRange(ctx context.Context, w io.Writer, off, n int64) (int64
 			if s.to > int64(len(data)) {
 				return written, fmt.Errorf("usenet: article %d is short", s.key.seg+1)
 			}
-			m, err := w.Write(data[s.from:s.to])
+			out := data[s.from:s.to]
+			if f.isHole(s.key) {
+				out = slices.Clone(out)
+				f.patchHole(ctx, s.key, out, pos)
+			}
+			pos += int64(len(out))
+			m, err := w.Write(out)
 			written += int64(m)
 			if err != nil {
 				return written, err

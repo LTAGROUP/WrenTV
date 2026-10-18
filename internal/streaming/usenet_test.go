@@ -141,18 +141,36 @@ func TestUsenetLookupAndPlayback(t *testing.T) {
 	}
 	src.Close()
 
-	// The post loses an article partway through a play: it's dropped, and
-	// not stored again by the lookup for a replacement.
+	// One article lost since: the play goes on over the gap.
 	src, err = s.Source(ctx, files[0])
 	if err != nil {
 		t.Fatal(err)
 	}
 	ns.Remove("Movie.2024.1080p.WEB-DL-GRP.mkv", 11)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("Range", "bytes=500000-520000")
-	src.(http.Handler).ServeHTTP(rec, req)
+	get := func(rg string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Range", "bytes="+rg)
+		src.(http.Handler).ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := get("490000-560000"); rec.Body.Len() != 70_001 || !bytes.Equal(rec.Body.Bytes()[:10_000], video[490_000:500_000]) {
+		t.Fatalf("read over the gap: %d bytes", rec.Body.Len())
+	}
+	if sts, _ := d.StreamsForItem(ctx, it.ID); len(sts) != 1 {
+		t.Fatalf("streams after one gap = %+v", sts)
+	}
+
+	// Five in a row are past repair: the next play's spot check finds
+	// them, the post is dropped, and the lookup for a replacement doesn't
+	// store it again.
 	src.Close()
+	for part := 5; part <= 9; part++ {
+		ns.Remove("Movie.2024.1080p.WEB-DL-GRP.mkv", part)
+	}
+	if _, err := s.Source(ctx, files[0]); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("source with five gaps: %v", err)
+	}
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
 		if sts, _ := d.StreamsForItem(ctx, it.ID); len(sts) == 0 {
 			break

@@ -373,7 +373,7 @@ func (s *usenetSource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	n, err := s.f.WriteRange(ctx, fw, start, end-start+1)
 	if err != nil && r.Context().Err() == nil {
 		slog.Warn("usenet stream failed", "file", s.name, "offset", start, "err", err)
-		// A hole in the post won't fill in: the next play gets another.
+		// More holes than can be filled: the next play gets another post.
 		if errors.Is(err, usenet.ErrMissing) && s.dropped.CompareAndSwap(false, true) {
 			go s.svc.dropPost(s.st, err)
 		}
@@ -446,6 +446,9 @@ func (tw *throttledWriter) Write(p []byte) (int, error) {
 func (s *Service) usenetPlay(ctx context.Context, st *db.Stream, release func()) (*usenetSource, error) {
 	f, err := s.openPost(ctx, st)
 	if err == nil {
+		// A few missing articles play as a glitch; past that reads fail
+		// with ErrMissing and the post is dropped.
+		f.Fill = true
 		// The first bytes and a spread of the rest, side by side: a post
 		// with holes is caught here instead of partway through the movie.
 		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
