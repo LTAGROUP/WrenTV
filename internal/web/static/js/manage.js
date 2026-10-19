@@ -402,6 +402,7 @@ function streamingTab(s, libs) {
       <p data-st-status>${streamingStatusLine(st, s)}</p>
       <label class="check"><input type="checkbox" name="stEnabled" ${st.enabled ? 'checked' : ''}> Enable streaming</label>
       <label class="check"><input type="checkbox" name="stPrefetch" ${st.prefetch ? 'checked' : ''}> Find streams in the background before they're played: watchlist titles, and the rest of a season once an episode plays</label>
+      <label class="check"><input type="checkbox" name="stCheckLinks" ${st.checkAddonLinks ? 'checked' : ''}> Check addon links while finding streams, so dead ones are dropped before play (slower, and addons like StreamNZB start a download for each one checked)</label>
     </div>
 
     <div class="panel"><h2>Debrid services</h2>
@@ -516,7 +517,7 @@ function liveTvTab(lt) {
     </div>
 
     <div class="panel"><h2>Playlists</h2>
-      <p class="small muted">An M3U playlist link, or an Xtream Codes login (server, username and password) from your provider.
+      <p class="small muted">An M3U playlist link, an Xtream Codes login (server, username and password) from your provider, or a Stremio addon with TV channels (its manifest link).
         The guide is found on its own; only fill in a guide link if your provider gave you a separate one.</p>
       <div class="lt-sources"></div>
       <button type="button" class="btn" data-lt-add>Add playlist</button>
@@ -543,13 +544,14 @@ function setupLiveTv(node, lt, groups) {
     box.innerHTML = sources.length ? '' : '<p class="muted small">No playlists yet.</p>';
     sources.forEach((src) => {
       const x = src.kind === 'xtream';
+      const sa = src.kind === 'stremio';
       const r = el(`<div class="lt-source">
         <div class="form-grid">
           <div class="field"><label>Name</label><input data-k="name" value="${esc(src.name || '')}" placeholder="My provider"></div>
-          <div class="field"><label>Type</label><select data-k="kind"><option value="m3u" ${x ? '' : 'selected'}>M3U playlist link</option><option value="xtream" ${x ? 'selected' : ''}>Xtream Codes login</option></select></div>
+          <div class="field"><label>Type</label><select data-k="kind"><option value="m3u" ${x || sa ? '' : 'selected'}>M3U playlist link</option><option value="xtream" ${x ? 'selected' : ''}>Xtream Codes login</option><option value="stremio" ${sa ? 'selected' : ''}>Stremio addon</option></select></div>
         </div>
         <div class="form-grid">
-          <div class="field"><label>${x ? 'Server' : 'Playlist link'}</label><input data-k="url" value="${esc(src.url || '')}" placeholder="${x ? 'http://provider.example:8080' : 'https://…/playlist.m3u'}" autocomplete="off"></div>
+          <div class="field"><label>${x ? 'Server' : sa ? 'Addon manifest link' : 'Playlist link'}</label><input data-k="url" value="${esc(src.url || '')}" placeholder="${x ? 'http://provider.example:8080' : sa ? 'https://…/manifest.json' : 'https://…/playlist.m3u'}" autocomplete="off"></div>
           ${x ? `<div class="field"><label>Username</label><input data-k="username" value="${esc(src.username || '')}" autocomplete="off"></div>
           <div class="field"><label>Password</label><input data-k="password" type="password" value="${esc(src.password || '')}" autocomplete="new-password"></div>` : ''}
         </div>
@@ -885,6 +887,7 @@ export async function viewSettings() {
     const streaming = {
       enabled: !!v.stEnabled,
       prefetch: !!v.stPrefetch,
+      checkAddonLinks: !!v.stCheckLinks,
       providerOrder: $$('.debrid', node).map((r) => r.dataset.provider),
       addons,
       qualities: $$('input[name=stQ]:checked', node).map((c) => c.value),

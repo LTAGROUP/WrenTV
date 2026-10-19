@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -88,6 +89,8 @@ type debridSource struct {
 
 	mu  sync.Mutex
 	url string
+	// served is the size of the file upstream first sent.
+	served int64
 }
 
 func (s *debridSource) Input() string {
@@ -146,6 +149,13 @@ func (s *debridSource) open(ctx context.Context, method, rng string) (*http.Resp
 		expired := err == nil && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound ||
 			resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusUnauthorized)
 		if err == nil && !expired && resp.StatusCode < 500 {
+			if total := responseTotal(resp); total > 0 && s.otherFile(total) {
+				// Not this file any more: an addon that gave up on the
+				// release (StreamNZB's "stream failed" clip) sends another.
+				resp.Body.Close()
+				s.svc.dropStream(ctx, s.streamID, fmt.Sprintf("upstream sent a %d-byte file for a %d-byte one", total, s.size))
+				return nil, ErrUnavailable
+			}
 			return resp, nil
 		}
 		if resp != nil {
@@ -161,6 +171,45 @@ func (s *debridSource) open(ctx context.Context, method, rng string) (*http.Resp
 			return nil, err
 		}
 	}
+}
+
+// responseTotal is the size of the whole file a response is part of, or 0
+// when it doesn't say.
+func responseTotal(resp *http.Response) int64 {
+	if cr := resp.Header.Get("Content-Range"); cr != "" {
+		if _, total, ok := strings.Cut(cr, "/"); ok {
+			n, _ := strconv.ParseInt(total, 10, 64)
+			return n
+		}
+		return 0
+	}
+	if resp.StatusCode == http.StatusOK {
+		return max(resp.ContentLength, 0)
+	}
+	return 0
+}
+
+// otherFile reports whether upstream sent a different file from the one it
+// first served: a clip far smaller than the film, or a change of size
+// partway through. Addons' own idea of the size can be a little off, so
+// that alone doesn't count.
+func (s *debridSource) otherFile(total int64) bool {
+	if s.size >= 200<<20 && total < 50<<20 {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.served == 0 {
+		s.served = total
+		return false
+	}
+	return !sameSize(total, s.served)
+}
+
+// sameSize allows for providers that report a file's size slightly off.
+func sameSize(a, b int64) bool {
+	d := a - b
+	return d >= -b/100 && d <= b/100
 }
 
 // redactURL drops a request error's URL down to its host: debrid links

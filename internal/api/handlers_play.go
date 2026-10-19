@@ -79,6 +79,32 @@ type versionView struct {
 	Height int    `json:"height"`
 }
 
+func versionViews(files []*db.MediaFile) []versionView {
+	out := []versionView{}
+	for _, v := range files {
+		out = append(out, versionView{ID: v.ID, Label: versionLabel(v), Height: fileHeight(v)})
+	}
+	return out
+}
+
+// handleVersions lists an item's versions as the player offers them. A
+// streamed title's lookup goes on after play starts, so players ask again
+// while "looking" is true, and when their picker opens.
+func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request) {
+	it, ok := s.itemFor(r)
+	if !ok || (it.Kind != "movie" && it.Kind != "episode") {
+		writeErr(w, 404, "playable item not found")
+		return
+	}
+	files, err := s.playableFiles(r.Context(), it)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	looking := s.Streaming != nil && s.Streaming.Looking(it.ID)
+	writeJSON(w, 200, map[string]any{"versions": versionViews(files), "looking": looking})
+}
+
 // handlePlay picks a file, decides how the client should play it and opens a session.
 // Streamed titles whose streams are still being looked up return status
 // "pending"; clients show the message and retry.
@@ -176,6 +202,12 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "could not read media: "+err.Error())
 		return
 	}
+	if f.StreamID != "" && s.checkLengths(ctx, it, files, false)[f.StreamID] {
+		// Longer or shorter than the other versions: an ad spliced in, or cut.
+		src.Close()
+		writeJSON(w, 202, playResponse{Status: "pending", Message: "Finding another stream…"})
+		return
+	}
 	if why := notTheTitle(it, info); why != "" && f.StreamID != "" {
 		// A trailer, a promo or another film: find the real one.
 		src.Close()
@@ -236,9 +268,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		Chapters: nonNil(info.Chapters), Markers: s.markersFor(ctx, f, info),
 		SubtitleIndex: preferredSubtitle(info, prefs.SubtitleLanguage),
 	}
-	for _, v := range files {
-		resp.Versions = append(resp.Versions, versionView{ID: v.ID, Label: versionLabel(v), Height: fileHeight(v)})
-	}
+	resp.Versions = versionViews(files)
 	s.recordPlay(r, it, f, sess.ID, dec, info)
 	if iv := s.startThumbs(f, src, info, sess); iv > 0 {
 		resp.Thumbs = &thumbsView{URL: "/stream/" + sess.ID + "/thumbs/", Interval: iv, Width: thumbs.Width}

@@ -54,12 +54,12 @@ type Service struct {
 	dir    string
 	client *http.Client
 
-	mu       sync.RWMutex
-	all      []*Channel // every channel, in playlist order
-	visible  []*Channel // numbered, without hidden groups
-	byID     map[string]*Channel
-	guide    Guide
-	status   Status
+	mu      sync.RWMutex
+	all     []*Channel // every channel, in playlist order
+	visible []*Channel // numbered, without hidden groups
+	byID    map[string]*Channel
+	guide   Guide
+	status  Status
 
 	kick chan bool // true: refetch even if fresh
 
@@ -146,7 +146,13 @@ func (s *Service) refresh(ctx context.Context, force bool) {
 			continue
 		}
 		file := filepath.Join(s.dir, "playlist-"+src.ID+".m3u")
-		fetched, err := s.fetch(ctx, PlaylistURL(src), file, ua(src.UserAgent), playlistEvery, force)
+		var fetched time.Time
+		var err error
+		if src.Kind == "stremio" {
+			fetched, err = s.saveStremio(ctx, src, file, playlistEvery, force)
+		} else {
+			fetched, err = s.fetch(ctx, PlaylistURL(src), file, ua(src.UserAgent), playlistEvery, force)
+		}
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", src.Name, err))
 		}
@@ -167,6 +173,7 @@ func (s *Service) refresh(ctx context.Context, force bool) {
 			if c.UserAgent == "" {
 				c.UserAgent = ua(src.UserAgent)
 			}
+			c.stremio = src.Kind == "stremio"
 		}
 		all = append(all, pl.Channels...)
 		for _, u := range GuideURLs(src, pl) {
@@ -424,6 +431,16 @@ func (s *Service) Groups() []Group {
 func (s *Service) Check(ctx context.Context, src config.LiveTVSource) (channels int, guides []string, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
+	if src.Kind == "stremio" {
+		chans, err := s.StremioChannels(ctx, src)
+		if err != nil {
+			return 0, nil, err
+		}
+		if len(chans) == 0 {
+			return 0, nil, errors.New("the addon lists no channels")
+		}
+		return len(chans), GuideURLs(src, nil), nil
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, PlaylistURL(src), nil)
 	if err != nil {
 		return 0, nil, err

@@ -200,6 +200,7 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     suspend fun search(q: String): List<Item> = get("/api/search", mapOf("q" to q))
 
     suspend fun play(id: String, req: PlayRequest): PlayResponse = post("/api/items/$id/play", enc(req))
+    suspend fun versions(id: String): VersionsResponse = get("/api/items/$id/versions")
 
     suspend fun reportProgress(id: String, position: Double, duration: Double) {
         runCatching {

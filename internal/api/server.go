@@ -157,6 +157,7 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/api/items/{id}/watchlist", s.handleWatchlistRemove)
 		r.Get("/api/watchlist", s.handleWatchlist)
 		r.Post("/api/items/{id}/play", s.handlePlay)
+		r.Get("/api/items/{id}/versions", s.handleVersions)
 		r.Delete("/api/sessions/{sid}", s.handleStopSession)
 		r.Get("/api/livetv/channels", s.handleLiveChannels)
 		r.Get("/api/livetv/guide", s.handleLiveGuide)

@@ -37,7 +37,8 @@ func fakeIndexer(t *testing.T, posts map[string][]byte, sizes map[string]int64, 
 			fmt.Fprint(w, `<caps><searching><search available="yes"/><movie-search available="yes" supportedParams="q,imdbid"/>
 				<tv-search available="yes" supportedParams="q,season,ep"/></searching></caps>`)
 		case q.Get("t") == "movie":
-			if q.Get("imdbid") != "0000002" {
+			// By ID, then by name since the ID found few.
+			if q.Get("imdbid") != "0000002" && q.Get("q") == "" {
 				t.Errorf("searched imdbid %q", q.Get("imdbid"))
 			}
 			var items strings.Builder
@@ -233,5 +234,29 @@ func TestDeadPostsStillTryTorrents(t *testing.T) {
 	}
 	if n := fetched.Load(); n > 1+postSpare {
 		t.Fatalf("fetched %d NZBs for one stream", n)
+	}
+}
+
+func TestNamedFor(t *testing.T) {
+	for _, c := range []struct {
+		name, title  string
+		year, season int
+		want         bool
+	}{
+		{"Supergirl.2026.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-FLUX", "Supergirl", 2026, 0, true},
+		{"Supergirl 2025 1080p WEBRip", "Supergirl", 2026, 0, true},
+		{"Supergirl.1984.1080p.BluRay", "Supergirl", 2026, 0, false},
+		{"Supergirl.S01E01.1080p", "Supergirl", 2026, 0, false},
+		{"Supergirl.Woman.of.Tomorrow.2026.1080p", "Supergirl", 2026, 0, false},
+		{"Spider.Man.No.Way.Home.2021.1080p", "Spider-Man: No Way Home", 2021, 0, true},
+		{"Fast.and.Furious.2009.720p", "Fast & Furious", 2009, 0, true},
+		{"Supergirl.S03E04.1080p.WEB", "Supergirl", 2015, 3, true},
+		{"Supergirl.2015.S03E04.1080p.WEB", "Supergirl", 2015, 3, true},
+		{"Supergirl.2026.1080p", "Supergirl", 2015, 3, false},
+		{"Supergirl", "Supergirl", 2026, 0, false},
+	} {
+		if got := namedFor(c.name, c.title, c.year, c.season); got != c.want {
+			t.Errorf("namedFor(%q, %q) = %v, want %v", c.name, c.title, got, c.want)
+		}
 	}
 }

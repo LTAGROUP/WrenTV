@@ -201,6 +201,38 @@ class Player {
     this.fillTracks();
     this.attach(res.url, startAt);
     this.drawMarks();
+    this.watchVersions();
+  }
+
+  // A streamed title's lookup goes on after play starts: pick up versions it
+  // finds while it's still looking.
+  watchVersions() {
+    clearTimeout(this.versionTimer);
+    let tries = 0;
+    const tick = async () => {
+      const looking = await this.refreshVersions();
+      if (looking && ++tries < 15 && !this.closed) this.versionTimer = setTimeout(tick, 20000);
+    };
+    this.versionTimer = setTimeout(tick, 5000);
+  }
+
+  async refreshVersions() {
+    try {
+      const d = await api(`/api/items/${this.itemId}/versions`);
+      if (this.closed || !this.res) return false;
+      this.res.versions = d.versions || [];
+      this.fillVersions();
+      return d.looking;
+    } catch { return false; }
+  }
+
+  fillVersions() {
+    const vs = this.res.versions || [];
+    const ver = $('[data-version]', this.root);
+    if (ver.matches(':focus')) return; // don't redraw an open picker
+    ver.innerHTML = vs.map((v) => `<option value="${esc(v.id)}">${esc(v.label)}</option>`).join('');
+    ver.value = this.res.fileId || '';
+    ver.hidden = vs.length < 2;
   }
 
   attach(url, startAt) {
@@ -384,11 +416,7 @@ class Player {
 
   fillTracks() {
     const info = this.res.info || {};
-    const vs = this.res.versions || [];
-    const ver = $('[data-version]', this.root);
-    ver.innerHTML = vs.map((v) => `<option value="${esc(v.id)}">${esc(v.label)}</option>`).join('');
-    ver.value = this.res.fileId || '';
-    ver.hidden = vs.length < 2;
+    this.fillVersions();
     const a = $('[data-audio]', this.root);
     const audio = info.audio || [];
     a.innerHTML = audio.map((s) => `<option value="${s.typeIndex}">${esc(trackLabel(s))}</option>`).join('');
@@ -549,6 +577,7 @@ class Player {
 
   async stopSession() {
     clearTimeout(this.subsTimer);
+    clearTimeout(this.versionTimer);
     this.subsGen = (this.subsGen || 0) + 1;
     this.hls?.destroy();
     this.hls = null;

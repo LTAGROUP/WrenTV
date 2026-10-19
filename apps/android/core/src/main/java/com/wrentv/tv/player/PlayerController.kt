@@ -127,6 +127,7 @@ class PlayerController(
     private var dismissed = mutableSetOf<Skip>()
     private var loadJob: Job? = null
     private var countdownJob: Job? = null
+    private var versionsJob: Job? = null
     private var subtitlePending = false
     private var stopped = false
     /** Audio codecs the server sent that didn't play here; they're converted to AAC instead. */
@@ -240,6 +241,7 @@ class PlayerController(
         sessionId = resp.sessionId
         fileId = resp.fileId ?: fileId
         versions = resp.versions.orEmpty()
+        watchVersions()
         val audio = resp.info?.audio.orEmpty()
         audioOptions = audio.map { TrackOption("a${it.typeIndex}", it.label.ifEmpty { "Track ${it.typeIndex + 1}" }) }
         if (audioIndex == null) audioIndex = resp.decision?.audioIndex
@@ -281,6 +283,32 @@ class PlayerController(
         paused = false
         phase = Phase.Playing
         if (localFile == null) applySubtitle()
+    }
+
+    /** A streamed title's lookup goes on after play starts: pick up the
+     *  versions it finds while it's still looking. */
+    private fun watchVersions() {
+        versionsJob?.cancel()
+        val id = itemId
+        versionsJob = scope.launch {
+            delay(5_000)
+            repeat(15) {
+                val r = runCatching { api?.versions(id) }.getOrNull() ?: return@launch
+                if (id != itemId) return@launch
+                if (r.versions.isNotEmpty()) versions = r.versions
+                if (!r.looking) return@launch
+                delay(20_000)
+            }
+        }
+    }
+
+    /** Asks for the versions again, for when the picker opens. */
+    fun refreshVersions() {
+        val id = itemId
+        scope.launch {
+            val r = runCatching { api?.versions(id) }.getOrNull() ?: return@launch
+            if (id == itemId && r.versions.isNotEmpty()) versions = r.versions
+        }
     }
 
     fun stop() {

@@ -471,6 +471,9 @@ data class SeekThumbs(val url: String, val interval: Double, val width: Int = 32
 data class MediaVersion(val id: String, val label: String = "", val height: Int = 0)
 
 @Serializable
+data class VersionsResponse(val versions: List<MediaVersion> = emptyList(), val looking: Boolean = false)
+
+@Serializable
 data class Chapter(val start: Double = 0.0, val end: Double = 0.0, val title: String = "")
 
 @Serializable

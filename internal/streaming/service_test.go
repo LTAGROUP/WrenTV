@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -573,5 +574,74 @@ func TestAddonPlaysWithoutDebrid(t *testing.T) {
 	}
 	if u, _, err := s.linkFor(ctx, sts[0].ID, true); err != nil || u != addon.URL+"/tok/play/abc" {
 		t.Fatalf("link = %q, %v", u, err)
+	}
+}
+
+// An addon that gives up on a release partway (StreamNZB) redirects to a
+// short "stream failed" clip: that isn't played as part of the film, and
+// the version is dropped so the next play uses another.
+func TestAddonFailureClipNotPlayed(t *testing.T) {
+	ctx := context.Background()
+	var failed atomic.Bool
+	var addon *httptest.Server
+	addon = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/error/"):
+			w.Header().Set("Content-Type", "video/mp4")
+			w.Header().Set("Content-Range", "bytes 0-0/2400000")
+			w.WriteHeader(http.StatusPartialContent)
+			w.Write([]byte{0})
+		case strings.Contains(r.URL.Path, "/play/"):
+			if failed.Load() {
+				http.Redirect(w, r, addon.URL+"/error/failure.mp4", http.StatusTemporaryRedirect)
+				return
+			}
+			w.Header().Set("Content-Type", "video/x-matroska")
+			w.Header().Set("Content-Range", "bytes 0-0/8000000000")
+			w.WriteHeader(http.StatusPartialContent)
+			w.Write([]byte{0})
+		default:
+			json.NewEncoder(w).Encode(map[string]any{"streams": []map[string]any{{
+				"name": "StreamNZB", "description": "Movie.2024.2160p.WEB-DL-GRP\n📦 15 GB",
+				"url":           addon.URL + "/play/abc",
+				"behaviorHints": map[string]any{"filename": "Movie.2024.2160p.WEB-DL-GRP.mkv", "videoSize": 8000000000},
+			}}})
+		}
+	}))
+	defer addon.Close()
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	cfg := &config.Config{Streaming: config.StreamingConfig{Enabled: true, Qualities: []string{"2160p"}, PerQuality: 1,
+		Addons: []config.AddonConfig{{Name: "streamnzb", URL: addon.URL + "/manifest.json", Enabled: true}}}}
+	s := New(Deps{Cfg: cfg, DB: d, TMDB: tmdb.New("test", "en-US", d), Hub: library.NewHub()})
+	s.testProviders = []Provider{}
+	lib, _ := d.StreamLibrary(ctx, "movies")
+	it := &db.Item{LibraryID: lib.ID, Kind: "movie", MatchKey: "tmdb:7", Title: "Movie", TMDBID: 7, IMDBID: "tt7", SeasonNumber: -1, EpisodeNumber: -1}
+	d.InsertItem(ctx, it)
+	if ready, err := s.Ensure(ctx, it, 10*time.Second); !ready || err != nil {
+		t.Fatalf("ensure = %v, %v", ready, err)
+	}
+	waitLookups(t, s)
+	files, _ := d.FilesForItem(ctx, it.ID)
+	if len(files) != 1 {
+		t.Fatalf("files = %d", len(files))
+	}
+	src, err := s.Source(ctx, files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	if _, err := src.ReaderAt().ReadAt(make([]byte, 1), 0); err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+	failed.Store(true)
+	if _, err := src.ReaderAt().ReadAt(make([]byte, 1), 0); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("read after the addon gave up = %v, want ErrUnavailable", err)
+	}
+	if sts, _ := d.StreamsForItem(ctx, it.ID); len(sts) != 0 {
+		t.Fatalf("the failed version should be dropped, have %d", len(sts))
 	}
 }

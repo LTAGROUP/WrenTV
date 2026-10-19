@@ -67,6 +67,17 @@ func (s *Server) warmItem(it *db.Item, u *db.User) {
 		if err != nil || len(files) == 0 {
 			return
 		}
+		if dropped := s.checkLengths(ctx, it, files, true); len(dropped) > 0 {
+			kept := files[:0]
+			for _, f := range files {
+				if !dropped[f.StreamID] {
+					kept = append(kept, f)
+				}
+			}
+			if files = kept; len(files) == 0 {
+				return
+			}
+		}
 		f := chooseFile(files, playRequest{Caps: warmCaps})
 		if f.StreamID == "" {
 			return // a file on disk opens at once

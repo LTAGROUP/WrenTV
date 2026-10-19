@@ -139,9 +139,10 @@ type LiveTVSource struct {
 	ID      string `yaml:"id" json:"id"`
 	Name    string `yaml:"name" json:"name"`
 	Enabled bool   `yaml:"enabled" json:"enabled"`
-	// Kind is "m3u" (a playlist URL) or "xtream" (a server with a username and password).
+	// Kind is "m3u" (a playlist URL), "xtream" (a server with a username
+	// and password) or "stremio" (an addon manifest with TV catalogs).
 	Kind string `yaml:"kind" json:"kind"`
-	// URL is the playlist, or the Xtream server's address.
+	// URL is the playlist, the Xtream server's address, or the addon's manifest.
 	URL      string `yaml:"url" json:"url"`
 	Username string `yaml:"username,omitempty" json:"username"`
 	Password string `yaml:"password,omitempty" json:"password"`
@@ -188,6 +189,10 @@ type StreamingConfig struct {
 	// Prefetch looks streams up ahead of play: the rest of the season after
 	// an episode is played, and what's on watchlists.
 	Prefetch bool `yaml:"prefetch"`
+	// CheckAddonLinks opens every addon play link while looking up streams,
+	// so dead ones are dropped before play. Off, links from addons that give
+	// a size are only opened when played (debrid links are always checked).
+	CheckAddonLinks bool `yaml:"check_addon_links"`
 	// Mode: "stream" stores only the stream; "download" also saves the file
 	// into the download library, which then replaces the stream.
 	Mode string `yaml:"mode"`

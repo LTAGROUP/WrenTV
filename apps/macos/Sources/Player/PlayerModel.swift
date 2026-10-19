@@ -101,6 +101,7 @@ final class PlayerModel {
     @ObservationIgnored private var stopped = false
     @ObservationIgnored private var dismissed: Set<Skip> = []
     @ObservationIgnored private var countdownTask: Task<Void, Never>?
+    @ObservationIgnored private var versionsTask: Task<Void, Never>?
 
     init(target: PlayTarget, api: WrenTVAPI) {
         self.api = api
@@ -162,6 +163,7 @@ final class PlayerModel {
         // Keep the same file when restarting for an audio change.
         fileId = resp.fileId ?? fileId
         versions = resp.versions ?? []
+        watchVersions()
         audioStreams = resp.info?.audio ?? []
         if audioIndex == nil { audioIndex = resp.decision?.audioIndex }
         subtitles = resp.subtitles ?? []
@@ -188,10 +190,36 @@ final class PlayerModel {
         if nextEpisode == nil { Task { nextEpisode = await findNextEpisode() } }
     }
 
+    /// A streamed title's lookup goes on after play starts: pick up the
+    /// versions it finds while it's still looking.
+    private func watchVersions() {
+        versionsTask?.cancel()
+        let id = itemId
+        versionsTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            for _ in 0..<15 {
+                guard let self, !Task.isCancelled, let r = try? await self.api.versions(id), id == self.itemId else { return }
+                if let v = r.versions, !v.isEmpty { self.versions = v }
+                if r.looking != true { return }
+                try? await Task.sleep(for: .seconds(20))
+            }
+        }
+    }
+
+    /// Asks for the versions again, for when the picker opens.
+    func refreshVersions() {
+        let id = itemId
+        Task { [weak self] in
+            guard let self, let r = try? await self.api.versions(id), id == self.itemId, let v = r.versions, !v.isEmpty else { return }
+            self.versions = v
+        }
+    }
+
     func stop() {
         guard !stopped else { return }
         stopped = true
         loadTask?.cancel()
+        versionsTask?.cancel()
         let (pos, dur, sid, item) = (position, duration, sessionId, itemId)
         let api = self.api
         if isOffline { onLocalProgress?(item, pos, dur) }

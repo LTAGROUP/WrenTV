@@ -31,6 +31,8 @@ type Channel struct {
 	Source    string `json:"-"`
 	// numbered: the playlist gave the number (tvg-chno), rather than its place in the list.
 	numbered bool
+	// stremio: URL is a Stremio addon's stream request, asked when played.
+	stremio bool
 }
 
 // Playlist is a parsed M3U file.
@@ -175,6 +177,9 @@ func PlaylistURL(s config.LiveTVSource) string {
 func GuideURLs(s config.LiveTVSource, pl *Playlist) []string {
 	if u := strings.TrimSpace(s.EPGURL); u != "" {
 		return []string{u}
+	}
+	if s.Kind == "stremio" {
+		return nil
 	}
 	if s.Kind == "xtream" {
 		q := url.Values{"username": {s.Username}, "password": {s.Password}}

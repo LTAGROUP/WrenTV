@@ -143,6 +143,11 @@ func cleanSource(src, old config.LiveTVSource) (config.LiveTVSource, error) {
 			return src, errors.New("a playlist link starts with http:// or https://")
 		}
 		src.Username, src.Password = "", ""
+	case "stremio":
+		if !strings.HasPrefix(src.URL, "http://") && !strings.HasPrefix(src.URL, "https://") && !strings.HasPrefix(src.URL, "stremio://") {
+			return src, errors.New("an addon link starts with https:// or stremio://")
+		}
+		src.Username, src.Password = "", ""
 	case "xtream":
 		if src.URL == "" || src.Username == "" || src.Password == "" {
 			return src, errors.New("an Xtream Codes login needs the server, a username and a password")

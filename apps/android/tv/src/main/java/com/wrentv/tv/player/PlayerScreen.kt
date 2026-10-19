@@ -293,7 +293,7 @@ private fun Controls(c: PlayerController, playButton: FocusRequester, seekBar: F
                 RoundButton(if (c.paused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause, if (c.paused) "Play" else "Pause", { c.togglePause() }, Modifier.focusRequester(playButton))
                 if (c.audioOptions.size > 1) PillButton("Audio", { onPanel(PlayerPanel.Audio) }, icon = Icons.Rounded.Audiotrack)
                 if (c.subtitleOptions.isNotEmpty()) PillButton("Subtitles", { onPanel(PlayerPanel.Subtitles) }, icon = Icons.Rounded.Subtitles)
-                if (c.versions.size > 1) PillButton("Version", { onPanel(PlayerPanel.Version) }, icon = Icons.Rounded.Layers)
+                if (c.versions.size > 1) PillButton("Version", { c.refreshVersions(); onPanel(PlayerPanel.Version) }, icon = Icons.Rounded.Layers)
                 if (c.chapters.size > 1) PillButton("Chapters", { onPanel(PlayerPanel.Chapters) }, icon = Icons.Rounded.Toc)
             }
         }

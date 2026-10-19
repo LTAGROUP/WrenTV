@@ -967,7 +967,8 @@ func (s *Service) add(ctx context.Context, r Release, caches map[string]*cacheSt
 		// played; a dead one is found then and another version plays.
 		// Debrid links are opened now: that adds the release to the
 		// account, and finds the ones it can't get.
-		if !r.Debrid && r.Size > 0 {
+		// With CheckAddonLinks on, every link is opened now.
+		if !r.Debrid && r.Size > 0 && !s.cfg().CheckAddonLinks {
 			if r.Size < 50<<20 || maxSize > 0 && r.Size > maxSize {
 				return nil, true
 			}
@@ -1257,6 +1258,22 @@ func (s *Service) prefetchWorker(ctx context.Context, n int) {
 	}
 }
 
+// dropStream forgets a stream that can't play any more, so the next play
+// uses another version and the title is looked up again.
+func (s *Service) dropStream(ctx context.Context, streamID, why string) {
+	st, err := s.DB.GetStream(context.WithoutCancel(ctx), streamID)
+	if err != nil {
+		return
+	}
+	slog.Warn("dropping stream", "stream", streamID, "file", st.FileName, "why", why)
+	s.mu.Lock()
+	delete(s.links, streamID)
+	s.mu.Unlock()
+	ctx = context.WithoutCancel(ctx)
+	_ = s.DB.DeleteStream(ctx, streamID)
+	_ = s.DB.PutStreamLookup(ctx, db.StreamLookup{ItemID: st.ItemID, LookedAt: 0})
+}
+
 // ---------- playback ----------
 
 // Source opens a stored stream for playback through the server.
@@ -1517,3 +1534,24 @@ func (s *Service) notify(event string, data any) {
 }
 
 func randToken() string { return db.NewID() + db.NewID() }
+
+// Probeable reports whether a stream can be read ahead of play without
+// costing anything: everything but an addon link not opened yet, which
+// would start a stream on the addon (StreamNZB).
+func (s *Service) Probeable(st *db.Stream) bool {
+	if st.Link == "" || s.cfg().CheckAddonLinks {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, opened := s.links[st.ID]
+	_, pending := s.pending[st.Link]
+	return opened || pending
+}
+
+// Looking reports whether streams are being looked up for an item now.
+func (s *Service) Looking(itemID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lookups[itemID] != nil || s.queued[itemID]
+}

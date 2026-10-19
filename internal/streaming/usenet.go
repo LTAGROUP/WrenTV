@@ -12,11 +12,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/LTAGROUP/wrentv/internal/config"
 	"github.com/LTAGROUP/wrentv/internal/db"
@@ -178,6 +180,30 @@ func (s *Service) searchIndexers(ctx context.Context, q usenet.Query) []Release 
 			} else {
 				slog.Info("indexer search", "indexer", ix.Name, "title", q.Title, "posts", len(res), "took", time.Since(t).Round(time.Millisecond))
 			}
+			// New posts often aren't tagged with an IMDb ID yet, so a search
+			// by ID finds few: search by name too, keeping posts named for
+			// this title.
+			if q.IMDB != "" && len(res) < byNameBelow && ctx.Err() == nil {
+				byName := q
+				byName.IMDB = ""
+				more, err := ix.Search(ctx, byName)
+				have := map[string]bool{}
+				for _, r := range res {
+					have[r.NZB] = true
+				}
+				added := 0
+				for _, r := range more {
+					if !have[r.NZB] && namedFor(r.Title, q.Title, q.Year, q.Season) {
+						res = append(res, r)
+						added++
+					}
+				}
+				if err != nil {
+					slog.Warn("indexer search by name failed", "indexer", ix.Name, "err", err)
+				} else {
+					slog.Info("indexer search by name", "indexer", ix.Name, "title", q.Title, "posts", len(more), "kept", added)
+				}
+			}
 			var rels []Release
 			for _, r := range res {
 				rels = append(rels, Release{Name: r.Title, Text: r.Title, NZB: r.NZB, Indexer: ix.Name, Usenet: true,
@@ -191,6 +217,53 @@ func (s *Service) searchIndexers(ctx context.Context, q usenet.Query) []Release 
 		out = append(out, <-ch...)
 	}
 	return out
+}
+
+// byNameBelow is how few posts a search by IMDb ID may find before the
+// indexer is searched by name as well.
+const byNameBelow = 3
+
+// namedFor reports whether a post's name is for title: its words up to the
+// year (for a film, within one of year) or the season and episode (for a
+// show) are the title's.
+func namedFor(name, title string, year, season int) bool {
+	want := titleWords(title)
+	words := titleWords(name)
+	if len(want) == 0 || len(words) <= len(want) {
+		return false
+	}
+	for i, w := range want {
+		if words[i] != w {
+			return false
+		}
+	}
+	rest := words[len(want):]
+	if season > 0 {
+		// An optional year, then S01, S01E02 or 1x02.
+		if len(rest) > 1 && yearWordRE.MatchString(rest[0]) {
+			rest = rest[1:]
+		}
+		return seasonWordRE.MatchString(rest[0])
+	}
+	if !yearWordRE.MatchString(rest[0]) {
+		return false
+	}
+	y, _ := strconv.Atoi(rest[0])
+	return year <= 0 || y >= year-1 && y <= year+1
+}
+
+var (
+	yearWordRE   = regexp.MustCompile(`^(19|20)\d\d$`)
+	seasonWordRE = regexp.MustCompile(`^(s\d{1,2}(e\d{1,3})*|\d{1,2}x\d{1,3})$`)
+)
+
+// titleWords splits a title or post name into lower-case words, dropping
+// punctuation ("Spider-Man: No Way Home" and "Spider.Man.No.Way.Home" match)
+// and spelling "&" as "and".
+func titleWords(s string) []string {
+	s = strings.ToLower(strings.ReplaceAll(s, "&", " and "))
+	s = strings.ReplaceAll(s, "'", "")
+	return strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 }
 
 // usenetQuery is what indexers are asked for an item.

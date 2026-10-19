@@ -91,6 +91,16 @@ func (s *Service) Play(ctx context.Context, userID, channelID string, wantHLS bo
 	kind := ss.kinds[channelID]
 	ss.mu.Unlock()
 
+	if c.stremio {
+		link, agent, err := s.resolveStremio(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		cc := *c
+		cc.URL, cc.UserAgent = link, agent
+		c = &cc
+		kind = "" // the addon may send another kind of stream next time
+	}
 	if kind == "" {
 		kind = s.probe(ctx, c)
 	}

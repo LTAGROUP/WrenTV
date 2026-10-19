@@ -488,6 +488,11 @@ struct PlayResponse: Codable {
     var versions: [MediaVersion]?
 }
 
+struct VersionsResponse: Codable {
+    var versions: [MediaVersion]?
+    var looking: Bool?
+}
+
 struct MediaVersion: Codable, Hashable, Identifiable {
     var id: String
     var label: String

@@ -155,6 +155,8 @@ struct WrenTVAPI: Sendable {
         return try Self.decoder.decode(PlayResponse.self, from: data)
     }
 
+    func versions(_ id: String) async throws -> VersionsResponse { try await get("/api/items/\(id)/versions") }
+
     func reportProgress(_ id: String, position: Double, duration: Double) async {
         struct P: Encodable { var position: Double; var duration: Double }
         _ = try? await send("POST", "/api/items/\(id)/progress", body: P(position: position, duration: duration))
