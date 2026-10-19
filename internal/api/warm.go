@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/LTAGROUP/wrentv/internal/db"
 	"github.com/LTAGROUP/wrentv/internal/media"
+	"github.com/LTAGROUP/wrentv/internal/streaming"
 )
 
 // Opening a streamed title's page starts what pressing play would otherwise
@@ -36,6 +38,13 @@ type warmups struct {
 
 var warms = warmups{m: map[string]*warmup{}}
 
+// forget lets an item be warmed again at once.
+func (ws *warmups) forget(itemID string) {
+	ws.mu.Lock()
+	delete(ws.m, itemID)
+	ws.mu.Unlock()
+}
+
 // warmItem starts warming a streamed movie or episode in the background.
 // A title is warmed at most every few minutes, however often it's opened.
 func (s *Server) warmItem(it *db.Item, u *db.User) {
@@ -60,45 +69,58 @@ func (s *Server) warmItem(it *db.Item, u *db.User) {
 		defer close(w.done)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
-		if ready, _ := s.Streaming.Ensure(ctx, it, time.Minute); !ready {
-			return
-		}
-		files, err := s.playableFiles(ctx, it)
-		if err != nil || len(files) == 0 {
-			return
-		}
-		if dropped := s.checkLengths(ctx, it, files, true); len(dropped) > 0 {
-			kept := files[:0]
-			for _, f := range files {
-				if !dropped[f.StreamID] {
-					kept = append(kept, f)
-				}
-			}
-			if files = kept; len(files) == 0 {
-				return
-			}
-		}
-		f := chooseFile(files, playRequest{Caps: warmCaps})
-		if f.StreamID == "" {
-			return // a file on disk opens at once
-		}
-		src, err := s.openSource(ctx, f)
-		if err != nil {
-			slog.Debug("warm stream", "item", it.ID, "err", err)
-			return
-		}
-		defer src.Close()
-		info, err := s.ensureProbe(ctx, f, src)
-		if err != nil {
-			slog.Debug("warm probe", "item", it.ID, "err", err)
-			return
-		}
-		if media.Decide(info, warmCaps, -1).Method == media.MethodRemux {
-			if _, err := s.ensureKeyframes(ctx, f, src); err != nil {
-				slog.Debug("warm keyframes", "item", it.ID, "err", err)
+		// A stored stream found gone is dropped, so the next try finds
+		// another rather than leaving play to start the search.
+		for try := 0; try < 3; try++ {
+			if !s.warm(ctx, it) {
+				break
 			}
 		}
 	}()
+}
+
+// warm warms an item once, reporting whether its chosen stream had gone
+// and another should be tried.
+func (s *Server) warm(ctx context.Context, it *db.Item) (again bool) {
+	if ready, _ := s.Streaming.Ensure(ctx, it, time.Minute); !ready {
+		return false
+	}
+	files, err := s.playableFiles(ctx, it)
+	if err != nil || len(files) == 0 {
+		return false
+	}
+	if dropped := s.checkLengths(ctx, it, files, true); len(dropped) > 0 {
+		kept := files[:0]
+		for _, f := range files {
+			if !dropped[f.StreamID] {
+				kept = append(kept, f)
+			}
+		}
+		if files = kept; len(files) == 0 {
+			return true
+		}
+	}
+	f := chooseFile(files, playRequest{Caps: warmCaps})
+	if f.StreamID == "" {
+		return false // a file on disk opens at once
+	}
+	src, err := s.openSource(ctx, f)
+	if err != nil {
+		slog.Debug("warm stream", "item", it.ID, "err", err)
+		return errors.Is(err, streaming.ErrUnavailable) && ctx.Err() == nil
+	}
+	defer src.Close()
+	info, err := s.ensureProbe(ctx, f, src)
+	if err != nil {
+		slog.Debug("warm probe", "item", it.ID, "err", err)
+		return false
+	}
+	if media.Decide(info, warmCaps, -1).Method == media.MethodRemux {
+		if _, err := s.ensureKeyframes(ctx, f, src); err != nil {
+			slog.Debug("warm keyframes", "item", it.ID, "err", err)
+		}
+	}
+	return false
 }
 
 // waitWarm lets play wait on a warm-up already under way rather than

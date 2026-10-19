@@ -317,6 +317,9 @@ type server struct {
 // learnFor is how long a discovered connection limit is kept.
 const learnFor = 10 * time.Minute
 
+// wrongLoginFor is how long a server that refused our details is left out.
+const wrongLoginFor = 10 * time.Minute
+
 // capacity is how many connections may be open; s.mu is held.
 func (s *server) capacity() int {
 	if s.limit > 0 && time.Now().Before(s.limitUntil) {
@@ -618,15 +621,25 @@ func (s *server) get(ctx context.Context) (*conn, bool, error) {
 			// Some servers (Giganews) answer one connection too many with
 			// 481, the bad-password code; with these details working
 			// already, it means the same as 482.
-			tooMany := errors.Is(err, ErrTooMany) || (errors.Is(err, ErrAuth) &&
-				(s.loggedIn || s.open > 0 || strings.Contains(strings.ToLower(err.Error()), "connection")))
+			// Only our working connections count: others still logging in
+			// with the same wrong details prove nothing.
 			ours := s.open - s.dialing
+			tooMany := errors.Is(err, ErrTooMany) || (errors.Is(err, ErrAuth) &&
+				(s.loggedIn || ours > 0 || strings.Contains(strings.ToLower(err.Error()), "connection")))
 			switch {
 			case ctx.Err() != nil:
 				s.mu.Unlock()
 				return nil, true, ctx.Err()
 			case !tooMany:
-				s.downUntil, s.lastErr = time.Now().Add(30*time.Second), fmt.Errorf("%s: %w", s.Host, err)
+				// Details that never worked won't start to: set the server
+				// aside until they're changed (which makes a new pool), so
+				// checks don't each wait on its slow refusals.
+				aside := 30 * time.Second
+				if errors.Is(err, ErrAuth) {
+					aside = wrongLoginFor
+				}
+				err = fmt.Errorf("%s: %w", s.Host, err)
+				s.downUntil, s.lastErr = time.Now().Add(aside), err
 				s.mu.Unlock()
 				return nil, true, err
 			case ours > 0:

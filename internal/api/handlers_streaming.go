@@ -151,7 +151,8 @@ func (s *Server) handleItemStreams(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, resp)
 }
 
-// handleForgetStreams drops stored streams so the next play finds new ones (admin).
+// handleForgetStreams drops stored streams and, for a movie or episode,
+// starts finding new ones (admin).
 func (s *Server) handleForgetStreams(w http.ResponseWriter, r *http.Request) {
 	it, ok := s.itemFor(r)
 	if !ok {
@@ -173,6 +174,11 @@ func (s *Server) handleForgetStreams(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, id := range ids {
 		_ = s.Streaming.Forget(r.Context(), id)
+	}
+	if it.Kind == "movie" || it.Kind == "episode" {
+		// Start finding new ones now rather than when play is pressed.
+		warms.forget(it.ID)
+		s.warmItem(it, principal(r).User)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -24,7 +24,9 @@ type fakeServer struct {
 	articles map[string][]byte
 	gone     map[string]bool // answered 451, as Giganews does for takedowns
 	logins   atomic.Int32
-	limit    int32 // more logins than this at once get 481, as Giganews answers
+	limit    int32         // more logins than this at once get 481, as Giganews answers
+	slowAuth time.Duration // how long a login's answer takes
+	refused  atomic.Int32  // logins refused for a wrong password
 	authed   atomic.Int32
 	open     atomic.Int32
 	peak     atomic.Int32
@@ -86,6 +88,7 @@ func (s *fakeServer) serve(c net.Conn) {
 		case cmd == "AUTHINFO" && len(f) == 3 && strings.EqualFold(f[1], "USER"):
 			fmt.Fprint(w, "381 more\r\n")
 		case cmd == "AUTHINFO" && len(f) == 3 && strings.EqualFold(f[1], "PASS"):
+			time.Sleep(s.slowAuth)
 			if f[2] == "secret" && s.limit > 0 && s.authed.Add(1) > s.limit {
 				s.authed.Add(-1)
 				fmt.Fprint(w, "481 Too many connections\r\n")
@@ -98,6 +101,7 @@ func (s *fakeServer) serve(c net.Conn) {
 				s.logins.Add(1)
 				fmt.Fprint(w, "281 ok\r\n")
 			} else {
+				s.refused.Add(1)
 				fmt.Fprint(w, "481 no\r\n")
 			}
 		case !authed:
@@ -625,5 +629,53 @@ func TestAbandonedReadAhead(t *testing.T) {
 	var buf bytes.Buffer
 	if _, err := f.WriteRange(context.Background(), &buf, 64000*25, 64000*3); err != nil || !bytes.Equal(buf.Bytes(), video[64000*25:64000*28]) {
 		t.Fatalf("read after = %d bytes, %v", buf.Len(), err)
+	}
+}
+
+// A server whose login is wrong is set aside at once, even when many
+// connections to it log in together, rather than its refusals being
+// waited out as a full account: checks of posts the other servers lack
+// shouldn't each wait on its retries.
+func TestWrongLoginSetAside(t *testing.T) {
+	s := newFakeServer(t)
+	s.slowAuth = time.Second
+	host, port, _ := net.SplitHostPort(s.addr)
+	var p int
+	fmt.Sscan(port, &p)
+	pool := NewPool([]Server{
+		{Host: host, Port: p, User: "me", Pass: "secret", MaxConns: 10},
+		{Host: host, Port: p, User: "me", Pass: "wrong", MaxConns: 10},
+	})
+	defer pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	start := time.Now()
+	var wg sync.WaitGroup
+	errs := make([]error, 30)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = pool.Stat(ctx, []string{fmt.Sprintf("missing-%d@x", i)})
+		}(i)
+	}
+	wg.Wait()
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("checks took %v waiting on the wrong login", took)
+	}
+	for i, err := range errs {
+		if !errors.Is(err, ErrAuth) {
+			t.Fatalf("check %d: %v, want the login error", i, err)
+		}
+	}
+	if n := s.refused.Load(); n > 10 {
+		t.Errorf("wrong login tried %d times, want one round", n)
+	}
+	bad := pool.servers[1]
+	bad.mu.Lock()
+	aside := time.Until(bad.downUntil)
+	bad.mu.Unlock()
+	if aside < 5*time.Minute {
+		t.Errorf("wrong login set aside for %v, want minutes", aside.Round(time.Second))
 	}
 }
