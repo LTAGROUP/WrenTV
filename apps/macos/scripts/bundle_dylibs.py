@@ -34,7 +34,10 @@ def rpaths(path):
 
 
 def resolve(name, loader):
-    """Where a load command points on this Mac, or None for system libraries."""
+    """Where a load command points on this Mac, or None for system libraries
+    and frameworks Xcode already embedded (Sparkle)."""
+    if ".framework/" in name and not name.startswith(HOMEBREW):
+        return None
     base = os.path.dirname(os.path.realpath(loader))
     if name.startswith("@loader_path/"):
         return os.path.realpath(os.path.join(base, name[len("@loader_path/"):]))

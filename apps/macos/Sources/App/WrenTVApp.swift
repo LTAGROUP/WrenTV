@@ -1,3 +1,4 @@
+import Sparkle
 import SwiftUI
 
 struct PlayTarget: Codable, Hashable {
@@ -15,6 +16,8 @@ struct PlayTarget: Codable, Hashable {
 @main
 struct WrenTVApp: App {
     @State private var state = AppState()
+    /// Checks for a new version at launch; see SUFeedURL in project.yml.
+    private let updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
     init() {
         URLCache.shared = URLCache(memoryCapacity: 96 << 20, diskCapacity: 1 << 30)
@@ -30,6 +33,7 @@ struct WrenTVApp: App {
         .defaultSize(width: 1320, height: 840)
         .commands {
             CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { updater.checkForUpdates(nil) }
                 if state.user != nil {
                     Button("Sign Out") { state.signOut() }
                 }

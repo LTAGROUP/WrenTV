@@ -31,5 +31,13 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Wren TV connects to media servers on your network.</string>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/LTAGROUP/WrenTV/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>9TJT5UW+Hn/922dFPo4MFLl04w+yN6VREMaK7ICscLo=</string>
 </dict>
 </plist>
