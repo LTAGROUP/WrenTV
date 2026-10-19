@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -317,5 +318,37 @@ func TestMissingPostRemembered(t *testing.T) {
 	lookup()
 	if fetched.Load() != 2 {
 		t.Fatalf("after the servers changed, NZB fetched %d times, want 2", fetched.Load())
+	}
+}
+
+// An NZB asked for while it's being fetched waits for that fetch rather
+// than downloading it again.
+func TestNZBFetchedOnce(t *testing.T) {
+	post := usenettest.New(t)
+	post.Post("Movie.2024.1080p.WEB-DL-ONE.mkv", make([]byte, 1000), 500)
+	var fetched atomic.Int32
+	ix := fakeIndexer(t, map[string][]byte{"one": post.NZB()}, nil, &fetched)
+	cfg := &config.Config{DataDir: t.TempDir(), Streaming: config.StreamingConfig{Enabled: true, Usenet: true,
+		Indexers: []config.IndexerConfig{{Name: "fake", URL: ix.URL + "/api", APIKey: "ixkey", Enabled: true}}}}
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	s := New(Deps{Cfg: cfg, DB: d, TMDB: tmdb.New("test", "en-US", d), Hub: library.NewHub()})
+	link := ix.URL + "/getnzb?id=one"
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if n, err := s.nzb(context.Background(), link); err != nil || len(n.Files) != 1 {
+				t.Errorf("nzb = %v, %v", n, err)
+			}
+		}()
+	}
+	wg.Wait()
+	if fetched.Load() != 1 {
+		t.Fatalf("NZB fetched %d times, want 1", fetched.Load())
 	}
 }

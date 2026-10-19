@@ -40,8 +40,10 @@ type usenetState struct {
 	// cache outlives pools, so changing servers keeps what's been read.
 	cache    *usenet.Cache
 	cacheKey string
-	// nzbs keeps parsed NZBs of recent plays.
-	nzbs map[string]*usenet.NZB
+	// nzbs keeps parsed NZBs of recent plays; fetching are those on the
+	// way, so a post read while its NZB is fetched ahead waits for it.
+	nzbs     map[string]*usenet.NZB
+	fetching map[string]chan struct{}
 	// dead are stored streams that failed a play or turned out not to be
 	// the title, by release key. Spot checks can miss a post's holes, so
 	// they aren't tried again for a while.
@@ -325,11 +327,38 @@ func (s *Service) nzbPath(link string) string {
 func (s *Service) nzb(ctx context.Context, link string) (*usenet.NZB, error) {
 	u := &s.usenet
 	u.mu.Lock()
-	if n := u.nzbs[link]; n != nil {
+	for {
+		if n := u.nzbs[link]; n != nil {
+			u.mu.Unlock()
+			return n, nil
+		}
+		ch := u.fetching[link]
+		if ch == nil {
+			break
+		}
 		u.mu.Unlock()
-		return n, nil
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		u.mu.Lock()
+		if u.nzbs[link] == nil {
+			break // that fetch failed: try it here
+		}
 	}
+	if u.fetching == nil {
+		u.fetching = map[string]chan struct{}{}
+	}
+	ch := make(chan struct{})
+	u.fetching[link] = ch
 	u.mu.Unlock()
+	defer func() {
+		u.mu.Lock()
+		delete(u.fetching, link)
+		u.mu.Unlock()
+		close(ch)
+	}()
 	path := s.nzbPath(link)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -362,6 +391,30 @@ func (s *Service) nzb(ctx context.Context, link string) (*usenet.NZB, error) {
 	u.nzbs[link] = n
 	u.mu.Unlock()
 	return n, nil
+}
+
+// prefetchNZBs fetches posts' NZBs ahead of their being read, so the
+// indexer's wait overlaps the reading of the posts before them.
+func (s *Service) prefetchNZBs(ctx context.Context, posts []Release, season, episode int) {
+	slots := make(chan struct{}, nzbFetches)
+	for _, r := range posts {
+		if r.NZB == "" || s.usenet.wasMissing(r, season, episode) || s.usenet.isDead(r) {
+			continue
+		}
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		go func(link string) {
+			defer func() { <-slots }()
+			fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			if _, err := s.nzb(fctx, link); err != nil {
+				slog.Debug("nzb prefetch", "err", err)
+			}
+		}(r.NZB)
+	}
 }
 
 // addPost reads a post's files, picks the video and checks its articles

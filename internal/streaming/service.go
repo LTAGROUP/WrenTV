@@ -233,11 +233,17 @@ func newestToo(ranked []Release) []Release {
 	return out
 }
 
-// soloPosts is how many of the best quality's top posts are read at once,
-// ahead of read-ahead, while someone waits to play. They race rather than
-// queue: popular titles' top posts are mostly taken down, and each dead
-// one read in turn held play up by seconds.
-const soloPosts = 3
+// postsAtOnce is how many posts a quality reads at once; while someone
+// waits to play, the best quality's go ahead of read-ahead. Popular
+// titles' top posts are mostly taken down, and each dead one takes
+// seconds to rule out, so they race rather than queue. Each check takes
+// only a few connections.
+const postsAtOnce = 6
+
+// nzbsAhead is how many of a quality's posts have their NZBs fetched
+// ahead of being read, a few at a time, as indexers take a second or two
+// to send each.
+const nzbsAhead, nzbFetches = 12, 4
 
 // urgentKey marks a post someone is waiting on: it isn't held to the
 // background share of connections.
@@ -817,10 +823,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 			// fail.
 			var pwg sync.WaitGroup
 			solo := urgent && q == best
-			slots := make(chan struct{}, max(need, 1))
-			if solo {
-				slots = make(chan struct{}, max(need, soloPosts))
-			}
+			slots := make(chan struct{}, max(need, postsAtOnce))
 			var tried []Release
 			var picks []*pick
 			var done, stored []bool
@@ -831,7 +834,9 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 				if q == best {
 					defer unlead()
 				}
-				for _, r := range newestToo(s.rank(nzbs, q, maxSize, season)) {
+				order := newestToo(s.rank(nzbs, q, maxSize, season))
+				go s.prefetchNZBs(ctx, order[:min(len(order), nzbsAhead)], season, episode)
+				for _, r := range order {
 					slots <- struct{}{}
 					qmu.Lock()
 					stop := need <= 0 || ctx.Err() != nil || len(tried) >= need+postSpare || time.Since(started) > postTime
@@ -839,7 +844,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 					// without using up a try.
 					dup := !stop && (seen(r) || s.usenet.wasMissing(r, season, episode))
 					k := len(tried)
-					rush := solo && k < soloPosts && !settled
+					rush := solo && k < postsAtOnce && !settled
 					if !stop && !dup {
 						tried, picks, done, stored = append(tried, r), append(picks, nil), append(done, false), append(stored, false)
 					}

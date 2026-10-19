@@ -131,6 +131,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	streamed := s.isStreamLibrary(ctx, it.LibraryID)
 	// steps times each part of starting playback, for the debug log.
 	t0, last, steps := time.Now(), time.Now(), []any{}
+	left := func() time.Duration { return max(time.Until(t0.Add(playBudget)), 0) }
 	step := func(name string) {
 		steps = append(steps, name, time.Since(last).Round(time.Millisecond))
 		last = time.Now()
@@ -142,11 +143,11 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		}
 		// Look up streams on first play; wait a little so a quick lookup
 		// starts playback at once, else the client retries.
-		ready, err := s.Streaming.Ensure(ctx, it, 12*time.Second)
+		ready, err := s.Streaming.Ensure(ctx, it, min(12*time.Second, left()))
 		step("lookup")
 		if ready {
 			// Opening the title's page may already be reading the stream.
-			s.waitWarm(ctx, it.ID, 15*time.Second)
+			s.waitWarm(ctx, it.ID, min(15*time.Second, left()))
 			step("warm")
 		}
 		if !ready {
@@ -167,6 +168,26 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := chooseFile(files, req)
+	if f.StreamID != "" && !s.prepared(ctx, f, req.Caps) {
+		// Probing a stream and indexing its keyframes can take a while:
+		// it's done apart from this request, which hands back to the
+		// client rather than run past its timeout.
+		t := time.NewTimer(left())
+		select {
+		case <-s.prepare(f, req.Caps):
+			t.Stop()
+			if fresh, err := s.DB.GetFile(ctx, f.ID); err == nil {
+				f = fresh
+			}
+		case <-t.C:
+			writeJSON(w, 202, playResponse{Status: "pending", Message: "Getting the stream ready…"})
+			return
+		case <-ctx.Done():
+			t.Stop()
+			return
+		}
+		step("prepare")
+	}
 
 	src, err := s.openSource(ctx, f)
 	step("open")
