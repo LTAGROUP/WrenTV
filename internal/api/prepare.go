@@ -36,10 +36,14 @@ func (s *Server) prepared(ctx context.Context, f *db.MediaFile, caps media.Clien
 	return err == nil && len(b) > 2
 }
 
+// readAhead is how much of a Usenet stream's start prepare reads into the
+// cache once it's probed: the first few segments of a 4K remux.
+const readAhead = 128 << 20
+
 // prepare probes a stream and indexes its keyframes in the background,
 // or joins that already under way. The channel closes when it's done,
 // whether or not it worked: play then opens the stream itself and
-// handles what went wrong.
+// handles what went wrong. The stream's start is read ahead after that.
 func (s *Server) prepare(f *db.MediaFile, caps media.ClientCaps) <-chan struct{} {
 	preps.mu.Lock()
 	defer preps.mu.Unlock()
@@ -50,12 +54,16 @@ func (s *Server) prepare(f *db.MediaFile, caps media.ClientCaps) <-chan struct{}
 	preps.m[f.ID] = done
 	fc := *f
 	go func() {
-		defer func() {
-			preps.mu.Lock()
-			delete(preps.m, fc.ID)
-			preps.mu.Unlock()
-			close(done)
-		}()
+		var once sync.Once
+		finish := func() {
+			once.Do(func() {
+				preps.mu.Lock()
+				delete(preps.m, fc.ID)
+				preps.mu.Unlock()
+				close(done)
+			})
+		}
+		defer finish()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		src, err := s.openSource(ctx, &fc)
@@ -73,6 +81,14 @@ func (s *Server) prepare(f *db.MediaFile, caps media.ClientCaps) <-chan struct{}
 			if _, err := s.ensureKeyframes(ctx, &fc, src); err != nil {
 				slog.Debug("prepare keyframes", "file", fc.ID, "err", err)
 			}
+		}
+		finish()
+		if ra, ok := src.(interface {
+			ReadAhead(context.Context, int64) error
+		}); ok {
+			t := time.Now()
+			err := ra.ReadAhead(ctx, readAhead)
+			slog.Debug("prepare read ahead", "file", fc.ID, "err", err, "took", time.Since(t).Round(time.Millisecond))
 		}
 	}()
 	return done

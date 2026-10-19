@@ -721,3 +721,25 @@ func TestStatBackupsAskOneFirst(t *testing.T) {
 		t.Fatalf("stat with the backup's = %v, %v; want all there", ok, err)
 	}
 }
+
+// A taken-down post is known from one article per lane, not the whole
+// sample: servers can take half a second over each missing one.
+func TestAliveAsksOneFirst(t *testing.T) {
+	s := newFakeServer(t)
+	video := append([]byte{0x1a, 0x45, 0xdf, 0xa3}, randomBytes(400_000, 5)...)
+	nzb := &NZB{Files: []NZBFile{s.post("Movie.2020.1080p.mkv", video, 10000, `"Movie.2020.1080p.mkv" yEnc`)}}
+	s.mu.Lock()
+	s.gone = map[string]bool{}
+	for _, seg := range nzb.Files[0].Segments {
+		s.gone[seg.ID] = true
+	}
+	s.mu.Unlock()
+	pool := s.pool(3)
+	defer pool.Close()
+	if ok, err := Alive(context.Background(), pool, nzb, nil, 24); ok || err != nil {
+		t.Fatalf("alive %v %v, want false, nil", ok, err)
+	}
+	if n := s.stats.Load(); n > 3 {
+		t.Fatalf("asked about %d articles, want at most 3", n)
+	}
+}

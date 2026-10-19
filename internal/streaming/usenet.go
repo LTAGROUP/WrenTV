@@ -549,6 +549,13 @@ func (s *usenetSource) Close() error {
 	return nil
 }
 
+// ReadAhead fetches the first n bytes into the article cache, so the
+// player's first segments are read from memory.
+func (s *usenetSource) ReadAhead(ctx context.Context, n int64) error {
+	_, err := s.f.WriteRange(ctx, io.Discard, 0, min(n, s.f.Size()))
+	return err
+}
+
 func (s *usenetSource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	size := s.f.Size()
 	start, end, ok := parseRange(r.Header.Get("Range"), size)

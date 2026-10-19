@@ -518,7 +518,10 @@ func statSpread(ctx context.Context, pool *Pool, all []string, samples int) (boo
 	}
 	// Split across a few connections. One lane finding an article gone
 	// settles it, so the others are stopped: those waiting for a
-	// connection drop out, those on one finish (so it's kept).
+	// connection drop out, those on one finish (so it's kept). Each lane
+	// asks about one article before the rest: news servers can take half
+	// a second to say each one is missing, so a taken-down post is known
+	// in a second rather than several.
 	const lanes = 3
 	lctx, cancel := context.WithCancel(ctx)
 	sctx := finishing(lctx)
@@ -538,7 +541,10 @@ func statSpread(ctx context.Context, pool *Pool, all []string, samples int) (boo
 		wg.Add(1)
 		go func(l int, ids []string) {
 			defer wg.Done()
-			results[l], errs[l] = pool.Stat(sctx, ids)
+			results[l], errs[l] = pool.Stat(sctx, ids[:1])
+			if results[l] && len(ids) > 1 {
+				results[l], errs[l] = pool.Stat(sctx, ids[1:])
+			}
 			if !results[l] && errs[l] == nil {
 				cancel()
 			}
