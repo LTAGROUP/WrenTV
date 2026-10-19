@@ -39,6 +39,7 @@ func (s *Server) handlePatchPrefs(w http.ResponseWriter, r *http.Request) {
 		AudioLanguage    *string `json:"audioLanguage"`
 		SubtitleLanguage *string `json:"subtitleLanguage"`
 		WatchedPercent   *int    `json:"watchedPercent"`
+		ContinueAfter    *int    `json:"continueAfter"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, 400, err.Error())
@@ -56,6 +57,13 @@ func (s *Server) handlePatchPrefs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p.WatchedPercent = *req.WatchedPercent
+	}
+	if req.ContinueAfter != nil {
+		if *req.ContinueAfter < 10 || *req.ContinueAfter > 1800 {
+			writeErr(w, 400, "continueAfter must be between 10 and 1800 seconds")
+			return
+		}
+		p.ContinueAfter = *req.ContinueAfter
 	}
 	if err := s.DB.SetPrefs(r.Context(), uid, p); err != nil {
 		writeErr(w, 500, err.Error())

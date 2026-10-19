@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -526,8 +527,10 @@ func TestStreamLookupPackAndPlayback(t *testing.T) {
 func TestAddonPlaysWithoutDebrid(t *testing.T) {
 	ctx := context.Background()
 	var addon *httptest.Server
+	var opened atomic.Int32
 	addon = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/play/") {
+			opened.Add(1)
 			w.Header().Set("Content-Type", "video/x-matroska")
 			w.Header().Set("Content-Range", "bytes 0-0/8000000000")
 			w.WriteHeader(http.StatusPartialContent)
@@ -563,6 +566,10 @@ func TestAddonPlaysWithoutDebrid(t *testing.T) {
 	sts, _ := d.StreamsForItem(ctx, it.ID)
 	if len(sts) != 1 || sts[0].Release != "Movie.2024.2160p.WEB-DL-GRP.mkv" && sts[0].Release != "Movie.2024.2160p.WEB-DL-GRP" {
 		t.Fatalf("streams = %+v", sts)
+	}
+	// Opening the link starts a stream on the addon: not until it's played.
+	if n := opened.Load(); n != 0 {
+		t.Fatalf("lookup opened the play link %d times", n)
 	}
 	if u, _, err := s.linkFor(ctx, sts[0].ID, true); err != nil || u != addon.URL+"/tok/play/abc" {
 		t.Fatalf("link = %q, %v", u, err)

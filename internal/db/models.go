@@ -828,19 +828,20 @@ func (d *DB) SetWatched(ctx context.Context, userID, itemID string, watched bool
 	return err
 }
 
-// ContinueWatching returns in-progress movies/episodes plus the next episode of shows being watched.
-func (d *DB) ContinueWatching(ctx context.Context, userID string, libraryIDs []string, limit int) ([]*Item, error) {
+// ContinueWatching returns movies and episodes watched for more than after
+// seconds but not finished, most recent first.
+func (d *DB) ContinueWatching(ctx context.Context, userID string, libraryIDs []string, after, limit int) ([]*Item, error) {
 	if len(libraryIDs) == 0 {
 		return nil, nil
 	}
-	args := []any{userID}
+	args := []any{userID, after}
 	for _, l := range libraryIDs {
 		args = append(args, l)
 	}
 	args = append(args, limit)
 	rows, err := d.QueryContext(ctx, `SELECT `+itemCols+`, w.position, w.duration, w.watched, w.updated_at FROM watch_state w
 		JOIN items i ON i.id=w.item_id
-		WHERE w.user_id=? AND w.watched=0 AND w.position > 30 AND i.kind IN ('movie','episode')
+		WHERE w.user_id=? AND w.watched=0 AND w.position > ? AND i.kind IN ('movie','episode')
 		AND i.library_id IN (`+placeholders(len(libraryIDs))+`)
 		ORDER BY w.updated_at DESC LIMIT ?`, args...)
 	if err != nil {

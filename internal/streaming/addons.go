@@ -35,6 +35,7 @@ type Release struct {
 	NZB      string
 	Link     string // addon URL that redirects to the file on the debrid CDN
 	Usenet   bool   // a Usenet post (an addon's link, or an indexer's NZB)
+	Debrid   bool   // the link plays from a debrid account (AIOStreams says which)
 	Indexer  string // the Newznab indexer that found the post
 	FileIdx  int    // file index inside the torrent, -1 if unknown
 	FileName string
@@ -297,6 +298,7 @@ func releaseFrom(s addonStream, addon string) (Release, bool) {
 		Seeders: -1, Addon: addon}
 	if d := s.StreamData; d != nil && link != "" {
 		r.Usenet = d.Type == "usenet"
+		r.Debrid = d.Service != nil
 		r.FileName = cmp.Or(r.FileName, d.Filename)
 		r.Name = cmp.Or(d.FolderName, r.FileName, r.Name)
 		r.Size = cmp.Or(r.Size, d.Size)

@@ -20,13 +20,28 @@ type Prefs struct {
 	// WatchedPercent is how far into a movie or episode (50–98) playback must
 	// get before it counts as watched.
 	WatchedPercent int `json:"watchedPercent"`
+	// ContinueAfter is how many seconds (10–1800) of a movie or episode
+	// must be watched before it's on Continue Watching.
+	ContinueAfter int `json:"continueAfter"`
 }
 
 // DefaultWatchedPercent is the watched threshold for users who haven't set one.
 const DefaultWatchedPercent = 90
 
+// DefaultContinueAfter is the Continue Watching threshold, in seconds, for
+// users who haven't set one.
+const DefaultContinueAfter = 30
+
 func DefaultPrefs() Prefs {
-	return Prefs{AudioLanguage: "en", WatchedPercent: DefaultWatchedPercent}
+	return Prefs{AudioLanguage: "en", WatchedPercent: DefaultWatchedPercent, ContinueAfter: DefaultContinueAfter}
+}
+
+// ContinueAfterSeconds is how far in a title must be to be on Continue Watching.
+func (p Prefs) ContinueAfterSeconds() int {
+	if p.ContinueAfter < 10 || p.ContinueAfter > 1800 {
+		return DefaultContinueAfter
+	}
+	return p.ContinueAfter
 }
 
 // WatchedAt is the fraction of the runtime that counts as watched.

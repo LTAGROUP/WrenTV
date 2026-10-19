@@ -289,7 +289,8 @@ func (s *Server) setWatchlist(w http.ResponseWriter, r *http.Request, on bool) {
 // episode of shows watched recently.
 func (s *Server) continueWatching(ctx context.Context, r *http.Request, ids []string) []*db.Item {
 	p := principal(r)
-	cont, _ := s.DB.ContinueWatching(ctx, p.User.ID, ids, 20)
+	prefs, _ := s.DB.GetPrefs(ctx, p.User.ID)
+	cont, _ := s.DB.ContinueWatching(ctx, p.User.ID, ids, prefs.ContinueAfterSeconds(), 20)
 	// "Up next": the next episode for shows watched recently.
 	upNext := []*db.Item{}
 	if len(ids) > 0 {

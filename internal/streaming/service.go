@@ -961,6 +961,19 @@ func (s *Service) add(ctx context.Context, r Release, caches map[string]*cacheSt
 		return nil, true
 	}
 	if r.Link != "" {
+		// An addon that streams the file itself (StreamNZB) starts a stream
+		// for every link opened, and a lookup keeps several versions, so
+		// when it says how big the file is, the link waits until it's
+		// played; a dead one is found then and another version plays.
+		// Debrid links are opened now: that adds the release to the
+		// account, and finds the ones it can't get.
+		if !r.Debrid && r.Size > 0 {
+			if r.Size < 50<<20 || maxSize > 0 && r.Size > maxSize {
+				return nil, true
+			}
+			f := RemoteFile{Name: linkFileName(r.FileName, ""), Size: r.Size}
+			return &pick{rel: r, tor: &Torrent{}, file: f}, true
+		}
 		target, size, err := openLink(ctx, r.Link)
 		if err != nil {
 			slog.Debug("addon link", "release", r.Name, "addon", r.Addon, "err", err)
@@ -1403,7 +1416,9 @@ func (s *Service) linkFor(ctx context.Context, streamID string, force bool) (str
 			return "", 0, err
 		}
 		slog.Info("addon link failed", "stream", st.ID, "addon", st.Addon, "err", err)
-		if n, _ := s.DB.StreamFailed(ctx, st.ID); n >= 2 {
+		// A link that answers with something unplayable won't get better;
+		// one that didn't answer gets another try.
+		if n, _ := s.DB.StreamFailed(ctx, st.ID); n >= 2 || errors.Is(err, errBadLink) {
 			_ = s.DB.DeleteStream(ctx, st.ID)
 			_ = s.DB.PutStreamLookup(ctx, db.StreamLookup{ItemID: st.ItemID, LookedAt: 0})
 		}

@@ -378,6 +378,9 @@ export async function viewAccount() {
       <div class="field"><label>Counts as watched at</label>
         <select id="watched">${[50, 60, 70, 75, 80, 85, 90, 95, 98].map((v) => `<option value="${v}" ${v === (prefs.watchedPercent || 90) ? 'selected' : ''}>${v}%</option>`).join('')}</select></div>
       <p class="small muted" style="margin:0">How far into a movie or episode you need to get before it's marked watched and drops off Continue Watching. Lower it if you usually stop when the credits start.</p>
+      <div class="field" style="margin-top:16px"><label for="continue">Add to Continue Watching after</label>
+        <select id="continue">${[[10, '10 seconds'], [30, '30 seconds'], [60, '1 minute'], [120, '2 minutes'], [300, '5 minutes'], [600, '10 minutes']].map(([v, l]) => `<option value="${v}" ${v === (prefs.continueAfter || 30) ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <p class="small muted" style="margin:0">How long you need to watch a movie or episode before it shows on Continue Watching, so trying a few minutes of something doesn't put it there.</p>
     </div>
     <div class="panel" style="max-width:640px;margin-top:18px" id="simkl"></div>
     <div class="panel" style="max-width:640px;margin-top:18px"><h2>Sign in a TV</h2>
@@ -395,6 +398,12 @@ export async function viewAccount() {
   $('#watched', node).onchange = async (e) => {
     try {
       await api('/api/me/prefs', { method: 'PATCH', body: { watchedPercent: Number(e.target.value) } });
+      toast('Saved.');
+    } catch (err) { toast(err.message); }
+  };
+  $('#continue', node).onchange = async (e) => {
+    try {
+      await api('/api/me/prefs', { method: 'PATCH', body: { continueAfter: Number(e.target.value) } });
       toast('Saved.');
     } catch (err) { toast(err.message); }
   };
