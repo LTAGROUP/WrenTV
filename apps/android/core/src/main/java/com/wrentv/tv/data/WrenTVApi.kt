@@ -45,6 +45,9 @@ object Http {
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    /** For play, which can take a while to get a stream ready. */
+    val slow: OkHttpClient = client.newBuilder().readTimeout(90, TimeUnit.SECONDS).build()
+
     /** For the server's event stream, which stays open. */
     val streaming: OkHttpClient = client.newBuilder().readTimeout(0, TimeUnit.SECONDS).build()
 }
@@ -83,12 +86,12 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
         return url("/api/images/$size/${path.removePrefix("/")}").toString()
     }
 
-    suspend fun send(method: String, path: String, query: Map<String, String> = emptyMap(), body: JsonElement? = null): String {
+    suspend fun send(method: String, path: String, query: Map<String, String> = emptyMap(), body: JsonElement? = null, http: OkHttpClient = Http.client): String {
         val b = Request.Builder().url(url(path, query)).header("X-WrenTV-Client", CLIENT_NAME)
         auth?.let { b.header("Authorization", "Bearer ${it.token()}") }
         val rb = body?.toString()?.toRequestBody(jsonType) ?: if (method == "GET" || method == "DELETE") null else "".toRequestBody(jsonType)
         b.method(method, rb)
-        val resp = Http.client.newCall(b.build()).await()
+        val resp = http.newCall(b.build()).await()
         return resp.use { r ->
             val text = withContext(Dispatchers.IO) { r.body?.string() ?: "" }
             if (r.code >= 400) {
@@ -199,7 +202,8 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     suspend fun trending(): TrendingResponse = get("/api/discover/trending")
     suspend fun search(q: String): List<Item> = get("/api/search", mapOf("q" to q))
 
-    suspend fun play(id: String, req: PlayRequest): PlayResponse = post("/api/items/$id/play", enc(req))
+    suspend fun play(id: String, req: PlayRequest): PlayResponse =
+        json.decodeFromString(serializer<PlayResponse>(), send("POST", "/api/items/$id/play", body = enc(req), http = Http.slow))
     suspend fun versions(id: String): VersionsResponse = get("/api/items/$id/versions")
 
     suspend fun reportProgress(id: String, position: Double, duration: Double) {

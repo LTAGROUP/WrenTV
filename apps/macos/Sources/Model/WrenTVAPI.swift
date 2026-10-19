@@ -39,9 +39,10 @@ struct WrenTVAPI: Sendable {
     }
 
     @discardableResult
-    func send(_ method: String, _ path: String, query: [URLQueryItem] = [], body: (any Encodable)? = nil) async throws -> (Data, Int) {
+    func send(_ method: String, _ path: String, query: [URLQueryItem] = [], body: (any Encodable)? = nil, timeout: TimeInterval? = nil) async throws -> (Data, Int) {
         var req = URLRequest(url: url(path, query: query))
         req.httpMethod = method
+        if let timeout { req.timeoutInterval = timeout }
         req.setValue("Wren TV for Mac", forHTTPHeaderField: "X-WrenTV-Client")
         if let auth { req.setValue("Bearer \(try await auth.token())", forHTTPHeaderField: "Authorization") }
         if let body {
@@ -151,7 +152,7 @@ struct WrenTVAPI: Sendable {
 
     /// Returns the play response and whether the source is still pending (HTTP 202).
     func play(_ id: String, _ req: PlayRequest) async throws -> PlayResponse {
-        let (data, _) = try await send("POST", "/api/items/\(id)/play", body: req)
+        let (data, _) = try await send("POST", "/api/items/\(id)/play", body: req, timeout: 90)
         return try Self.decoder.decode(PlayResponse.self, from: data)
     }
 
