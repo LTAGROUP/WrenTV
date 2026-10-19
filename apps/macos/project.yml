@@ -19,6 +19,8 @@ targets:
       properties:
         CFBundleName: Wren TV
         CFBundleDisplayName: Wren TV
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.entertainment
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
