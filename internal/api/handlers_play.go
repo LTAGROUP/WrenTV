@@ -143,13 +143,8 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		}
 		// Look up streams on first play; wait a little so a quick lookup
 		// starts playback at once, else the client retries.
-		ready, err := s.Streaming.Ensure(ctx, it, min(12*time.Second, left()))
+		ready, err := s.Streaming.Ensure(ctx, it, left())
 		step("lookup")
-		if ready {
-			// Opening the title's page may already be reading the stream.
-			s.waitWarm(ctx, it.ID, min(15*time.Second, left()))
-			step("warm")
-		}
 		if !ready {
 			if err != nil {
 				if local, _ := s.DB.FileEquivalent(ctx, it); local == nil {
@@ -171,7 +166,8 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	if f.StreamID != "" && !s.prepared(ctx, f, req.Caps) {
 		// Probing a stream and indexing its keyframes can take a while:
 		// it's done apart from this request, which hands back to the
-		// client rather than run past its timeout.
+		// client rather than run past its timeout. The title's page may
+		// already be doing it, and this joins that.
 		t := time.NewTimer(left())
 		select {
 		case <-s.prepare(f, req.Caps):

@@ -12,7 +12,7 @@ import (
 )
 
 // playBudget is how long play works on a streamed title before telling
-// the client to ask again. Apps give up on the request after 30 seconds;
+// the client to ask again. Apps give up on the request after 90 seconds;
 // what's still being done carries on, so the next ask finds it ready.
 const playBudget = 20 * time.Second
 

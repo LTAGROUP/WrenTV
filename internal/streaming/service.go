@@ -875,8 +875,12 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 							}
 						}
 						// A find waiting on a slow post ranked above it is stored
-						// after a moment anyway, so playback isn't held up.
-						if p != nil && k >= next {
+						// after a moment anyway, so playback isn't held up; at
+						// once while someone waits on a quality with none yet.
+						if p != nil && k >= next && solo && !settled && need > 0 && !seen(tried[k]) {
+							stored[k] = true
+							keep(tried[k], p, false)
+						} else if p != nil && k >= next {
 							time.AfterFunc(orderWait, func() {
 								qmu.Lock()
 								defer qmu.Unlock()

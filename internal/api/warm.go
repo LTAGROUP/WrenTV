@@ -2,14 +2,11 @@ package api
 
 import (
 	"context"
-	"errors"
-	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/LTAGROUP/wrentv/internal/db"
 	"github.com/LTAGROUP/wrentv/internal/media"
-	"github.com/LTAGROUP/wrentv/internal/streaming"
 )
 
 // Opening a streamed title's page starts what pressing play would otherwise
@@ -27,10 +24,8 @@ var warmCaps = media.ClientCaps{
 }
 
 type warmup struct {
-	// looked is closed once the warm-up's stream lookup is over, done once
-	// all of it is.
-	looked, done chan struct{}
-	at           time.Time
+	done chan struct{}
+	at   time.Time
 }
 
 type warmups struct {
@@ -63,21 +58,18 @@ func (s *Server) warmItem(it *db.Item, u *db.User) {
 			delete(warms.m, id)
 		}
 	}
-	w := &warmup{looked: make(chan struct{}), done: make(chan struct{}), at: time.Now()}
+	w := &warmup{done: make(chan struct{}), at: time.Now()}
 	warms.m[it.ID] = w
 	warms.mu.Unlock()
 
 	go func() {
 		defer close(w.done)
-		var once sync.Once
-		looked := func() { once.Do(func() { close(w.looked) }) }
-		defer looked()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		// A stored stream found gone is dropped, so the next try finds
 		// another rather than leaving play to start the search.
 		for try := 0; try < 3; try++ {
-			if !s.warm(ctx, it, looked) {
+			if !s.warm(ctx, it) {
 				break
 			}
 		}
@@ -86,72 +78,35 @@ func (s *Server) warmItem(it *db.Item, u *db.User) {
 
 // warm warms an item once, reporting whether its chosen stream had gone
 // and another should be tried.
-// looked is called once its lookup is over.
-func (s *Server) warm(ctx context.Context, it *db.Item, looked func()) (again bool) {
-	ready, _ := s.Streaming.Ensure(ctx, it, time.Minute)
-	looked()
-	if !ready {
+func (s *Server) warm(ctx context.Context, it *db.Item) (again bool) {
+	if ready, _ := s.Streaming.Ensure(ctx, it, time.Minute); !ready {
 		return false
 	}
 	files, err := s.playableFiles(ctx, it)
 	if err != nil || len(files) == 0 {
 		return false
 	}
-	if dropped := s.checkLengths(ctx, it, files, true); len(dropped) > 0 {
-		kept := files[:0]
-		for _, f := range files {
-			if !dropped[f.StreamID] {
-				kept = append(kept, f)
+	// The version play would pick is got ready first, so play can join
+	// that rather than wait on the rest; then the others are measured
+	// against it.
+	f := chooseFile(files, playRequest{Caps: warmCaps})
+	if f.StreamID != "" {
+		select {
+		case <-s.prepare(f, warmCaps):
+		case <-ctx.Done():
+			return false
+		}
+		if _, err := s.DB.GetStream(ctx, f.StreamID); err != nil {
+			return ctx.Err() == nil // gone: find another
+		}
+		if fresh, err := s.DB.GetFile(ctx, f.ID); err == nil {
+			for i := range files {
+				if files[i].ID == f.ID {
+					files[i] = fresh
+				}
 			}
 		}
-		if files = kept; len(files) == 0 {
-			return true
-		}
 	}
-	f := chooseFile(files, playRequest{Caps: warmCaps})
-	if f.StreamID == "" {
-		return false // a file on disk opens at once
-	}
-	src, err := s.openSource(ctx, f)
-	if err != nil {
-		slog.Debug("warm stream", "item", it.ID, "err", err)
-		return errors.Is(err, streaming.ErrUnavailable) && ctx.Err() == nil
-	}
-	defer src.Close()
-	info, err := s.ensureProbe(ctx, f, src)
-	if err != nil {
-		slog.Debug("warm probe", "item", it.ID, "err", err)
-		return false
-	}
-	if media.Decide(info, warmCaps, -1).Method == media.MethodRemux {
-		if _, err := s.ensureKeyframes(ctx, f, src); err != nil {
-			slog.Debug("warm keyframes", "item", it.ID, "err", err)
-		}
-	}
-	return false
-}
-
-// waitWarm lets play wait on a warm-up already reading its stream rather
-// than repeating that alongside it. One still looking streams up isn't
-// waited on: play's own wait on the lookup ends the moment one is found,
-// where the warm-up goes on to check every version found.
-func (s *Server) waitWarm(ctx context.Context, itemID string, max time.Duration) {
-	warms.mu.Lock()
-	w := warms.m[itemID]
-	warms.mu.Unlock()
-	if w == nil {
-		return
-	}
-	select {
-	case <-w.looked:
-	default:
-		return
-	}
-	t := time.NewTimer(max)
-	defer t.Stop()
-	select {
-	case <-w.done:
-	case <-t.C:
-	case <-ctx.Done():
-	}
+	// Off-length ones are dropped; if that's the one got ready, another is.
+	return s.checkLengths(ctx, it, files, true)[f.StreamID]
 }

@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -706,12 +707,26 @@ func (p *Pool) Stat(ctx context.Context, ids []string) (bool, error) {
 	}
 	remaining := ids
 	var lastErr error
-	for _, s := range p.servers {
-		var missing []string
-		err := s.with(ctx, func(c *conn) (err error) {
-			missing, err = c.stats(remaining)
+	ask := func(s *server, ids []string) (missing []string, err error) {
+		t := time.Now()
+		err = s.with(ctx, func(c *conn) (err error) {
+			missing, err = c.stats(ids)
 			return err
 		})
+		slog.Debug("usenet stat", "server", s.Host, "asked", len(ids), "missing", len(missing), "err", err, "took", time.Since(t).Round(time.Millisecond))
+		return missing, err
+	}
+	for i, s := range p.servers {
+		if i == 1 && len(remaining) > 1 && !p.anyHas(ctx, ask, remaining[0]) {
+			// A taken-down post is gone from every server: one of its
+			// gaps asked about first settles that, before the backups
+			// are asked about all of them.
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			return false, nil
+		}
+		missing, err := ask(s, remaining)
 		if err != nil {
 			if ctx.Err() != nil {
 				return false, ctx.Err()
@@ -727,6 +742,18 @@ func (p *Pool) Stat(ctx context.Context, ids []string) (bool, error) {
 		return false, lastErr
 	}
 	return false, nil
+}
+
+// anyHas reports whether a server after the first has the article. One
+// that can't be asked counts as having it, so only a sure miss says no.
+func (p *Pool) anyHas(ctx context.Context, ask func(*server, []string) ([]string, error), id string) bool {
+	for _, s := range p.servers[1:] {
+		missing, err := ask(s, []string{id})
+		if err != nil || len(missing) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Check logs in to every server, for the settings page.

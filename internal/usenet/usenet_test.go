@@ -31,6 +31,7 @@ type fakeServer struct {
 	open     atomic.Int32
 	peak     atomic.Int32
 	bodies   atomic.Int32
+	stats    atomic.Int32
 	addr     string
 	// hang holds how many more BODY requests for an article go unanswered;
 	// asked counts the requests for each.
@@ -112,6 +113,9 @@ func (s *fakeServer) serve(c net.Conn) {
 			body, ok := s.articles[id]
 			gone := s.gone[id]
 			hang := cmd == "BODY" && s.hang[id] > 0
+			if cmd == "STAT" {
+				s.stats.Add(1)
+			}
 			if cmd == "BODY" {
 				s.asked[id]++
 				if hang {
@@ -677,5 +681,43 @@ func TestWrongLoginSetAside(t *testing.T) {
 	bad.mu.Unlock()
 	if aside < 5*time.Minute {
 		t.Errorf("wrong login set aside for %v, want minutes", aside.Round(time.Second))
+	}
+}
+
+// A post gone from the first server is asked of the backups one article
+// first: gone there too, it's settled without asking about the rest.
+func TestStatBackupsAskOneFirst(t *testing.T) {
+	primary, backup := newFakeServer(t), newFakeServer(t)
+	var ids []string
+	for i := range 8 {
+		ids = append(ids, fmt.Sprintf("gone%d@test", i))
+	}
+	servers := func() []Server {
+		var out []Server
+		for _, s := range []*fakeServer{primary, backup} {
+			host, port, _ := net.SplitHostPort(s.addr)
+			var p int
+			fmt.Sscan(port, &p)
+			out = append(out, Server{Host: host, Port: p, User: "me", Pass: "secret", MaxConns: 4})
+		}
+		return out
+	}
+	pool := NewPool(servers())
+	defer pool.Close()
+	ctx := context.Background()
+	if ok, err := pool.Stat(ctx, ids); ok || err != nil {
+		t.Fatalf("stat = %v, %v; want missing", ok, err)
+	}
+	if n := backup.stats.Load(); n != 1 {
+		t.Fatalf("backup asked about %d articles, want 1", n)
+	}
+	// Gaps the backup fills still count as there.
+	backup.mu.Lock()
+	for _, id := range ids {
+		backup.articles[id] = []byte("x")
+	}
+	backup.mu.Unlock()
+	if ok, err := pool.Stat(ctx, ids); !ok || err != nil {
+		t.Fatalf("stat with the backup's = %v, %v; want all there", ok, err)
 	}
 }

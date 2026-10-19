@@ -153,8 +153,13 @@ func TestMovieChoicesPreferUsenet(t *testing.T) {
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("streams =\n%v\nwant\n%v", got, want)
 	}
-	if sts[0].Release != "Movie.2024.2160p.WEB-DL-NZB" || sts[0].Size != 8000000000 || sts[0].FileName != "Movie.2024.2160p.WEB-DL-NZB.mkv" {
-		t.Fatalf("usenet stream = %+v", sts[0])
+	// Someone's waiting, so whichever post is found first goes first.
+	u1 := sts[0]
+	if sts[1].Release == "Movie.2024.2160p.WEB-DL-NZB" {
+		u1 = sts[1]
+	}
+	if u1.Release != "Movie.2024.2160p.WEB-DL-NZB" || u1.Size != 8000000000 || u1.FileName != "Movie.2024.2160p.WEB-DL-NZB.mkv" {
+		t.Fatalf("usenet stream = %+v", u1)
 	}
 	files, _ := d.FilesForItem(ctx, it.ID)
 	if len(files) != 5 || files[0].StreamRank != 0 || files[0].Tag != "Usenet · WEB-DL" || files[0].StreamID != sts[0].ID {
@@ -162,10 +167,10 @@ func TestMovieChoicesPreferUsenet(t *testing.T) {
 	}
 	// The first play uses where the link led during the lookup; later ones
 	// open the link again.
-	if u, _, err := s.linkFor(ctx, sts[0].ID, false); err != nil || u != addon.URL+"/cdn/u1/Movie.2024.mkv" {
+	if u, _, err := s.linkFor(ctx, u1.ID, false); err != nil || u != addon.URL+"/cdn/u1/Movie.2024.mkv" {
 		t.Fatalf("usenet link = %q, %v", u, err)
 	}
-	if _, _, err := s.linkFor(ctx, sts[0].ID, true); err != nil {
+	if _, _, err := s.linkFor(ctx, u1.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
@@ -174,7 +179,7 @@ func TestMovieChoicesPreferUsenet(t *testing.T) {
 	}
 	mu.Unlock()
 	// A dropped stream is replaced by a later top-up; the others keep playing.
-	d.DeleteStream(ctx, sts[0].ID)
+	d.DeleteStream(ctx, u1.ID)
 	d.PutStreamLookup(ctx, db.StreamLookup{ItemID: it.ID, LookedAt: 0})
 	if ready, _ := s.Ensure(ctx, it, time.Second); !ready {
 		t.Fatal("remaining streams should still be ready")
