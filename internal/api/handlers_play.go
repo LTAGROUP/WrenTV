@@ -140,13 +140,15 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusForbidden, "streaming isn't available on this server")
 			return
 		}
-		// Opening the title's page may already be getting it ready.
-		s.waitWarm(ctx, it.ID, 15*time.Second)
-		step("warm")
 		// Look up streams on first play; wait a little so a quick lookup
 		// starts playback at once, else the client retries.
 		ready, err := s.Streaming.Ensure(ctx, it, 12*time.Second)
 		step("lookup")
+		if ready {
+			// Opening the title's page may already be reading the stream.
+			s.waitWarm(ctx, it.ID, 15*time.Second)
+			step("warm")
+		}
 		if !ready {
 			if err != nil {
 				if local, _ := s.DB.FileEquivalent(ctx, it); local == nil {

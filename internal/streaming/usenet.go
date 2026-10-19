@@ -46,10 +46,45 @@ type usenetState struct {
 	// the title, by release key. Spot checks can miss a post's holes, so
 	// they aren't tried again for a while.
 	dead map[string]time.Time
+	// missing are posts a check found articles gone from, by release
+	// key and episode, so later lookups don't read them again. They're
+	// for the servers in missingKey: others may still have them.
+	missing    map[string]time.Time
+	missingKey string
 }
 
 // deadFor is how long a stream that failed a play stays skipped.
 const deadFor = 7 * 24 * time.Hour
+
+// missingFor is how long a post with articles gone stays skipped.
+// Takedowns don't come back.
+const missingFor = 3 * 24 * time.Hour
+
+func missingKey(r Release, season, episode int) string {
+	return fmt.Sprintf("%s|%d|%d", releaseKey(r), season, episode)
+}
+
+// wasMissing reports whether a check already found articles gone from r.
+func (u *usenetState) wasMissing(r Release, season, episode int) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	t, ok := u.missing[missingKey(r, season, episode)]
+	return ok && time.Since(t) < missingFor
+}
+
+func (u *usenetState) markMissing(r Release, season, episode int) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.missing == nil {
+		u.missing = map[string]time.Time{}
+	}
+	u.missing[missingKey(r, season, episode)] = time.Now()
+	for k, t := range u.missing {
+		if time.Since(t) > missingFor {
+			delete(u.missing, k)
+		}
+	}
+}
 
 func (u *usenetState) isDead(r Release) bool {
 	u.mu.Lock()
@@ -126,6 +161,9 @@ func (s *Service) newsPool() *usenet.Pool {
 	if u.pool == nil || u.key != key.String() {
 		if u.pool != nil {
 			u.pool.Close()
+		}
+		if u.missingKey != key.String() {
+			u.missing, u.missingKey = nil, key.String()
 		}
 		u.key, u.pool = key.String(), usenet.NewPool(servers).WithCache(u.cache)
 	}
@@ -339,14 +377,16 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	t := time.Now()
+	var nzbTook time.Duration // fetching the NZB, part of took
 	fail := func(step string, err error) (*pick, bool) {
-		slog.Info("usenet post skipped", "release", r.Name, "step", step, "err", err, "took", time.Since(t).Round(time.Millisecond))
+		slog.Info("usenet post skipped", "release", r.Name, "step", step, "err", err, "took", time.Since(t).Round(time.Millisecond), "nzb", nzbTook.Round(time.Millisecond))
 		return nil, true
 	}
 	if s.usenet.isDead(r) {
 		return fail("check", errors.New("lost articles during a play"))
 	}
 	nzb, err := s.nzb(ctx, r.NZB)
+	nzbTook = time.Since(t)
 	if err != nil {
 		return fail("nzb", err)
 	}
@@ -357,14 +397,25 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 			return !ok || (s == season && e == episode)
 		}
 	}
-	if ok, err := usenet.Alive(ctx, pool, nzb, keep, 24); !ok {
+	// missing remembers a post found with articles gone, but not one a
+	// server error or timeout stopped.
+	missing := func(step string, err error) (*pick, bool) {
+		if err == nil || errors.Is(err, usenet.ErrMissing) {
+			s.usenet.markMissing(r, season, episode)
+		}
 		if err == nil {
 			err = errors.New("articles missing from the news server")
 		}
-		return fail("check", err)
+		return fail(step, err)
+	}
+	if ok, err := usenet.Alive(ctx, pool, nzb, keep, 24); !ok {
+		return missing("check", err)
 	}
 	vids, err := usenet.Inspect(ctx, pool, nzb, keep)
 	if err != nil {
+		if ctx.Err() == nil && errors.Is(err, usenet.ErrMissing) {
+			return missing("inspect", err)
+		}
 		return fail("inspect", err)
 	}
 	files := make([]RemoteFile, len(vids))
@@ -381,12 +432,9 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 		return fail("pick", fmt.Errorf("%s is over the size limit", f.Name))
 	}
 	if ok, err := usenet.Available(ctx, pool, nzb, layouts[f.Name], 48); !ok {
-		if err == nil {
-			err = errors.New("articles missing from the news server")
-		}
-		return fail("check", err)
+		return missing("check", err)
 	}
-	slog.Info("usenet post found", "release", r.Name, "file", f.Name, "size", f.Size, "took", time.Since(t).Round(time.Millisecond))
+	slog.Info("usenet post found", "release", r.Name, "file", f.Name, "size", f.Size, "took", time.Since(t).Round(time.Millisecond), "nzb", nzbTook.Round(time.Millisecond))
 	return &pick{rel: r, tor: &Torrent{Files: files}, file: f, layouts: layouts}, true
 }
 

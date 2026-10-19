@@ -27,8 +27,10 @@ var warmCaps = media.ClientCaps{
 }
 
 type warmup struct {
-	done chan struct{}
-	at   time.Time
+	// looked is closed once the warm-up's stream lookup is over, done once
+	// all of it is.
+	looked, done chan struct{}
+	at           time.Time
 }
 
 type warmups struct {
@@ -61,18 +63,21 @@ func (s *Server) warmItem(it *db.Item, u *db.User) {
 			delete(warms.m, id)
 		}
 	}
-	w := &warmup{done: make(chan struct{}), at: time.Now()}
+	w := &warmup{looked: make(chan struct{}), done: make(chan struct{}), at: time.Now()}
 	warms.m[it.ID] = w
 	warms.mu.Unlock()
 
 	go func() {
 		defer close(w.done)
+		var once sync.Once
+		looked := func() { once.Do(func() { close(w.looked) }) }
+		defer looked()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		// A stored stream found gone is dropped, so the next try finds
 		// another rather than leaving play to start the search.
 		for try := 0; try < 3; try++ {
-			if !s.warm(ctx, it) {
+			if !s.warm(ctx, it, looked) {
 				break
 			}
 		}
@@ -81,8 +86,11 @@ func (s *Server) warmItem(it *db.Item, u *db.User) {
 
 // warm warms an item once, reporting whether its chosen stream had gone
 // and another should be tried.
-func (s *Server) warm(ctx context.Context, it *db.Item) (again bool) {
-	if ready, _ := s.Streaming.Ensure(ctx, it, time.Minute); !ready {
+// looked is called once its lookup is over.
+func (s *Server) warm(ctx context.Context, it *db.Item, looked func()) (again bool) {
+	ready, _ := s.Streaming.Ensure(ctx, it, time.Minute)
+	looked()
+	if !ready {
 		return false
 	}
 	files, err := s.playableFiles(ctx, it)
@@ -123,13 +131,20 @@ func (s *Server) warm(ctx context.Context, it *db.Item) (again bool) {
 	return false
 }
 
-// waitWarm lets play wait on a warm-up already under way rather than
-// repeating its work alongside it.
+// waitWarm lets play wait on a warm-up already reading its stream rather
+// than repeating that alongside it. One still looking streams up isn't
+// waited on: play's own wait on the lookup ends the moment one is found,
+// where the warm-up goes on to check every version found.
 func (s *Server) waitWarm(ctx context.Context, itemID string, max time.Duration) {
 	warms.mu.Lock()
 	w := warms.m[itemID]
 	warms.mu.Unlock()
 	if w == nil {
+		return
+	}
+	select {
+	case <-w.looked:
+	default:
 		return
 	}
 	t := time.NewTimer(max)

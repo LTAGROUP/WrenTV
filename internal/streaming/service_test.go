@@ -299,8 +299,9 @@ func TestTorrentStandsInForSlowPosts(t *testing.T) {
 	}
 }
 
-// Someone waiting to play gets the best quality's top post first; the
-// other qualities are looked up once it's ready.
+// Someone waiting to play gets the best quality's top posts first, read
+// together rather than in turn; the other qualities are looked up once one
+// is ready.
 func TestBestPostFirst(t *testing.T) {
 	ctx := context.Background()
 	var mu sync.Mutex
@@ -354,8 +355,15 @@ func TestBestPostFirst(t *testing.T) {
 	waitLookups(t, s)
 	mu.Lock()
 	defer mu.Unlock()
-	if len(log) != 6 || log[0] != "a start" || log[1] != "a end" {
-		t.Fatalf("lookups = %v; the top 4K post should go alone first", log)
+	at := map[string]int{}
+	for i, e := range log {
+		at[e] = i
+	}
+	if len(log) != 6 || at["a start"] > 1 || at["b start"] > 1 {
+		t.Fatalf("lookups = %v; the top 4K posts should start together", log)
+	}
+	if at["c start"] < at["a end"] && at["c start"] < at["b end"] {
+		t.Fatalf("lookups = %v; 1080p should wait for a 4K post", log)
 	}
 	if sts, _ := d.StreamsForItem(ctx, it.ID); len(sts) != 3 {
 		t.Fatalf("streams = %d", len(sts))

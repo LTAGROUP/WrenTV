@@ -8,6 +8,8 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -258,5 +260,62 @@ func TestNamedFor(t *testing.T) {
 		if got := namedFor(c.name, c.title, c.year, c.season); got != c.want {
 			t.Errorf("namedFor(%q, %q) = %v, want %v", c.name, c.title, got, c.want)
 		}
+	}
+}
+
+// A post found with articles gone isn't read again by later lookups, until
+// the news servers change.
+func TestMissingPostRemembered(t *testing.T) {
+	ctx := context.Background()
+	video := make([]byte, 300_000)
+	rand.New(rand.NewSource(2)).Read(video)
+	copy(video, []byte{0x1a, 0x45, 0xdf, 0xa3})
+	const name = "Movie.2024.1080p.WEB-DL-GONE"
+	post, ns := usenettest.New(t), usenettest.New(t)
+	post.Post(name+".mkv", video, 50_000)
+	ns.Post(name+".mkv", video, 50_000)
+	ns.Remove(name+".mkv", 3)
+	var fetched atomic.Int32
+	ix := fakeIndexer(t, map[string][]byte{name: post.NZB()}, map[string]int64{name: int64(len(video))}, &fetched)
+
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	cfg := &config.Config{DataDir: t.TempDir(), Streaming: config.StreamingConfig{Enabled: true, Qualities: []string{"1080p"}, PerQuality: 1, Usenet: true,
+		Indexers:    []config.IndexerConfig{{Name: "fake", URL: ix.URL + "/api", APIKey: "ixkey", Enabled: true}},
+		NewsServers: []config.NewsServerConfig{{Host: ns.Host, Port: ns.Port, Username: "me", Password: "secret", Connections: 4, Enabled: true}}}}
+	s := New(Deps{Cfg: cfg, DB: d, TMDB: tmdb.New("test", "en-US", d), Hub: library.NewHub()})
+	s.testProviders = []Provider{}
+	lib, _ := d.StreamLibrary(ctx, "movies")
+	it := &db.Item{LibraryID: lib.ID, Kind: "movie", MatchKey: "tmdb:2", Title: "Movie", Year: 2024, TMDBID: 2, IMDBID: "tt0000002", SeasonNumber: -1, EpisodeNumber: -1}
+	d.InsertItem(ctx, it)
+
+	lookup := func() {
+		t.Helper()
+		// Forget the miss and the NZB, so only the memory of the
+		// missing articles keeps the post from being read.
+		_ = d.PutStreamLookup(ctx, db.StreamLookup{ItemID: it.ID})
+		os.RemoveAll(filepath.Join(cfg.DataDir, "cache", "nzb"))
+		s.usenet.mu.Lock()
+		s.usenet.nzbs = nil
+		s.usenet.mu.Unlock()
+		s.Ensure(ctx, it, 10*time.Second)
+		waitLookups(t, s)
+	}
+	lookup()
+	if fetched.Load() != 1 {
+		t.Fatalf("NZB fetched %d times, want 1", fetched.Load())
+	}
+	lookup()
+	if fetched.Load() != 1 {
+		t.Fatal("a post with articles gone was read again")
+	}
+	// Another server might have them.
+	cfg.Streaming.NewsServers[0].Connections = 5
+	lookup()
+	if fetched.Load() != 2 {
+		t.Fatalf("after the servers changed, NZB fetched %d times, want 2", fetched.Load())
 	}
 }

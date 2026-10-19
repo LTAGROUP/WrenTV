@@ -233,8 +233,10 @@ func newestToo(ranked []Release) []Release {
 	return out
 }
 
-// soloPosts is how many of the best quality's top posts are read one at a
-// time, with all connections, while someone waits to play.
+// soloPosts is how many of the best quality's top posts are read at once,
+// ahead of read-ahead, while someone waits to play. They race rather than
+// queue: popular titles' top posts are mostly taken down, and each dead
+// one read in turn held play up by seconds.
 const soloPosts = 3
 
 // urgentKey marks a post someone is waiting on: it isn't held to the
@@ -814,12 +816,15 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 			// their own small budget so torrents are still tried when they
 			// fail.
 			var pwg sync.WaitGroup
+			solo := urgent && q == best
 			slots := make(chan struct{}, max(need, 1))
+			if solo {
+				slots = make(chan struct{}, max(need, soloPosts))
+			}
 			var tried []Release
 			var picks []*pick
 			var done, stored []bool
 			next := 0
-			solo := urgent && q == best
 			postsDone := make(chan struct{})
 			go func() {
 				defer close(postsDone)
@@ -830,8 +835,11 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 					slots <- struct{}{}
 					qmu.Lock()
 					stop := need <= 0 || ctx.Err() != nil || len(tried) >= need+postSpare || time.Since(started) > postTime
-					dup := !stop && seen(r)
+					// Posts already found with articles gone are passed over
+					// without using up a try.
+					dup := !stop && (seen(r) || s.usenet.wasMissing(r, season, episode))
 					k := len(tried)
+					rush := solo && k < soloPosts && !settled
 					if !stop && !dup {
 						tried, picks, done, stored = append(tried, r), append(picks, nil), append(done, false), append(stored, false)
 					}
@@ -848,7 +856,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 						defer pwg.Done()
 						defer func() { <-slots }()
 						actx := ctx
-						if solo && k < soloPosts {
+						if rush {
 							actx = context.WithValue(ctx, urgentKey{}, true)
 						}
 						p, _ := s.add(actx, r, caches, season, episode, maxSize)
@@ -874,12 +882,6 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 							})
 						}
 					}(k, r)
-					if solo && k < soloPosts {
-						pwg.Wait()
-						qmu.Lock()
-						solo = !settled
-						qmu.Unlock()
-					}
 				}
 				pwg.Wait()
 			}()

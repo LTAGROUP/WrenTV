@@ -516,8 +516,13 @@ func statSpread(ctx context.Context, pool *Pool, all []string, samples int) (boo
 			pickIDs = append(pickIDs, all[k*(len(all)-1)/(samples-1)])
 		}
 	}
-	// Split across a few connections.
+	// Split across a few connections. One lane finding an article gone
+	// settles it, so the others are stopped: those waiting for a
+	// connection drop out, those on one finish (so it's kept).
 	const lanes = 3
+	lctx, cancel := context.WithCancel(ctx)
+	sctx := finishing(lctx)
+	defer cancel()
 	var wg sync.WaitGroup
 	results := make([]bool, lanes)
 	errs := make([]error, lanes)
@@ -533,16 +538,21 @@ func statSpread(ctx context.Context, pool *Pool, all []string, samples int) (boo
 		wg.Add(1)
 		go func(l int, ids []string) {
 			defer wg.Done()
-			results[l], errs[l] = pool.Stat(ctx, ids)
+			results[l], errs[l] = pool.Stat(sctx, ids)
+			if !results[l] && errs[l] == nil {
+				cancel()
+			}
 		}(l, chunk)
 	}
 	wg.Wait()
 	for l := range results {
+		if !results[l] && errs[l] == nil {
+			return false, nil
+		}
+	}
+	for l := range results {
 		if errs[l] != nil {
 			return false, errs[l]
-		}
-		if !results[l] {
-			return false, nil
 		}
 	}
 	return true, nil
