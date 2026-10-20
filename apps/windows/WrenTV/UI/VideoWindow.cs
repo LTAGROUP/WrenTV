@@ -30,12 +30,14 @@ abstract class VideoWindow : Window
         Padding = new Thickness(20, 8, 20, 12),
     };
     protected Mpv? Mpv { get; }
-    readonly IntPtr video;
+    readonly IntPtr window, video;
+    (int X, int Y, int W, int H) placed;
     bool videoShown = true;
     bool closed;
     readonly DispatcherTimer hideBar = new() { Interval = TimeSpan.FromSeconds(3) };
-    // mpv makes its window once the video starts, and may not follow ours
-    // when it resizes, so its size is checked now and then.
+    // The video's place is checked now and then too: resizes don't always
+    // reach XAML's layout in time (going fullscreen), and mpv makes its own
+    // window inside ours once the video starts.
     readonly DispatcherTimer fit = new() { Interval = TimeSpan.FromMilliseconds(500) };
 
     protected VideoWindow(string title)
@@ -63,8 +65,8 @@ abstract class VideoWindow : Window
         Root.Children.Add(Bar);
         Content = Root;
 
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        video = Win32.CreateVideoWindow(hwnd);
+        window = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        video = Win32.CreateVideoWindow(window);
         try
         {
             if (!Mpv.Available) throw new InvalidOperationException("The video player (libmpv-2.dll) is missing. Reinstall Wren TV.");
@@ -87,7 +89,9 @@ abstract class VideoWindow : Window
         };
         fit.Tick += (_, _) =>
         {
-            if (!closed && videoShown) Win32.FitChildren(video);
+            if (closed || !videoShown) return;
+            PlaceVideo();
+            Win32.FitChildren(video);
         };
         fit.Start();
         Root.PreviewKeyDown += (_, e) =>
@@ -187,12 +191,20 @@ abstract class VideoWindow : Window
         if (!videoShown || VideoArea.ActualWidth < 2 || VideoArea.ActualHeight < 2)
         {
             Win32.Hide(video);
+            placed = default;
             return;
         }
+        // The video fills the window above the control bar. Sized from the
+        // window itself rather than XAML's layout, which can lag behind a
+        // presenter change and leave the picture at the old window size.
         var scale = xr.RasterizationScale;
-        var at = VideoArea.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
-        Win32.Place(video, (int)Math.Round(at.X * scale), (int)Math.Round(at.Y * scale),
-            (int)Math.Round(VideoArea.ActualWidth * scale), (int)Math.Round(VideoArea.ActualHeight * scale));
+        var (w, h) = Win32.ClientSize(window);
+        var bar = Bar.Visibility == Visibility.Visible ? (int)Math.Round(Bar.ActualHeight * scale) : 0;
+        var want = (0, 0, w, Math.Max(1, h - bar));
+        if (w < 2 || h < 2) return;
+        if (want != placed) Log.Write($"video: {want.Item3}x{want.Item4} in a {w}x{h} window, fullscreen {IsFullscreen}");
+        placed = want;
+        Win32.Place(video, 0, 0, want.Item3, want.Item4);
     }
 
     // Fullscreen and the control bar

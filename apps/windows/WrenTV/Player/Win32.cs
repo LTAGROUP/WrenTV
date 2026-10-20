@@ -96,4 +96,8 @@ static class Win32
     }
 
     public static void Hide(IntPtr hwnd) => ShowWindow(hwnd, 0);
+
+    /// The size of a window's client area in pixels.
+    public static (int Width, int Height) ClientSize(IntPtr hwnd) =>
+        GetClientRect(hwnd, out var r) ? (r.Right - r.Left, r.Bottom - r.Top) : (0, 0);
 }
