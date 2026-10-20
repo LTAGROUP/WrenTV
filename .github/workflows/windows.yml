@@ -82,7 +82,8 @@ jobs:
 
       - name: Check output
         run: |
-          foreach ($f in 'WrenTV.exe', 'libmpv-2.dll', 'resources.pri', 'Assets\lockup.png', 'Assets\WrenTV.ico') {
+          Get-ChildItem dist/app -Filter *.pri | Format-Table Name, Length
+          foreach ($f in 'WrenTV.exe', 'libmpv-2.dll', 'WrenTV.pri', 'Assets\lockup.png', 'Assets\WrenTV.ico') {
             if (-not (Test-Path "dist/app/$f")) { throw "missing $f in the published app" }
           }
 
