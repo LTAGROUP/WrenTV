@@ -4,7 +4,8 @@
 
 Dolby Vision, HDR10 and Dolby Atmos play untouched. The server transcodes only when a device truly can't play the
 file, and hardware transcoding is free. Accounts are optional: run it fully offline with local usernames, or turn on
-Wren TV accounts for Plex-style sharing and automatic remote access.
+Wren TV accounts for Plex-style sharing and automatic remote access. Open source under the
+[AGPL-3.0](LICENSE).
 
 ![Home screen](docs/screenshots/home.jpg)
 
@@ -318,3 +319,8 @@ Behind CGNAT (an internet provider sharing one public IP between customers) the 
 the settings page says so. Some routers block DNS answers that point to LAN addresses ("DNS rebinding protection"):
 allow `wrentv.net` there, or viewers at home fall back to the public address.
 
+## License
+
+Wren TV is free software under the [GNU Affero General Public License v3.0](LICENSE). You can use, change and share
+it. If you share a changed version, or run one as a service other people use over a network, you must make your
+source code available under the same license.
