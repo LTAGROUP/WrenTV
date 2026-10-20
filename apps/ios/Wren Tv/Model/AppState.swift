@@ -130,6 +130,59 @@ final class AppState {
         return true
     }
 
+    // MARK: Sign-in codes (TV)
+
+    /// A code this TV shows until a signed-in phone or browser approves it,
+    /// before it knows any server.
+    func startAccountLink() async throws -> AccountClient.DeviceLink {
+        try await accountClient.startLink(deviceName: Self.deviceName, platform: "appletv")
+    }
+
+    /// True once the code is approved and the TV is signed in to the account.
+    /// Throws (404) when the code expired.
+    func pollAccountLink(_ link: AccountClient.DeviceLink) async throws -> Bool {
+        guard let session = try await accountClient.pollLink(link) else { return false }
+        Keychain.setSession(session, for: accountClient.keychainKey)
+        account = session
+        accountEmail = session.email
+        await loadAccountServers()
+        if let servers = accountServers, servers.count == 1 {
+            try? await open(servers[0])
+        }
+        return true
+    }
+
+    /// A server-local sign-in code (servers with their own usernames).
+    func startPairing() async throws -> PairStart {
+        guard let url = serverURL else { throw WrenTVError(message: "Not connected") }
+        return try await WrenTVAPI(baseURL: url).startPair(device: Self.deviceName)
+    }
+
+    /// The page a phone opens to approve a server-local code (what the QR holds).
+    func pairingLink(_ p: PairStart) -> URL? {
+        guard let base = serverURL else { return nil }
+        let path = (p.path?.isEmpty == false) ? p.path! : "/link?code=\(p.code)"
+        return URL(string: path, relativeTo: base)?.absoluteURL
+    }
+
+    /// True once approved, and the TV is then signed in. Throws (404) when expired.
+    func pollPairing(_ p: PairStart) async throws -> Bool {
+        guard let url = serverURL else { return false }
+        let r = try await WrenTVAPI(baseURL: url).pollPair(p.code, secret: p.secret)
+        guard r.status == "approved", let token = r.token else { return false }
+        Keychain.set(token, for: url.absoluteString)
+        await finishSignIn(url: url, auth: TokenSource(localToken: token), email: nil)
+        return true
+    }
+
+    static var deviceName: String {
+        #if os(tvOS)
+        UIDevice.current.name.isEmpty ? "Apple TV" : UIDevice.current.name
+        #else
+        UIDevice.current.name
+        #endif
+    }
+
     /// Lists the servers the account owns or has been shared, accepting any
     /// waiting invites first.
     func loadAccountServers() async {

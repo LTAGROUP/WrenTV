@@ -40,7 +40,11 @@ struct WrenTVAPI: Sendable {
     }
 
     /// Shown next to sessions on the server ("Wren TV for iPhone").
+    #if os(tvOS)
+    static let clientName = "Wren TV for Apple TV"
+    #else
     static let clientName = "Wren TV for \(UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone")"
+    #endif
 
     @discardableResult
     func send(_ method: String, _ path: String, query: [URLQueryItem] = [], body: (any Encodable)? = nil, timeout: TimeInterval? = nil) async throws -> (Data, Int) {
@@ -79,6 +83,10 @@ struct WrenTVAPI: Sendable {
     func login(username: String, password: String) async throws -> AuthResponse {
         try await post("/api/auth/login", ["username": username, "password": password, "device": await MainActor.run { UIDevice.current.name }])
     }
+
+    /// A server-local sign-in code for a TV: a signed-in phone approves it.
+    func startPair(device: String) async throws -> PairStart { try await post("/api/pair", ["device": device]) }
+    func pollPair(_ code: String, secret: String) async throws -> PairPoll { try await post("/api/pair/\(code)/poll", ["secret": secret]) }
 
     func setupOwner(username: String, password: String) async throws -> AuthResponse {
         try await post("/api/setup/owner", ["username": username, "password": password, "displayName": username])

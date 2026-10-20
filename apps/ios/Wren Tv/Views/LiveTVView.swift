@@ -1,13 +1,5 @@
 import SwiftUI
 
-/// Which channel the live player opens on, and the channels its channel up
-/// and down step through.
-struct LiveTarget: Hashable, Identifiable {
-    var channelId: String
-    var group: String?
-    var id: String { channelId }
-}
-
 /// Live TV: the provider's groups as chips, a search over channels and
 /// shows, and what's on now and next per channel. Channels airing
 /// something come first.

@@ -186,6 +186,38 @@ struct AccountClient: Sendable {
         return try JSONDecoder().decode(LinkedDevice.self, from: data)
     }
 
+    /// A sign-in code shown on a TV until a signed-in phone or browser approves it.
+    struct DeviceLink: Decodable, Sendable {
+        var code: String
+        var device_secret: String
+    }
+
+    /// Asks for a code to show on this TV; anyone signed in on a phone or
+    /// browser can approve it.
+    func startLink(deviceName: String, platform: String) async throws -> DeviceLink {
+        let data = try await request("/rest/v1/rpc/create_device_link", body: ["p_device_name": deviceName, "p_platform": platform])
+        guard let link = try JSONDecoder().decode([DeviceLink].self, from: data).first else { throw WrenTVError(message: "Couldn't get a sign-in code") }
+        return link
+    }
+
+    /// The TV's own session once the code is approved; nil while waiting.
+    /// Throws (404) once the code has expired.
+    func pollLink(_ link: DeviceLink) async throws -> AccountSession? {
+        struct Poll: Decodable { var status: String; var token_hash: String? }
+        let data = try await request("/rest/v1/rpc/poll_device_link", body: ["p_code": link.code, "p_device_secret": link.device_secret])
+        guard let p = try JSONDecoder().decode([Poll].self, from: data).first else { return nil }
+        switch p.status {
+        case "expired": throw WrenTVError(message: "This code has expired", status: 404)
+        case "approved": break
+        default: return nil
+        }
+        guard let hash = p.token_hash else { return nil }
+        let verified = try await request("/auth/v1/verify", body: ["type": "magiclink", "token_hash": hash])
+        guard let s = try session(from: verified, email: "") else { throw WrenTVError(message: "Sign-in failed") }
+        await acceptInvites(s)
+        return s
+    }
+
     /// Turns pending share invites for this email into access.
     func acceptInvites(_ s: AccountSession) async {
         _ = try? await request("/rest/v1/rpc/accept_invites", body: [:], bearer: s.accessToken)

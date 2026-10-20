@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths-ignore:
       - 'apps/**'
+      - '.github/workflows/windows.yml'
   workflow_dispatch:
 
 permissions:

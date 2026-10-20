@@ -1,0 +1,54 @@
+name: WrenTV
+options:
+  deploymentTarget:
+    tvOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.3"
+    CURRENT_PROJECT_VERSION: "4"
+targets:
+  WrenTV:
+    type: application
+    platform: tvOS
+    sources:
+      - path: WrenTV
+      # The account, server and player code is the iPhone app's.
+      - path: "../ios/Wren Tv/Model"
+        group: Shared
+      - path: "../ios/Wren Tv/Player/PlayerModel.swift"
+        group: Shared
+      - path: "../ios/Wren Tv/Player/LivePlayerModel.swift"
+        group: Shared
+      - path: "../ios/Wren Tv/Player/StreamWarmup.swift"
+        group: Shared
+    info:
+      path: WrenTV/Info.plist
+      properties:
+        CFBundleDisplayName: Wren TV
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.entertainment
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UIUserInterfaceStyle: Dark
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: Wren TV connects to media servers on your network.
+        UIBackgroundModes: [audio]
+        CFBundleURLTypes:
+          - CFBundleURLName: com.wrentv
+            CFBundleURLSchemes: [wrentv]
+    settings:
+      base:
+        PRODUCT_NAME: Wren TV
+        PRODUCT_MODULE_NAME: WrenTV
+        # The iPhone app's id, so one App Store listing covers both.
+        PRODUCT_BUNDLE_IDENTIFIER: ltagroup.Wren-Tv
+        DEVELOPMENT_TEAM: 82TLKK4L6W
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "3"

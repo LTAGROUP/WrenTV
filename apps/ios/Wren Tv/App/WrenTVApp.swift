@@ -2,20 +2,6 @@ import AVFoundation
 import SwiftUI
 import UIKit
 
-struct PlayTarget: Codable, Hashable, Identifiable {
-    var itemId: String
-    var title: String
-    var subtitle: String?
-    var fromStart = false
-    /// A specific version (file) to play; nil lets the server choose.
-    var fileId: String?
-    /// A downloaded copy on this device, played without the server.
-    var localFile: String?
-    var localPosition: Double?
-
-    var id: String { [itemId, fileId ?? "", localFile ?? "", fromStart ? "start" : ""].joined(separator: "|") }
-}
-
 @main
 struct WrenTVApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate

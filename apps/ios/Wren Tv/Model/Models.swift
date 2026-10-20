@@ -802,3 +802,39 @@ struct LivePlayResponse: Codable {
     var type: String
     var sessionId: String
 }
+
+/// What the full-screen player plays.
+struct PlayTarget: Codable, Hashable, Identifiable {
+    var itemId: String
+    var title: String
+    var subtitle: String?
+    var fromStart = false
+    /// A specific version (file) to play; nil lets the server choose.
+    var fileId: String?
+    /// A downloaded copy on this device, played without the server.
+    var localFile: String?
+    var localPosition: Double?
+
+    var id: String { [itemId, fileId ?? "", localFile ?? "", fromStart ? "start" : ""].joined(separator: "|") }
+}
+
+/// Which channel the live player opens on, and the channels its channel up
+/// and down step through.
+struct LiveTarget: Hashable, Identifiable {
+    var channelId: String
+    var group: String?
+    var id: String { channelId }
+}
+
+/// A sign-in code a TV shows for a server with its own usernames.
+struct PairStart: Decodable, Sendable {
+    var code: String
+    var secret: String
+    var expiresIn: Int?
+    var path: String?
+}
+
+struct PairPoll: Decodable, Sendable {
+    var status: String
+    var token: String?
+}

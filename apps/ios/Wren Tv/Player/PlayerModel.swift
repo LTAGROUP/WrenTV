@@ -18,13 +18,20 @@ extension ClientCaps {
         if VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC) { video.append("hevc") }
         #endif
         if VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1) { video.append("av1") }
+        #if os(tvOS)
+        // The TV's HDR formats, as the Apple TV is set to output them.
+        let hdr = AVPlayer.eligibleForHDRPlayback
+        let dv = AVPlayer.availableHDRModes.contains(.dolbyVision)
+        #else
         let screen = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.screen }.first
         let hdr = (screen?.potentialEDRHeadroom ?? 1) > 1
+        let dv = hdr
+        #endif
         // FLAC/Opus are omitted on purpose: CoreMedia rejects them in fMP4 HLS, so the
         // server converts them to lossless ALAC instead.
         return ClientCaps(engines: ["avplayer"], nativeVideo: video,
                           nativeAudio: ["aac", "ac3", "eac3", "alac", "mp3"],
-                          nativeContainers: ["mp4", "mov"], dolbyVision: hdr, hdr: hdr, maxKbps: 0)
+                          nativeContainers: ["mp4", "mov"], dolbyVision: dv, hdr: hdr, maxKbps: 0)
     }
 }
 
