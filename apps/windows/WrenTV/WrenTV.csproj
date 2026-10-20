@@ -23,6 +23,8 @@
     <DisableXamlGeneratedMain>true</DisableXamlGeneratedMain>
     <!-- An ordinary installed app (Inno Setup), carrying its own runtimes. -->
     <WindowsPackageType>None</WindowsPackageType>
+    <!-- Generates WrenTV.pri, merging the framework's control resources. -->
+    <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
     <!-- Lets the C# compile on macOS/Linux for checking; real builds run on Windows. -->
