@@ -46,7 +46,7 @@ sealed class LibraryPage(Library library) : Page
                 subtitle = cols.Count == 1 ? "1 collection" : $"{cols.Count} collections";
                 content = cols.Count == 0
                     ? Ui.Empty("", "No collections", "Collections from TMDB and ones you make show up here.")
-                    : Tiles(cols.Select(c => Tile(c.Name, c.ItemCount is { } n ? $"{n} titles" : "", c.BackdropPath ?? c.PosterPath,
+                    : Cards.Tiles(cols.Select(c => Cards.Tile(c.Name, c.ItemCount is { } n ? $"{n} titles" : "", c.BackdropPath ?? c.PosterPath,
                         () => App.Shell?.Push(new CollectionPage(c.Id, c.Name)))));
                 break;
             }
@@ -54,7 +54,7 @@ sealed class LibraryPage(Library library) : Page
                 subtitle = genres.Count == 1 ? "1 genre" : $"{genres.Count} genres";
                 content = genres.Count == 0
                     ? Ui.Empty("", "No genres", "Genres appear once titles are matched.")
-                    : Tiles(genres.Select(x => Tile(x.Genre, $"{x.Count} titles", x.BackdropPath,
+                    : Cards.Tiles(genres.Select(x => Cards.Tile(x.Genre, $"{x.Count} titles", x.BackdropPath,
                         () => App.Shell?.Push(new GenrePage(x.Genre, library.Id)))));
                 break;
             default:
@@ -147,46 +147,5 @@ sealed class LibraryPage(Library library) : Page
         watched.Click += (_, _) => { unwatched = watched.IsChecked == true; Reload(quiet: true); };
         row.Children.Add(watched);
         return row;
-    }
-
-    static UIElement Tiles(IEnumerable<UIElement> tiles)
-    {
-        var wrap = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, ItemWidth = 296, ItemHeight = 186, Margin = new Thickness(Gutter - 8, 0, Gutter, 40) };
-        foreach (var t in tiles) wrap.Children.Add(t);
-        return new ScrollViewer { Content = wrap };
-    }
-
-    static UIElement Tile(string title, string sub, string? image, Action open)
-    {
-        var g = new Grid();
-        g.Children.Add(Ui.Image(App.State.Api?.ImageUrl(image, "w780"), 560));
-        g.Children.Add(new Border
-        {
-            Background = new LinearGradientBrush
-            {
-                StartPoint = new Windows.Foundation.Point(0, 0),
-                EndPoint = new Windows.Foundation.Point(0, 1),
-                GradientStops =
-                {
-                    new GradientStop { Color = Windows.UI.Color.FromArgb(0x10, 0, 0, 0), Offset = 0.3 },
-                    new GradientStop { Color = Windows.UI.Color.FromArgb(0xD0, 0, 0, 0), Offset = 1 },
-                },
-            },
-        });
-        var text = Ui.Column(2, Ui.Text(title, 17, FontWeights.Bold), Ui.Secondary(sub));
-        text.VerticalAlignment = VerticalAlignment.Bottom;
-        text.Margin = new Thickness(14);
-        g.Children.Add(text);
-        var b = new Button
-        {
-            Content = Ui.Frame(g, 280, 158),
-            Padding = new Thickness(0),
-            Margin = new Thickness(8),
-            BorderThickness = new Thickness(0),
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            CornerRadius = new CornerRadius(10),
-        };
-        b.Click += (_, _) => open();
-        return b;
     }
 }

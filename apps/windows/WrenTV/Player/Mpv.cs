@@ -81,6 +81,15 @@ public sealed class Mpv
             ("gpu-api", "d3d11"),
             ("hwdec", "auto-safe"),
             ("target-colorspace-hint", "yes"),
+            // Scale 4K down to the window cleanly instead of with the fast
+            // default, which looks soft and grainy on a 1080p or 1440p screen.
+            ("scale", "spline36"),
+            ("dscale", "mitchell"),
+            ("cscale", "spline36"),
+            ("correct-downscaling", "yes"),
+            ("linear-downscaling", "yes"),
+            ("sigmoid-upscaling", "yes"),
+            ("deband", "yes"),
             ("keep-open", "yes"),
             ("idle", "yes"),
             ("input-default-bindings", "no"),

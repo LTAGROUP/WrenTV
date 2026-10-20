@@ -226,6 +226,21 @@ public sealed class TitleView
     public Item? Item { get; set; }
 }
 
+public sealed class CatalogResult
+{
+    public sealed class Genre
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    public bool Enabled { get; set; }
+    public List<TitleView> Items { get; set; } = [];
+    public List<Genre> Genres { get; set; } = [];
+    public int Page { get; set; }
+    public int TotalPages { get; set; }
+}
+
 public sealed class TrendingResponse
 {
     public bool Enabled { get; set; }

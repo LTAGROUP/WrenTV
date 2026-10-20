@@ -15,11 +15,17 @@ abstract class Page : Grid
     /// Set when a refresh arrived while this page was out of sight.
     public bool Stale { get; set; }
 
+    /// Pages that show the hovered title's art behind them.
+    protected virtual bool HasAmbient => false;
+
+    public Ambient? Backdrop { get; }
+
     bool loaded;
     int generation;
 
     protected Page()
     {
+        if (HasAmbient) Backdrop = new Ambient();
         Loaded += (_, _) =>
         {
             if (!loaded || Stale) Reload();
@@ -51,6 +57,7 @@ abstract class Page : Grid
     protected void Show(UIElement e)
     {
         Children.Clear();
+        if (Backdrop != null) Children.Add(Backdrop);
         Children.Add(e);
     }
 
@@ -78,7 +85,13 @@ abstract class Page : Grid
         var col = new StackPanel { Spacing = 36, Padding = new Thickness(0, 24, 0, 48) };
         if (title != null) col.Children.Add(PageTitle(title));
         foreach (var s in sections) col.Children.Add(s);
-        return new ScrollViewer { Content = col, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        return new ScrollViewer
+        {
+            Content = col,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollMode = ScrollMode.Disabled,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        };
     }
 
     public static FrameworkElement PageTitle(string title, string? subtitle = null)

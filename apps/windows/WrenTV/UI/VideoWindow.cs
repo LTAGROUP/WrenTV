@@ -34,6 +34,9 @@ abstract class VideoWindow : Window
     bool videoShown = true;
     bool closed;
     readonly DispatcherTimer hideBar = new() { Interval = TimeSpan.FromSeconds(3) };
+    // mpv makes its window once the video starts, and may not follow ours
+    // when it resizes, so its size is checked now and then.
+    readonly DispatcherTimer fit = new() { Interval = TimeSpan.FromMilliseconds(500) };
 
     protected VideoWindow(string title)
     {
@@ -80,7 +83,13 @@ abstract class VideoWindow : Window
         AppWindow.Changed += (_, a) =>
         {
             if (a.DidPresenterChange) FullscreenChanged();
+            if (a.DidPresenterChange || a.DidSizeChange) PlaceVideo();
         };
+        fit.Tick += (_, _) =>
+        {
+            if (!closed && videoShown) Win32.FitChildren(video);
+        };
+        fit.Start();
         Root.PreviewKeyDown += (_, e) =>
         {
             if (FocusManager.GetFocusedElement(Root.XamlRoot) is TextBox) return;
@@ -113,6 +122,7 @@ abstract class VideoWindow : Window
     {
         if (closed) return;
         closed = true;
+        fit.Stop();
         open.Remove(this);
         hideBar.Stop();
         Stopping();

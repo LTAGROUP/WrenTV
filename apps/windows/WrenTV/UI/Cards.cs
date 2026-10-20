@@ -117,6 +117,7 @@ static class Cards
         stack.Width = width;
         var b = Plain(stack);
         b.Click += (_, _) => Nav.Item(item);
+        b.PointerEntered += (_, _) => Ambient.Hover(item.BackdropPath);
         AttachMenu(b, item);
         return b;
     }
@@ -146,7 +147,7 @@ static class Cards
         var stack = Ui.Column(6, g, Ui.Text(title, 13, FontWeights.SemiBold), Ui.Secondary(sub));
         stack.Width = width;
         var b = Plain(stack);
-        b.PointerEntered += (_, _) => play.Opacity = 1;
+        b.PointerEntered += (_, _) => { play.Opacity = 1; Ambient.Hover(item.BackdropPath ?? item.StillPath); };
         b.PointerExited += (_, _) => play.Opacity = 0;
         b.Click += (_, _) => Nav.Play(item);
         AttachMenu(b, item);
@@ -155,6 +156,15 @@ static class Cards
 
     /// A TMDB title (trending, more like this, discover).
     public static Button Title(TitleView t, double width = PosterWidth, int? rank = null)
+    {
+        var b = Plain(TitleCell(t, width, rank));
+        b.Click += (_, _) => Nav.Title(t);
+        b.PointerEntered += (_, _) => Ambient.Hover(t.BackdropPath);
+        if (t.Item is { } item) AttachMenu(b, item);
+        return b;
+    }
+
+    static StackPanel TitleCell(TitleView t, double width = PosterWidth, int? rank = null)
     {
         var api = App.State.Api;
         var image = Ui.Image(api?.ImageUrl(t.PosterPath, "w342"), 300);
@@ -173,17 +183,17 @@ static class Cards
         }
         var stack = Ui.Column(6, top, Ui.Text(t.Title, 13, FontWeights.SemiBold), Ui.Secondary(t.Year?.ToString() ?? ""));
         stack.Width = width;
-        var b = Plain(stack);
-        b.Click += (_, _) => Nav.Title(t);
-        if (t.Item is { } item) AttachMenu(b, item);
-        return b;
+        return stack;
     }
 
     /// Right-click: play, from the beginning, watched.
-    public static void AttachMenu(FrameworkElement e, Item item)
+    public static void AttachMenu(FrameworkElement e, Item item) => AttachMenu(e, () => item);
+
+    public static void AttachMenu(FrameworkElement e, Func<Item?> current)
     {
         e.ContextRequested += (_, args) =>
         {
+            if (current() is not { } item) return;
             var menu = new MenuFlyout();
             void Add(string text, string glyph, Action a)
             {
@@ -213,7 +223,8 @@ static class Cards
         };
     }
 
-    /// A titled horizontal row of cards.
+    /// A titled horizontal row of cards. The row scrolls with its arrows, a
+    /// sideways swipe or Shift+wheel; a plain wheel scrolls the page, never the row.
     public static UIElement Shelf(string title, IEnumerable<UIElement> cards, Action? seeAll = null, string? subtitle = null)
     {
         var list = cards.ToList();
@@ -222,11 +233,53 @@ static class Cards
         var scroll = new ScrollViewer
         {
             Content = row,
-            HorizontalScrollMode = ScrollMode.Enabled,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollMode = ScrollMode.Disabled,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
             VerticalScrollMode = ScrollMode.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            IsHorizontalRailEnabled = false,
         };
+        void By(double dx) => scroll.ChangeView(Math.Clamp(scroll.HorizontalOffset + dx, 0, scroll.ScrollableWidth), null, null);
+        Button Arrow(string glyph, int dir)
+        {
+            var a = new Button
+            {
+                Content = new FontIcon { Glyph = glyph, FontSize = 16 },
+                Width = 40, Height = 64, Padding = new Thickness(0), CornerRadius = new CornerRadius(8),
+                Background = new SolidColorBrush(Color.FromArgb(0xC0, 0x12, 0x10, 0x16)),
+                BorderThickness = new Thickness(0),
+                HorizontalAlignment = dir < 0 ? HorizontalAlignment.Left : HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(dir < 0 ? 4 : 0, 0, dir > 0 ? 4 : 0, 40),
+                Visibility = Visibility.Collapsed,
+            };
+            a.Click += (_, _) => By(dir * Math.Max(200, scroll.ViewportWidth - Page.Gutter * 2 - 80));
+            return a;
+        }
+        var left = Arrow("\uE76B", -1);
+        var right = Arrow("\uE76C", 1);
+        var hovering = false;
+        void Arrows()
+        {
+            left.Visibility = hovering && scroll.HorizontalOffset > 1 ? Visibility.Visible : Visibility.Collapsed;
+            right.Visibility = hovering && scroll.HorizontalOffset < scroll.ScrollableWidth - 1 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        scroll.ViewChanged += (_, _) => Arrows();
+        var strip = new Grid();
+        strip.Children.Add(scroll);
+        strip.Children.Add(left);
+        strip.Children.Add(right);
+        strip.PointerEntered += (_, _) => { hovering = true; Arrows(); };
+        strip.PointerExited += (_, _) => { hovering = false; Arrows(); };
+        strip.PointerWheelChanged += (_, e) =>
+        {
+            var p = e.GetCurrentPoint(strip).Properties;
+            var shift = (e.KeyModifiers & Windows.System.VirtualKeyModifiers.Shift) != 0;
+            if (!p.IsHorizontalMouseWheel && !shift) return;
+            By(p.IsHorizontalMouseWheel ? p.MouseWheelDelta : -p.MouseWheelDelta);
+            e.Handled = true;
+        };
+
         var header = new Grid { Margin = new Thickness(Page.Gutter, 0, Page.Gutter, 0) };
         var titles = Ui.Column(2, Ui.Text(title, 20, FontWeights.Bold));
         if (subtitle != null) titles.Children.Add(Ui.Secondary(subtitle));
@@ -237,7 +290,7 @@ static class Cards
             link.Click += (_, _) => seeAll();
             header.Children.Add(link);
         }
-        return Ui.Column(12, header, scroll);
+        return Ui.Column(12, header, strip);
     }
 
     static DataTemplate? hostTemplate;
@@ -268,10 +321,89 @@ static class Cards
             cell.Width = PosterWidth;
             cell.Margin = new Thickness(4, 4, 4, 10);
             host.Children.Add(cell);
-            AttachMenu(host, item);
+            if (host.Tag == null)
+            {
+                AttachMenu(host, () => host.Tag as Item);
+                host.PointerEntered += (_, _) => Ambient.Hover((host.Tag as Item)?.BackdropPath);
+            }
+            host.Tag = item;
             args.Handled = true;
         };
         grid.ItemClick += (_, args) => { if (args.ClickedItem is Item i) Nav.Item(i); };
         return grid;
+    }
+
+    /// A virtualized grid of TMDB titles; calls more() as the end scrolls in.
+    public static GridView TitleGrid(IList<TitleView> titles, Action? more = null)
+    {
+        var grid = new GridView
+        {
+            ItemsSource = titles,
+            ItemTemplate = HostTemplate,
+            IsItemClickEnabled = true,
+            SelectionMode = ListViewSelectionMode.None,
+            Padding = new Thickness(Page.Gutter - 4, 0, Page.Gutter, 40),
+        };
+        grid.ContainerContentChanging += (_, args) =>
+        {
+            if (args.InRecycleQueue || args.ItemContainer.ContentTemplateRoot is not Grid host || args.Item is not TitleView t) return;
+            host.Children.Clear();
+            var cell = TitleCell(t);
+            cell.Margin = new Thickness(4, 4, 4, 10);
+            host.Children.Add(cell);
+            if (host.Tag == null)
+            {
+                AttachMenu(host, () => (host.Tag as TitleView)?.Item);
+                host.PointerEntered += (_, _) => Ambient.Hover((host.Tag as TitleView)?.BackdropPath);
+            }
+            host.Tag = t;
+            if (more != null && args.ItemIndex >= titles.Count - 12) more();
+            args.Handled = true;
+        };
+        grid.ItemClick += (_, args) => { if (args.ClickedItem is TitleView t) Nav.Title(t); };
+        return grid;
+    }
+
+    /// Wide image tiles for collections and genres.
+    public static UIElement Tiles(IEnumerable<UIElement> tiles)
+    {
+        var wrap = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, ItemWidth = 296, ItemHeight = 186, Margin = new Thickness(Page.Gutter - 8, 0, Page.Gutter, 40) };
+        foreach (var t in tiles) wrap.Children.Add(t);
+        return new ScrollViewer { Content = wrap };
+    }
+
+    public static UIElement Tile(string title, string sub, string? image, Action open)
+    {
+        var g = new Grid();
+        g.Children.Add(Ui.Image(App.State.Api?.ImageUrl(image, "w780"), 560));
+        g.Children.Add(new Border
+        {
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new Windows.Foundation.Point(0, 0),
+                EndPoint = new Windows.Foundation.Point(0, 1),
+                GradientStops =
+                {
+                    new GradientStop { Color = Color.FromArgb(0x10, 0, 0, 0), Offset = 0.3 },
+                    new GradientStop { Color = Color.FromArgb(0xD0, 0, 0, 0), Offset = 1 },
+                },
+            },
+        });
+        var text = Ui.Column(2, Ui.Text(title, 17, FontWeights.Bold), Ui.Secondary(sub));
+        text.VerticalAlignment = VerticalAlignment.Bottom;
+        text.Margin = new Thickness(14);
+        g.Children.Add(text);
+        var b = new Button
+        {
+            Content = Ui.Frame(g, 280, 158),
+            Padding = new Thickness(0),
+            Margin = new Thickness(8),
+            BorderThickness = new Thickness(0),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            CornerRadius = new CornerRadius(10),
+        };
+        b.Click += (_, _) => open();
+        b.PointerEntered += (_, _) => Ambient.Hover(image);
+        return b;
     }
 }

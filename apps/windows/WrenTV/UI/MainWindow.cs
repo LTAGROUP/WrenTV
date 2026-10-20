@@ -10,8 +10,9 @@ using WrenTV.Core;
 
 namespace WrenTV.UI;
 
-/// The library window: sign-in until there's a server, then a sidebar of
-/// Home, Discover, the libraries and Live TV with a page stack on the right.
+/// The library window: sign-in until there's a server, then a sidebar like
+/// the Mac app's with a page stack on the right. A streaming server shows
+/// Movies and TV Shows from TMDB's catalog; otherwise each library is listed.
 sealed class MainWindow : Window
 {
     static AppState State => App.State;
@@ -216,14 +217,25 @@ sealed class MainWindow : Window
         if (key == menuShape) return;
         menuShape = key;
         nav.MenuItems.Clear();
-        nav.MenuItems.Add(Item("Home", "", "home"));
-        if (State.CanStream) nav.MenuItems.Add(Item("Discover", "", "discover"));
-        if (libs.Count > 0)
+        nav.MenuItems.Add(Item("Home", "\uE80F", "home"));
+        nav.MenuItems.Add(Item("Watchlist", "\uE728", "watchlist"));
+        if (State.HasLiveTv) nav.MenuItems.Add(Item("Live TV", "\uE93E", "live"));
+        if (State.CanStream)
         {
-            nav.MenuItems.Add(new NavigationViewItemHeader { Content = "Libraries" });
-            foreach (var l in libs) nav.MenuItems.Add(Item(l.Name, l.Glyph, "lib:" + l.Id));
+            nav.MenuItems.Add(Item("Movies", "\uE8B2", "movies"));
+            nav.MenuItems.Add(Item("TV Shows", "\uE7F4", "shows"));
+            nav.MenuItems.Add(Item("Collections", "\uE8F1", "collections"));
         }
-        if (State.HasLiveTv) nav.MenuItems.Add(Item("Live TV", "", "live"));
+        else
+        {
+            nav.MenuItems.Add(Item("Collections", "\uE8F1", "collections"));
+            nav.MenuItems.Add(Item("Genres", "\uE8EC", "genres"));
+            if (libs.Count > 0)
+            {
+                nav.MenuItems.Add(new NavigationViewItemHeader { Content = "Libraries" });
+                foreach (var l in libs) nav.MenuItems.Add(Item(l.Name, l.Glyph, "lib:" + l.Id));
+            }
+        }
         nav.FooterMenuItems.Clear();
         if (State.IsAdmin) nav.FooterMenuItems.Add(Item("Server", "", "admin"));
         nav.FooterMenuItems.Add(Item("Settings", "", "settings"));
@@ -249,7 +261,11 @@ sealed class MainWindow : Window
         Page? page = tag switch
         {
             "home" => new HomePage(),
-            "discover" => new DiscoverPage(),
+            "watchlist" => new WatchlistPage(),
+            "movies" => new BrowsePage("movie"),
+            "shows" => new BrowsePage("show"),
+            "collections" => new CollectionsPage(),
+            "genres" => new GenresPage(),
             "live" => new LiveTvPage(),
             "admin" => new AdminPage(),
             "settings" => new SettingsPage(),
@@ -264,6 +280,8 @@ sealed class MainWindow : Window
     }
 
     public void OpenLibrary(Library lib) => Select("lib:" + lib.Id, force: true);
+
+    public Page? TopPage => stack.Count > 0 ? stack[^1] : null;
 
     // Page stack
 
