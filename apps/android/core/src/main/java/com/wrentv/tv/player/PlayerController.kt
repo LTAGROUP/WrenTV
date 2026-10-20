@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -20,6 +21,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DecoderReuseEvaluation
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.util.EventLogger
 import com.wrentv.tv.data.Chapter
 import com.wrentv.tv.data.DownloadManager
@@ -141,6 +144,21 @@ class PlayerController(
     init {
         // Debug builds: dropped frames, audio underruns, buffering and loads in logcat (tag EventLogger).
         if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) player.addAnalyticsListener(EventLogger())
+        // Every build: audio timing trouble, which shows as lip sync drifting after a seek.
+        player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onAudioSinkError(t: AnalyticsListener.EventTime, e: Exception) {
+                android.util.Log.w("WrenAudio", "sink at ${t.currentPlaybackPositionMs} ms: $e")
+            }
+            override fun onAudioUnderrun(t: AnalyticsListener.EventTime, size: Int, ms: Long, since: Long) {
+                android.util.Log.w("WrenAudio", "underrun at ${t.currentPlaybackPositionMs} ms")
+            }
+            override fun onAudioInputFormatChanged(t: AnalyticsListener.EventTime, f: Format, r: DecoderReuseEvaluation?) {
+                android.util.Log.i("WrenAudio", "format ${f.sampleMimeType} ${f.channelCount}ch")
+            }
+            override fun onPositionDiscontinuity(t: AnalyticsListener.EventTime, old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
+                android.util.Log.i("WrenAudio", "jump ${old.positionMs} -> ${new.positionMs} ms (reason $reason)")
+            }
+        })
         player.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 buffering = state == Player.STATE_BUFFERING

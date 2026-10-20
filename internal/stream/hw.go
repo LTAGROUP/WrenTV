@@ -16,6 +16,10 @@ type HW struct {
 	HEVCEncoder string `json:"hevcEncoder,omitempty"`
 	Decode      bool   `json:"hwDecode"`
 	Tonemap     string `json:"tonemap"` // zscale, opencl, vaapi, none
+	// Dovi is set when ffmpeg has tonemapx, which applies Dolby Vision
+	// metadata (jellyfin-ffmpeg). Profile 5 has no HDR10 base layer, so
+	// without it the picture comes out green and purple.
+	Dovi        bool `json:"dovi"`
 	vaapiDevice string
 }
 
@@ -46,9 +50,10 @@ func DetectHW(ffmpeg, preference, vaapiDevice string) HW {
 	if strings.Contains(filters, " zscale ") && strings.Contains(filters, " tonemap ") {
 		tonemap = "zscale"
 	}
+	dovi := strings.Contains(filters, " tonemapx ")
 
 	for _, c := range candidates {
-		hw := HW{Kind: c, Decode: true, Tonemap: tonemap, vaapiDevice: vaapiDevice}
+		hw := HW{Kind: c, Decode: true, Tonemap: tonemap, Dovi: dovi, vaapiDevice: vaapiDevice}
 		switch c {
 		case "videotoolbox":
 			hw.H264Encoder, hw.HEVCEncoder = "h264_videotoolbox", "hevc_videotoolbox"
@@ -73,7 +78,7 @@ func DetectHW(ffmpeg, preference, vaapiDevice string) HW {
 		slog.Debug("hardware encoder unavailable", "kind", c)
 	}
 	slog.Info("using software transcoding (libx264)")
-	return HW{Kind: "software", H264Encoder: "libx264", HEVCEncoder: "libx265", Tonemap: tonemap}
+	return HW{Kind: "software", H264Encoder: "libx264", HEVCEncoder: "libx265", Tonemap: tonemap, Dovi: dovi}
 }
 
 // testEncoder runs a tiny encode through the same GPU filter path used for
@@ -83,13 +88,8 @@ func testEncoder(ctx context.Context, ffmpeg string, hw HW) bool {
 	var vf string
 	switch hw.Kind {
 	case "qsv", "vaapi":
-		dec := hw.DecodeArgs()
-		// Keep only the device setup; the test input is software frames.
-		for i := 0; i+1 < len(dec); i += 2 {
-			if dec[i] == "-init_hw_device" || dec[i] == "-filter_hw_device" {
-				args = append(args, dec[i], dec[i+1])
-			}
-		}
+		// The test input is software frames.
+		args = append(args, hw.DeviceArgs()...)
 		vf = "format=nv12,hwupload=extra_hw_frames=16," + hw.VideoFilter(640, 360, 8, 320, false)
 	}
 	args = append(args, "-f", "lavfi", "-i", "color=black:s=640x360:r=24", "-frames:v", "3")
@@ -110,6 +110,19 @@ func (hw HW) device() string {
 func runOut(ctx context.Context, name string, args ...string) string {
 	out, _ := exec.CommandContext(ctx, name, args...).Output()
 	return string(out)
+}
+
+// DeviceArgs set up the GPU for filters and the encoder without decoding on
+// it, for software frames uploaded before encoding.
+func (hw HW) DeviceArgs() []string {
+	var out []string
+	dec := hw.DecodeArgs()
+	for i := 0; i+1 < len(dec); i += 2 {
+		if dec[i] == "-init_hw_device" || dec[i] == "-filter_hw_device" {
+			out = append(out, dec[i], dec[i+1])
+		}
+	}
+	return out
 }
 
 // DecodeArgs are input options enabling hardware decoding.
@@ -181,6 +194,23 @@ func (hw HW) VideoFilter(srcW, srcH, bitDepth, maxWidth int, hdr bool) string {
 		f = append(f, "scale="+itoa(w)+":"+itoa(h))
 	}
 	f = append(f, "format=yuv420p")
+	return strings.Join(f, ",")
+}
+
+// DoviFilter scales and tone-maps Dolby Vision to SDR with its metadata
+// applied. Frames are decoded in software (DeviceArgs, not DecodeArgs), since
+// GPU decoders drop the metadata.
+func (hw HW) DoviFilter(srcW, srcH, maxWidth int) string {
+	var f []string
+	if maxWidth > 0 && srcW > maxWidth {
+		h := int(float64(srcH)*float64(maxWidth)/float64(srcW)/2+0.5) * 2
+		f = append(f, "scale="+itoa(maxWidth)+":"+itoa(h))
+	}
+	f = append(f, "tonemapx=tonemap=bt2390:t=bt709:m=bt709:p=bt709:r=tv:format=yuv420p")
+	switch hw.Kind {
+	case "qsv", "vaapi":
+		f = append(f, "format=nv12", "hwupload=extra_hw_frames=16")
+	}
 	return strings.Join(f, ",")
 }
 

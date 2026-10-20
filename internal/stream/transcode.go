@@ -134,8 +134,14 @@ func (t *transcoder) launch(n int) {
 	segLen := s.segLen
 	v := s.Info.PrimaryVideo()
 
+	// Dolby Vision profile 5 is only watchable with its metadata applied.
+	dovi := v != nil && v.DVProfile == 5 && hw.Dovi
 	args := []string{"-nostdin", "-hide_banner", "-v", "error", "-y"}
-	args = append(args, hw.DecodeArgs()...)
+	if dovi {
+		args = append(args, hw.DeviceArgs()...)
+	} else {
+		args = append(args, hw.DecodeArgs()...)
+	}
 	args = append(args, "-copyts", "-ss", fmtTS(startTS), "-i", s.Src.Input())
 	if v != nil {
 		args = append(args, "-map", fmt.Sprintf("0:v:%d", v.TypeIdx))
@@ -145,7 +151,11 @@ func (t *transcoder) launch(n int) {
 	}
 	if v != nil {
 		hdr := v.HDR != ""
-		args = append(args, "-vf", hw.VideoFilter(v.Width, v.Height, v.BitDepth, s.MaxWidth, hdr))
+		if dovi {
+			args = append(args, "-vf", hw.DoviFilter(v.Width, v.Height, s.MaxWidth))
+		} else {
+			args = append(args, "-vf", hw.VideoFilter(v.Width, v.Height, v.BitDepth, s.MaxWidth, hdr))
+		}
 		args = append(args, hw.EncodeArgs(s.KbpsTarget)...)
 		// Keyframes exactly on segment boundaries so the playlist is deterministic.
 		if s.gop > 0 {
