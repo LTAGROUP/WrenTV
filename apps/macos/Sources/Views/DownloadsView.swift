@@ -12,23 +12,22 @@ struct DownloadsView: View {
         let movies = downloads.items.filter { !$0.isEpisode }.sorted { $0.title < $1.title }
         let shows = Dictionary(grouping: downloads.items.filter(\.isEpisode)) { $0.showTitle ?? "" }
             .sorted { $0.key < $1.key }
-        List {
+        PageScroll(maxWidth: 960) {
             if downloads.items.isEmpty {
                 ContentUnavailableView("No downloads", systemImage: "arrow.down.circle",
                                        description: Text("Use Download on a movie, episode or season to watch it without a connection."))
-                    .frame(maxWidth: .infinity, minHeight: 360)
-                    .listRowSeparator(.hidden)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 80)
             }
             if !movies.isEmpty {
-                Section("Movies") { ForEach(movies) { row($0) } }
+                CardSection("Movies", subtitle: count(movies.count, "movie")) { ForEach(movies) { row($0) } }
             }
             ForEach(shows, id: \.key) { show, eps in
-                Section(show) {
+                CardSection(show, subtitle: count(eps.count, "episode")) {
                     ForEach(eps.sorted { ($0.seasonNumber, $0.episodeNumber) < ($1.seasonNumber, $1.episodeNumber) }) { row($0) }
                 }
             }
         }
-        .listStyle(.inset)
         .navigationTitle("Downloads")
         .navigationSubtitle(downloads.usedBytes > 0 ? ByteCountFormatter.string(fromByteCount: downloads.usedBytes, countStyle: .file) + " on this Mac" : "")
         .toolbar {
@@ -44,6 +43,8 @@ struct DownloadsView: View {
         }
     }
 
+    private func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+
     private func row(_ x: OfflineItem) -> some View {
         HStack(spacing: 14) {
             poster(x)
@@ -51,13 +52,12 @@ struct DownloadsView: View {
                 Text(x.isEpisode ? "S\(x.seasonNumber) · E\(x.episodeNumber) — \(x.title)" : x.title).font(.headline).lineLimit(1)
                 statusLine(x)
                 if x.active || x.status == .paused, x.size > 0 {
-                    ProgressView(value: x.fraction).frame(maxWidth: 320)
+                    ProgressView(value: x.fraction).tint(Color.wrenEmber).frame(maxWidth: 320)
                 }
             }
             Spacer()
             actions(x)
         }
-        .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { play(x) }
         .contextMenu {
@@ -82,7 +82,7 @@ struct DownloadsView: View {
             }
         }
         .frame(width: w, height: x.isEpisode ? 63 : 69)
-        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     @ViewBuilder
@@ -116,17 +116,19 @@ struct DownloadsView: View {
             switch x.status {
             case .done:
                 Button { play(x) } label: { Label("Play", systemImage: "play.fill") }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.primaryCapsule)
             case .downloading, .preparing, .waiting:
                 Button { downloads.pause(x.id) } label: { Image(systemName: "pause.fill") }
+                    .buttonStyle(.iconCircle)
                     .help("Pause")
             case .paused, .failed:
                 Button { downloads.resume(x.id) } label: { Image(systemName: x.status == .failed ? "arrow.clockwise" : "arrow.down") }
+                    .buttonStyle(.iconCircle)
                     .help(x.status == .failed ? "Retry" : "Resume")
                     .disabled(state.api == nil)
             }
             Button(role: .destructive) { confirmRemove = x } label: { Image(systemName: "trash") }
-                .buttonStyle(.borderless)
+                .buttonStyle(.iconCircle)
                 .help("Remove download")
         }
     }

@@ -10,6 +10,9 @@ struct PlayerView: View {
     @State private var model: PlayerModel?
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
+    /// A player menu (versions, audio, subtitles, chapters) is open. Hiding the
+    /// controls would close it, so they stay up until it's dismissed.
+    @State private var menuOpen = false
     @State private var fill = false
     @State private var pip: AVPictureInPictureController?
 
@@ -18,7 +21,7 @@ struct PlayerView: View {
             Color.black.ignoresSafeArea()
             if let model {
                 PlayerContent(model: model, controlsVisible: controlsVisible, fill: $fill, pip: $pip,
-                              close: { dismiss() }, poke: poke, toggleControls: toggleControls)
+                              menuOpen: $menuOpen, close: { dismiss() }, poke: poke, toggleControls: toggleControls)
             }
         }
         .statusBarHidden(!controlsVisible)
@@ -40,6 +43,7 @@ struct PlayerView: View {
         }
         .onChange(of: model?.closeRequested) { _, v in if v == true { dismiss() } }
         .onChange(of: model?.paused) { _, p in if p == true { showControls() } else { poke() } }
+        .onChange(of: menuOpen) { _, open in if open { showControls() } else { poke() } }
     }
 
     private func showControls() {
@@ -52,7 +56,7 @@ struct PlayerView: View {
         showControls()
         hideTask = Task {
             try? await Task.sleep(for: .seconds(4))
-            guard !Task.isCancelled, model?.paused != true, model?.phase == .playing else { return }
+            guard !Task.isCancelled, !menuOpen, model?.paused != true, model?.phase == .playing else { return }
             withAnimation(.easeOut(duration: 0.3)) { controlsVisible = false }
         }
     }
@@ -72,6 +76,7 @@ private struct PlayerContent: View {
     let controlsVisible: Bool
     @Binding var fill: Bool
     @Binding var pip: AVPictureInPictureController?
+    @Binding var menuOpen: Bool
     let close: () -> Void
     let poke: () -> Void
     let toggleControls: () -> Void
@@ -107,7 +112,7 @@ private struct PlayerContent: View {
                     ProgressView().controlSize(.large).tint(.white)
                 }
                 if controlsVisible {
-                    Controls(model: model, fill: $fill, pip: pip, close: close, poke: poke)
+                    Controls(model: model, fill: $fill, pip: pip, menuOpen: $menuOpen, close: close, poke: poke)
                         .transition(.opacity)
                 }
                 if model.phase == .ended, let next = model.upNext {
@@ -142,6 +147,7 @@ private struct Controls: View {
     @Bindable var model: PlayerModel
     @Binding var fill: Bool
     let pip: AVPictureInPictureController?
+    @Binding var menuOpen: Bool
     let close: () -> Void
     let poke: () -> Void
     @State private var scrub: Double?
@@ -241,42 +247,55 @@ private struct Controls: View {
                     }
                 }
             }
+            .tracksMenuOpen($menuOpen)
         } label: { barIcon("list.bullet.rectangle") }
     }
 
     private var trackMenu: some View {
         Menu {
-            if model.versions.count > 1 {
-                Section("Version") {
-                    ForEach(model.versions) { v in
-                        Button { model.selectVersion(v.id) } label: {
-                            CheckLabel(title: v.label, on: model.fileId == v.id)
+            Group {
+                if model.versions.count > 1 {
+                    Section("Version") {
+                        ForEach(model.versions) { v in
+                            Button { model.selectVersion(v.id) } label: {
+                                CheckLabel(title: v.label, on: model.fileId == v.id)
+                            }
+                        }
+                    }
+                }
+                if model.audioStreams.count > 1 {
+                    Section("Audio") {
+                        ForEach(model.audioStreams, id: \.typeIndex) { a in
+                            Button { model.selectAudio(a.typeIndex) } label: {
+                                CheckLabel(title: a.label, on: model.audioIndex == a.typeIndex)
+                            }
+                        }
+                    }
+                }
+                if !model.legibleOptions.isEmpty {
+                    Section("Subtitles") {
+                        Button { model.selectSubtitle(nil) } label: {
+                            CheckLabel(title: "Off", on: model.selectedLegible == nil)
+                        }
+                        ForEach(model.legibleOptions, id: \.self) { o in
+                            Button { model.selectSubtitle(o) } label: {
+                                CheckLabel(title: o.displayName, on: model.selectedLegible == o)
+                            }
                         }
                     }
                 }
             }
-            if model.audioStreams.count > 1 {
-                Section("Audio") {
-                    ForEach(model.audioStreams, id: \.typeIndex) { a in
-                        Button { model.selectAudio(a.typeIndex) } label: {
-                            CheckLabel(title: a.label, on: model.audioIndex == a.typeIndex)
-                        }
-                    }
-                }
-            }
-            if !model.legibleOptions.isEmpty {
-                Section("Subtitles") {
-                    Button { model.selectSubtitle(nil) } label: {
-                        CheckLabel(title: "Off", on: model.selectedLegible == nil)
-                    }
-                    ForEach(model.legibleOptions, id: \.self) { o in
-                        Button { model.selectSubtitle(o) } label: {
-                            CheckLabel(title: o.displayName, on: model.selectedLegible == o)
-                        }
-                    }
-                }
-            }
+            .tracksMenuOpen($menuOpen)
         } label: { barIcon("captions.bubble") }
+    }
+}
+
+private extension View {
+    /// Inside a Menu's content: its rows appear when the menu opens and go
+    /// when it closes, which is the only open/closed signal a Menu gives.
+    func tracksMenuOpen(_ open: Binding<Bool>) -> some View {
+        onAppear { open.wrappedValue = true }
+            .onDisappear { open.wrappedValue = false }
     }
 }
 

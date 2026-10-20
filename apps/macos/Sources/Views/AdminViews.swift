@@ -8,52 +8,60 @@ struct ServerDownloadsView: View {
     @State private var loaded = false
 
     var body: some View {
-        Table(downloads) {
-            TableColumn("Title") { d in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(d.title).lineLimit(1)
-                    if let e = d.error, !e.isEmpty {
-                        Text(e).font(.caption).foregroundStyle(.red).lineLimit(1)
-                    } else if d.status == "done", let p = d.path {
-                        Text(p).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                    }
-                }
-            }
-            TableColumn("Quality") { Text($0.quality) }.width(70)
-            TableColumn("Status") { d in
-                Label(d.status.capitalized, systemImage: icon(d.status)).foregroundStyle(color(d.status))
-            }
-            .width(120)
-            TableColumn("Progress") { d in
-                if d.status == "downloading" {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ProgressView(value: d.fraction)
-                        Text("\(size(d.bytes)) of \(size(d.total))").font(.caption).foregroundStyle(.secondary)
-                    }
-                } else if d.total > 0 {
-                    Text(size(d.total)).foregroundStyle(.secondary)
-                }
-            }
-            .width(min: 140, ideal: 180)
-            TableColumn("") { d in
-                HStack {
-                    if d.status == "failed" || d.status == "canceled" {
-                        Button("Retry") { act { try await $0.retryServerDownload(d.id) } }
-                    }
-                    Button(d.active ? "Cancel" : "Clear", role: d.active ? .destructive : nil) { act { try await $0.cancelServerDownload(d.id) } }
-                }
-                .controlSize(.small)
-            }
-            .width(130)
-        }
-        .overlay {
-            if loaded && downloads.isEmpty {
+        let active = downloads.filter(\.active)
+        let rest = downloads.filter { !$0.active }
+        PageScroll(maxWidth: 960) {
+            if !loaded {
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 160)
+            } else if downloads.isEmpty {
                 ContentUnavailableView("Nothing downloading", systemImage: "externaldrive.badge.plus",
                                        description: Text("Open a streamed title and choose Stream → Download to Server, or turn on download mode in Settings → Streaming."))
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 80)
+            }
+            if !active.isEmpty {
+                CardSection("In progress", subtitle: "\(active.count)") { ForEach(active) { row($0) } }
+            }
+            if !rest.isEmpty {
+                CardSection("Finished") { ForEach(rest) { row($0) } }
             }
         }
         .navigationTitle("Server Downloads")
         .task { await poll() }
+    }
+
+    private func row(_ d: ServerDownload) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon(d.status))
+                .font(.title3)
+                .foregroundStyle(color(d.status))
+                .frame(width: 26)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(d.title).font(.headline).lineLimit(1)
+                    if !d.quality.isEmpty { Badge(text: d.quality) }
+                }
+                if let e = d.error, !e.isEmpty {
+                    Text(e).font(.caption).foregroundStyle(.red).lineLimit(1)
+                } else if d.status == "downloading" {
+                    ProgressView(value: d.fraction).tint(Color.wrenEmber).frame(maxWidth: 360)
+                    Text("\(size(d.bytes)) of \(size(d.total))").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                } else if d.status == "done", let p = d.path {
+                    Text(p).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                } else {
+                    Text([d.status.capitalized, d.total > 0 ? size(d.total) : nil].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            HStack(spacing: 8) {
+                if d.status == "failed" || d.status == "canceled" {
+                    Button("Retry") { act { try await $0.retryServerDownload(d.id) } }
+                }
+                Button(d.active ? "Cancel" : "Clear", role: d.active ? .destructive : nil) { act { try await $0.cancelServerDownload(d.id) } }
+            }
+            .buttonStyle(.softCapsule)
+        }
     }
 
     /// Refreshes every few seconds while something is in flight.
@@ -87,7 +95,7 @@ struct ServerDownloadsView: View {
     private func color(_ s: String) -> Color {
         switch s {
         case "done": .green
-        case "queued", "downloading": .blue
+        case "queued", "downloading": .wrenEmber
         case "canceled": .secondary
         default: .red
         }
@@ -97,28 +105,61 @@ struct ServerDownloadsView: View {
 /// Server accounts and their streaming limits.
 struct UsersView: View {
     @Environment(AppState.self) private var state
-    @State private var users: [ServerUser] = []
+    @State private var users: [ServerUser]?
     @State private var defaults = UserDefaultsSettings()
     @State private var editing: ServerUser?
 
     var body: some View {
-        Table(users) {
-            TableColumn("Name") { u in
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(u.displayName.isEmpty ? u.username : u.displayName)
-                    if let e = u.email, !e.isEmpty { Text(e).font(.caption).foregroundStyle(.secondary) }
+        PageScroll(maxWidth: 1100) {
+            if let users {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 16)], alignment: .leading, spacing: 16) {
+                    ForEach(users) { card($0) }
                 }
+                Text("Add people and choose which libraries they see in the web app.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 160)
             }
-            TableColumn("Role") { Text($0.isAdmin ? "Admin" : "Member").foregroundStyle(.secondary) }.width(80)
-            TableColumn("Limits") { Text(summary($0.effective)).foregroundStyle(.secondary) }
-            TableColumn("") { u in Button("Edit") { editing = u }.controlSize(.small) }.width(60)
         }
         .navigationTitle("Users")
-        .navigationSubtitle("Add people and choose libraries in the web app")
+        .navigationSubtitle(users.map { "\($0.count) \($0.count == 1 ? "person" : "people")" } ?? "")
         .sheet(item: $editing) { u in
             UserLimitsSheet(user: u, defaults: defaults) { Task { await load() } }
         }
         .task { await load() }
+    }
+
+    private func card(_ u: ServerUser) -> some View {
+        let name = u.displayName.isEmpty ? u.username : u.displayName
+        return HStack(alignment: .top, spacing: 14) {
+            Text(initials(name))
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(u.isAdmin ? Color.wrenEmber : Color.white.opacity(0.12), in: Circle())
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(name).font(.headline).lineLimit(1)
+                    if u.isAdmin { Badge(text: "Admin") }
+                }
+                if let e = u.email, !e.isEmpty { Text(e).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                Text(summary(u.effective)).font(.caption).foregroundStyle(.secondary).padding(.top, 3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            Button("Edit") { editing = u }.buttonStyle(.softCapsule)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .onTapGesture(count: 2) { editing = u }
+    }
+
+    private func initials(_ name: String) -> String {
+        let parts = name.split(separator: " ").prefix(2)
+        let s = parts.compactMap(\.first).map(String.init).joined()
+        return (s.isEmpty ? "?" : s).uppercased()
     }
 
     private func load() async {
@@ -205,30 +246,25 @@ struct ManageLibrariesView: View {
     @Environment(AppState.self) private var state
     @State private var adding = false
     @State private var confirmDelete: Library?
+    /// Libraries a scan was just started for, to show it took.
+    @State private var scanning: Set<String> = []
 
     var body: some View {
-        List {
-            ForEach(state.libraries) { lib in
-                HStack(spacing: 14) {
-                    Image(systemName: lib.symbol).font(.title2).frame(width: 32)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(lib.name).font(.headline)
-                        if lib.isStream {
-                            Text("Streamed through the server's debrid service").font(.caption).foregroundStyle(.secondary)
-                        } else {
-                            Text(lib.paths.joined(separator: ", ")).font(.caption.monospaced()).foregroundStyle(.secondary)
-                        }
-                        Text("\(lib.itemCount ?? 0) items\(lib.lastScanAt.flatMap { $0 > 0 ? " · scanned \(Date(timeIntervalSince1970: TimeInterval($0)).formatted(.relative(presentation: .named)))" : nil } ?? "")")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if !lib.isStream {
-                        Button("Scan") { Task { try? await state.api?.scanLibrary(lib.id) } }
-                    }
-                    Button(role: .destructive) { confirmDelete = lib } label: { Image(systemName: "trash") }
-                        .buttonStyle(.borderless)
+        PageScroll(maxWidth: 960) {
+            if state.libraries.isEmpty {
+                ContentUnavailableView {
+                    Label("No libraries", systemImage: "folder")
+                } description: {
+                    Text("Point the server at a folder of movies or shows.")
+                } actions: {
+                    Button("Add Library") { adding = true }.buttonStyle(.primaryCapsule)
                 }
-                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 80)
+            } else {
+                VStack(spacing: 14) {
+                    ForEach(state.libraries) { card($0) }
+                }
             }
         }
         .navigationTitle("Libraries")
@@ -247,6 +283,60 @@ struct ManageLibrariesView: View {
             }
         } message: {
             Text(confirmDelete?.isStream == true ? "Its titles and saved streams are removed. It comes back empty the next time someone streams." : "Files on disk are not touched.")
+        }
+    }
+
+    private func card(_ lib: Library) -> some View {
+        HStack(spacing: 16) {
+            Image(systemName: lib.symbol)
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(Color.wrenEmber)
+                .frame(width: 48, height: 48)
+                .background(Color.wrenEmber.opacity(0.14), in: RoundedRectangle(cornerRadius: 11))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(lib.name).font(.headline)
+                    Badge(text: lib.type == "shows" ? "TV" : "Movies")
+                    if lib.isStream { Badge(text: "Streamed") }
+                }
+                if lib.isStream {
+                    Text("Streamed through the server's debrid service").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text(lib.paths.joined(separator: ", ")).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        .lineLimit(2).truncationMode(.middle)
+                }
+                Text(counts(lib)).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            if !lib.isStream {
+                Button(scanning.contains(lib.id) ? "Scanning…" : "Scan") { scan(lib) }
+                    .buttonStyle(.softCapsule)
+                    .disabled(scanning.contains(lib.id))
+            }
+            Button(role: .destructive) { confirmDelete = lib } label: { Image(systemName: "trash") }
+                .buttonStyle(.iconCircle)
+                .help("Remove library")
+        }
+        .padding(16)
+        .cardBackground()
+    }
+
+    private func counts(_ lib: Library) -> String {
+        let n = lib.itemCount ?? 0
+        var s = "\(n) item\(n == 1 ? "" : "s")"
+        if let t = lib.lastScanAt, t > 0 {
+            s += " · scanned " + Date(timeIntervalSince1970: TimeInterval(t)).formatted(.relative(presentation: .named))
+        }
+        return s
+    }
+
+    private func scan(_ lib: Library) {
+        scanning.insert(lib.id)
+        Task {
+            try? await state.api?.scanLibrary(lib.id)
+            try? await Task.sleep(for: .seconds(4))
+            await state.reloadLibraries()
+            scanning.remove(lib.id)
         }
     }
 }
@@ -345,15 +435,13 @@ struct ServerSettingsView: View {
     private static let qualities = [("2160p", "4K"), ("1080p", "1080p"), ("720p", "720p")]
 
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("", selection: $tab) {
-                ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        PageScroll(maxWidth: 780) {
+            HStack(spacing: 8) {
+                ForEach(Tab.allCases, id: \.self) { t in Chip(t.rawValue, selected: tab == t) { tab = t } }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .padding(.top, 12)
-            Form {
+            if settings == nil {
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 120)
+            } else {
                 switch tab {
                 case .general: general
                 case .streaming: streamingTab
@@ -361,7 +449,6 @@ struct ServerSettingsView: View {
                 case .integrations: integrations
                 }
             }
-            .formStyle(.grouped)
         }
         .navigationTitle("Settings")
         .toolbar {
@@ -375,28 +462,30 @@ struct ServerSettingsView: View {
 
     @ViewBuilder
     private var general: some View {
-        Section("Server") {
-            TextField("Name", text: $serverName)
-            TextField("Public URL", text: $publicUrl, prompt: Text("https://wrentv.example.com"))
-        }
-        Section {
-            SecureField("TMDB API key", text: $tmdbKey, prompt: Text(settings?.tmdbKeySet == true ? "Saved — enter to replace" : "Required for artwork, metadata and streaming"))
-            SecureField("OMDb API key", text: $omdbKey, prompt: Text(settings?.omdbKeySet == true ? "Saved — enter to replace" : "Optional"))
-        } header: {
-            Text("Metadata")
-        } footer: {
-            Text("OMDb adds Rotten Tomatoes, IMDb and Metacritic scores; get a free key at omdbapi.com.").font(.caption).foregroundStyle(.secondary)
-        }
-        Section {
-            Picker("Hardware transcoding", selection: $hwaccel) {
-                ForEach(["auto", "videotoolbox", "nvenc", "qsv", "vaapi", "amf", "none"], id: \.self) { Text($0).tag($0) }
+        CardSection("Server") {
+            SettingRow("Name") { TextField("Name", text: $serverName).wrenField().frame(width: 320) }
+            SettingRow("Public URL", detail: "Where people reach the server from outside your network") {
+                TextField("Public URL", text: $publicUrl, prompt: Text("https://wrentv.example.com")).wrenField().frame(width: 320)
             }
-            Toggle("Detect intros and credits from audio", isOn: $fingerprinting)
-        } header: {
-            Text("Playback")
-        } footer: {
-            Text("Audio detection compares episodes of a season to find shared intros and credits. Chapters are always used.")
-                .font(.caption).foregroundStyle(.secondary)
+        }
+        CardSection("Metadata", footer: "OMDb adds Rotten Tomatoes, IMDb and Metacritic scores; get a free key at omdbapi.com.") {
+            SettingRow("TMDB API key", detail: "Required for artwork, metadata and streaming") {
+                SecureField("TMDB API key", text: $tmdbKey, prompt: Text(settings?.tmdbKeySet == true ? "Saved — enter to replace" : "API key"))
+                    .wrenField().frame(width: 320)
+            }
+            SettingRow("OMDb API key", detail: "Optional") {
+                SecureField("OMDb API key", text: $omdbKey, prompt: Text(settings?.omdbKeySet == true ? "Saved — enter to replace" : "API key"))
+                    .wrenField().frame(width: 320)
+            }
+        }
+        CardSection("Playback", footer: "Audio detection compares episodes of a season to find shared intros and credits. Chapters are always used.") {
+            SettingRow("Hardware transcoding") {
+                Picker("Hardware transcoding", selection: $hwaccel) {
+                    ForEach(["auto", "videotoolbox", "nvenc", "qsv", "vaapi", "amf", "none"], id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden().fixedSize()
+            }
+            SettingToggle("Detect intros and credits from audio", isOn: $fingerprinting)
         }
     }
 
@@ -405,91 +494,89 @@ struct ServerSettingsView: View {
     @ViewBuilder
     private var streamingTab: some View {
         if let binding = Binding($streaming) {
-            Section {
-                Toggle("Enable streaming", isOn: binding.enabled)
-                LabeledContent("Status") { statusText(binding.wrappedValue) }
-                Toggle("Find streams for the rest of the season in the background", isOn: binding.prefetch)
-            } header: {
-                Text("Streaming")
-            } footer: {
-                Text("Search shows every movie and show. Pressing play finds a cached release through your debrid service and streams it through this server. Only the link is saved, never the video, unless downloads are on.")
-                    .font(.caption).foregroundStyle(.secondary)
+            CardSection("Streaming", footer: "Search shows every movie and show. Pressing play finds a cached release through your debrid service and streams it through this server. Only the link is saved, never the video, unless downloads are on.") {
+                SettingToggle("Enable streaming", isOn: binding.enabled)
+                SettingRow("Status") { statusText(binding.wrappedValue) }
+                SettingToggle("Find streams for the rest of the season in the background", isOn: binding.prefetch)
             }
-            Section {
+            CardSection("Debrid services", footer: "Your keys are used for everyone, tried top to bottom. If every key is removed, streamed titles disappear until one is added back.") {
                 ForEach(Array(binding.wrappedValue.debrid.enumerated()), id: \.element.id) { i, d in
                     debridRow(d, index: i, count: binding.wrappedValue.debrid.count)
                 }
-            } header: {
-                Text("Debrid services")
-            } footer: {
-                Text("Your keys are used for everyone, tried top to bottom. If every key is removed, streamed titles disappear until one is added back.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
-            Section {
+            CardSection("Addons", footer: "Stremio addons that list torrents for a title. Results from every enabled addon are merged.") {
                 ForEach(binding.addons.indices, id: \.self) { i in
                     addonRow(binding.addons[i], index: i)
                 }
-                HStack {
-                    TextField("Add addon", text: $newAddon, prompt: Text("https://…/manifest.json"))
-                        .onSubmit(addAddon)
-                    Button("Add", action: addAddon).disabled(newAddon.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-                if let addonError { Text(addonError).font(.caption).foregroundStyle(.red) }
-            } header: {
-                Text("Addons")
-            } footer: {
-                Text("Stremio addons that list torrents for a title. Results from every enabled addon are merged.").font(.caption).foregroundStyle(.secondary)
-            }
-            Section {
-                ForEach(Self.qualities, id: \.0) { q, label in
+                VStack(alignment: .leading, spacing: 6) {
                     HStack {
+                        TextField("Add addon", text: $newAddon, prompt: Text("https://…/manifest.json"))
+                            .wrenField()
+                            .onSubmit(addAddon)
+                        Button("Add", action: addAddon)
+                            .buttonStyle(.softCapsule)
+                            .disabled(newAddon.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    if let addonError { Text(addonError).font(.caption).foregroundStyle(.red) }
+                }
+            }
+            CardSection("Quality", footer: "A stream is saved for each quality. Size limits apply to the file that plays (one episode of a season pack, not the whole pack); 0 is any size.") {
+                ForEach(Self.qualities, id: \.0) { q, label in
+                    let on = binding.wrappedValue.qualities.contains(q)
+                    SettingRow(label) {
+                        HStack(spacing: 6) {
+                            TextField("", value: Binding(
+                                get: { binding.wrappedValue.maxSizeGB?[q] ?? 0 },
+                                set: { binding.wrappedValue.maxSizeGB = (binding.wrappedValue.maxSizeGB ?? [:]).merging([q: max(0, $0)]) { $1 } }),
+                                      format: .number, prompt: Text("Any size"))
+                                .multilineTextAlignment(.trailing)
+                                .wrenField()
+                                .frame(width: 90)
+                            Text("GB max").foregroundStyle(.secondary).frame(width: 52, alignment: .leading)
+                        }
+                        .disabled(!on)
+                        .opacity(on ? 1 : 0.4)
                         Toggle(label, isOn: Binding(
-                            get: { binding.wrappedValue.qualities.contains(q) },
+                            get: { on },
                             set: { on in
                                 var qs = binding.wrappedValue.qualities.filter { $0 != q }
                                 if on { qs.append(q) }
                                 binding.wrappedValue.qualities = Self.qualities.map(\.0).filter(qs.contains)
                             }))
-                        Spacer()
-                        TextField("", value: Binding(
-                            get: { binding.wrappedValue.maxSizeGB?[q] ?? 0 },
-                            set: { binding.wrappedValue.maxSizeGB = (binding.wrappedValue.maxSizeGB ?? [:]).merging([q: max(0, $0)]) { $1 } }),
-                                  format: .number, prompt: Text("Any size"))
-                            .frame(width: 80)
-                            .multilineTextAlignment(.trailing)
-                        Text("GB max").foregroundStyle(.secondary)
+                            .toggleStyle(.switch).labelsHidden().tint(Color.wrenEmber)
                     }
                 }
-            } header: {
-                Text("Quality")
-            } footer: {
-                Text("A stream is saved for each quality. Size limits apply to the file that plays (one episode of a season pack, not the whole pack); 0 is any size.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
-            Section {
-                Picker("Mode", selection: binding.mode) {
-                    Text("Stream only").tag("stream")
-                    Text("Download what's watched").tag("download")
+            CardSection("Saving to the server", footer: "Stream only writes nothing to your media folders; admins can still download single titles. Download mode saves each streamed title as a regular file, which then replaces the stream.") {
+                SettingRow("Mode") {
+                    Picker("Mode", selection: binding.mode) {
+                        Text("Stream only").tag("stream")
+                        Text("Download what's watched").tag("download")
+                    }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
                 }
-                .pickerStyle(.radioGroup)
-                Picker("Movies go to", selection: binding.movieLibrary) {
-                    Text("None").tag("")
-                    ForEach(state.libraries.filter { !$0.isStream && $0.type == "movies" }) { Text($0.name).tag($0.id) }
+                SettingRow("Movies go to") {
+                    Picker("Movies go to", selection: binding.movieLibrary) {
+                        Text("None").tag("")
+                        ForEach(state.libraries.filter { !$0.isStream && $0.type == "movies" }) { Text($0.name).tag($0.id) }
+                    }
+                    .labelsHidden().fixedSize()
                 }
-                Picker("Shows go to", selection: binding.showLibrary) {
-                    Text("None").tag("")
-                    ForEach(state.libraries.filter { !$0.isStream && $0.type == "shows" }) { Text($0.name).tag($0.id) }
+                SettingRow("Shows go to") {
+                    Picker("Shows go to", selection: binding.showLibrary) {
+                        Text("None").tag("")
+                        ForEach(state.libraries.filter { !$0.isStream && $0.type == "shows" }) { Text($0.name).tag($0.id) }
+                    }
+                    .labelsHidden().fixedSize()
                 }
-                Picker("Download quality", selection: binding.downloadQuality) {
-                    ForEach(Self.qualities, id: \.0) { Text($0.1).tag($0.0) }
+                SettingRow("Download quality") {
+                    Picker("Download quality", selection: binding.downloadQuality) {
+                        ForEach(Self.qualities, id: \.0) { Text($0.1).tag($0.0) }
+                    }
+                    .labelsHidden().fixedSize()
                 }
-            } header: {
-                Text("Saving to the server")
-            } footer: {
-                Text("Stream only writes nothing to your media folders; admins can still download single titles. Download mode saves each streamed title as a regular file, which then replaces the stream.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
-            Section {
+            CardSection("Limits", footer: "0 means no limit.") {
                 limitField("All debrid traffic", binding.limits.bandwidthMbps, unit: "Mbps")
                 limitField("Each stream", binding.limits.perStreamMbps, unit: "Mbps")
                 limitField("Server downloads", binding.limits.downloadMbps, unit: "Mbps")
@@ -498,10 +585,6 @@ struct ServerSettingsView: View {
                 limitField("Background lookups at once", binding.limits.prefetchWorkers)
                 limitField("Total downloaded", binding.limits.downloadQuotaGB, unit: "GB")
                 limitField("Keep this much disk free", binding.limits.minFreeGB, unit: "GB")
-            } header: {
-                Text("Limits")
-            } footer: {
-                Text("0 means no limit.").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -518,8 +601,11 @@ struct ServerSettingsView: View {
     }
 
     private func debridRow(_ d: DebridService, index: Int, count: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(d.keySet && !disconnects.contains(d.provider) ? Color.green : Color.white.opacity(0.2))
+                    .frame(width: 8, height: 8)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(d.name).font(.headline)
                     Text(accounts[d.provider] ?? (disconnects.contains(d.provider) ? "Disconnects when you save"
@@ -528,32 +614,31 @@ struct ServerSettingsView: View {
                 }
                 Spacer()
                 Button { move(index, by: -1) } label: { Image(systemName: "chevron.up") }
-                    .buttonStyle(.borderless).disabled(index == 0).help("Try earlier")
+                    .buttonStyle(.iconCircle).disabled(index == 0).help("Try earlier")
                 Button { move(index, by: 1) } label: { Image(systemName: "chevron.down") }
-                    .buttonStyle(.borderless).disabled(index == count - 1).help("Try later")
+                    .buttonStyle(.iconCircle).disabled(index == count - 1).help("Try later")
             }
-            HStack {
+            HStack(spacing: 8) {
                 SecureField("API key", text: Binding(get: { keyEdits[d.provider] ?? "" }, set: { keyEdits[d.provider] = $0; disconnects.remove(d.provider) }),
                             prompt: Text(d.keySet ? "Paste a new key to replace" : "API key"))
-                Button("Check") { check(d.provider) }
+                    .wrenField()
+                Button("Check") { check(d.provider) }.buttonStyle(.softCapsule)
                 if d.keySet && !disconnects.contains(d.provider) {
                     Button("Disconnect", role: .destructive) { keyEdits[d.provider] = nil; disconnects.insert(d.provider) }
+                        .buttonStyle(.softCapsule)
                 }
             }
         }
-        .padding(.vertical, 2)
     }
 
     private func addonRow(_ addon: Binding<AddonSetting>, index: Int) -> some View {
-        HStack {
-            Toggle(isOn: addon.enabled) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(addon.wrappedValue.name)
-                    Text(addonStatus[addon.wrappedValue.url] ?? addon.wrappedValue.url)
-                        .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                }
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(addon.wrappedValue.name)
+                Text(addonStatus[addon.wrappedValue.url] ?? addon.wrappedValue.url)
+                    .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
-            Spacer()
+            Spacer(minLength: 12)
             Button("Check") {
                 let url = addon.wrappedValue.url
                 addonStatus[url] = "Checking…"
@@ -566,24 +651,29 @@ struct ServerSettingsView: View {
                     }
                 }
             }
+            .buttonStyle(.softCapsule)
             Button(role: .destructive) { streaming?.addons.remove(at: index) } label: { Image(systemName: "trash") }
-                .buttonStyle(.borderless)
+                .buttonStyle(.iconCircle)
+                .help("Remove addon")
+            Toggle(addon.wrappedValue.name, isOn: addon.enabled).toggleStyle(.switch).labelsHidden().tint(Color.wrenEmber)
         }
     }
 
     private func limitField(_ title: String, _ value: Binding<Int>, unit: String = "") -> some View {
-        LabeledContent(title) {
+        SettingRow(title) {
             HStack(spacing: 6) {
-                TextField("", value: value, format: .number, prompt: Text("No limit")).frame(width: 90).multilineTextAlignment(.trailing)
-                if !unit.isEmpty { Text(unit).foregroundStyle(.secondary).frame(width: 42, alignment: .leading) }
+                TextField("", value: value, format: .number, prompt: Text("No limit"))
+                    .multilineTextAlignment(.trailing).wrenField().frame(width: 90)
+                Text(unit).foregroundStyle(.secondary).frame(width: 42, alignment: .leading)
             }
         }
     }
 
     private func limitField(_ title: String, _ value: Binding<Double>, unit: String) -> some View {
-        LabeledContent(title) {
+        SettingRow(title) {
             HStack(spacing: 6) {
-                TextField("", value: value, format: .number, prompt: Text("No limit")).frame(width: 90).multilineTextAlignment(.trailing)
+                TextField("", value: value, format: .number, prompt: Text("No limit"))
+                    .multilineTextAlignment(.trailing).wrenField().frame(width: 90)
                 Text(unit).foregroundStyle(.secondary).frame(width: 42, alignment: .leading)
             }
         }
@@ -634,15 +724,10 @@ struct ServerSettingsView: View {
 
     @ViewBuilder
     private var usersTab: some View {
-        Section {
-            Toggle("Let people download movies and episodes to their devices", isOn: $userDefaults.deviceDownloads)
+        CardSection("Defaults for everyone", footer: "Applies unless a person's own settings say otherwise (Server → Users). 0 means no limit. Playing the same title on two screens counts once, and a stream left paused for two minutes makes room for a new one.") {
+            SettingToggle("Let people download movies and episodes to their devices", isOn: $userDefaults.deviceDownloads)
             limitField("Streams at once per person", $userDefaults.maxStreams)
             limitField("Device downloads at once per person", $userDefaults.maxDownloads)
-        } header: {
-            Text("Defaults for everyone")
-        } footer: {
-            Text("Applies unless a person's own settings say otherwise (Server → Users). 0 means no limit. Playing the same title on two screens counts once, and a stream left paused for two minutes makes room for a new one.")
-                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -650,31 +735,31 @@ struct ServerSettingsView: View {
 
     @ViewBuilder
     private var integrations: some View {
-        Section {
+        CardSection("Webhooks", footer: "Receives server events such as stream.unavailable, download.completed and download.failed.") {
             ForEach(webhooks.indices, id: \.self) { i in
-                HStack {
-                    TextField("URL", text: $webhooks[i].url)
-                    SecureField("Secret", text: Binding(get: { webhooks[i].secret ?? "" }, set: { webhooks[i].secret = $0 }))
-                        .frame(width: 140)
-                    Button(role: .destructive) { webhooks.remove(at: i) } label: { Image(systemName: "minus.circle") }
-                        .buttonStyle(.borderless)
+                HStack(spacing: 8) {
+                    TextField("URL", text: $webhooks[i].url, prompt: Text("https://…")).wrenField()
+                    SecureField("Secret", text: Binding(get: { webhooks[i].secret ?? "" }, set: { webhooks[i].secret = $0 }), prompt: Text("Secret"))
+                        .wrenField()
+                        .frame(width: 160)
+                    Button(role: .destructive) { webhooks.remove(at: i) } label: { Image(systemName: "minus") }
+                        .buttonStyle(.iconCircle)
+                        .help("Remove webhook")
                 }
             }
-            Button("Add Webhook") { webhooks.append(WebhookSetting(url: "", secret: "", events: [])) }
-        } header: {
-            Text("Webhooks")
-        } footer: {
-            Text("Receives server events such as stream.unavailable, download.completed and download.failed.").font(.caption).foregroundStyle(.secondary)
+            Button { webhooks.append(WebhookSetting(url: "", secret: "", events: [])) } label: { Label("Add Webhook", systemImage: "plus") }
+                .buttonStyle(.softCapsule)
         }
         if let key = settings?.integrationKey {
-            Section("Integration key") {
+            CardSection("Integration key") {
                 HStack {
-                    Text(key).font(.callout.monospaced()).textSelection(.enabled)
+                    Text(key).font(.callout.monospaced()).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
                     Spacer()
                     Button("Copy") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(key, forType: .string)
                     }
+                    .buttonStyle(.softCapsule)
                 }
             }
         }

@@ -66,12 +66,222 @@ struct GlassCapsuleStyle: ButtonStyle {
     }
 }
 
+/// Small actions inside a card ("Scan", "Edit", "Check"): a faint capsule,
+/// red text when destructive.
+struct SoftCapsuleStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.callout.weight(.medium))
+            .foregroundStyle(configuration.role == .destructive ? Color.red : Color.primary)
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .background(.white.opacity(configuration.isPressed ? 0.16 : 0.08), in: Capsule())
+            .opacity(enabled ? 1 : 0.4)
+            .contentShape(Capsule())
+    }
+}
+
+/// An icon-only action in a card (pause, remove, reorder): a faint circle.
+struct IconCircleStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.callout.weight(.medium))
+            .foregroundStyle(configuration.role == .destructive ? Color.red.opacity(0.9) : Color.primary)
+            .frame(width: 28, height: 28)
+            .background(.white.opacity(configuration.isPressed ? 0.16 : 0.07), in: Circle())
+            .opacity(enabled ? 1 : 0.35)
+            .contentShape(Circle())
+    }
+}
+
 extension ButtonStyle where Self == PrimaryCapsuleStyle {
     static var primaryCapsule: PrimaryCapsuleStyle { PrimaryCapsuleStyle() }
 }
 
 extension ButtonStyle where Self == GlassCapsuleStyle {
     static var glassCapsule: GlassCapsuleStyle { GlassCapsuleStyle() }
+}
+
+extension ButtonStyle where Self == SoftCapsuleStyle {
+    static var softCapsule: SoftCapsuleStyle { SoftCapsuleStyle() }
+}
+
+extension ButtonStyle where Self == IconCircleStyle {
+    static var iconCircle: IconCircleStyle { IconCircleStyle() }
+}
+
+/// A filter or tab pill: white when chosen, faint otherwise.
+struct Chip: View {
+    let title: String
+    let selected: Bool
+    let action: () -> Void
+
+    init(_ title: String, selected: Bool, action: @escaping () -> Void) {
+        self.title = title
+        self.selected = selected
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(title).font(.callout)
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .foregroundStyle(selected ? Color.black : Color.primary)
+                .background(selected ? AnyShapeStyle(Color.white) : AnyShapeStyle(Color.white.opacity(0.08)), in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+extension View {
+    /// The faint fill and hairline every card in the app sits on.
+    func cardBackground(cornerRadius: CGFloat = 12) -> some View {
+        background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: cornerRadius))
+            .overlay(RoundedRectangle(cornerRadius: cornerRadius).stroke(.white.opacity(0.08)))
+    }
+
+    /// A text field drawn like the Live TV search box rather than the
+    /// system's bezel.
+    func wrenField() -> some View {
+        textFieldStyle(.plain)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 7))
+    }
+}
+
+/// A titled card, as on Stats.
+struct Panel<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.headline)
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .cardBackground()
+    }
+}
+
+/// A heading like a Home row's over a card of rows split by hairlines, with
+/// an optional note under it. Settings, libraries and downloads all use it.
+struct CardSection<Content: View>: View {
+    let title: String?
+    var subtitle: String?
+    var footer: String?
+    @ViewBuilder var content: Content
+
+    init(_ title: String?, subtitle: String? = nil, footer: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.subtitle = subtitle
+        self.footer = footer
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let title {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(title).font(.title3.bold())
+                    if let subtitle { Text(subtitle).font(.callout).foregroundStyle(.secondary) }
+                }
+            }
+            Group(subviews: content) { rows in
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(rows) { row in
+                        if row.id != rows.first?.id { Divider().opacity(0.5) }
+                        row.padding(.vertical, 11)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .cardBackground()
+            }
+            if let footer {
+                Text(footer).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+            }
+        }
+    }
+}
+
+/// One setting: its name, and a line about it, on the left; the control on
+/// the right.
+struct SettingRow<Control: View>: View {
+    let title: String
+    var detail: String?
+    @ViewBuilder var control: Control
+
+    init(_ title: String, detail: String? = nil, @ViewBuilder control: () -> Control) {
+        self.title = title
+        self.detail = detail
+        self.control = control()
+    }
+
+    var body: some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+            }
+            Spacer(minLength: 12)
+            control
+        }
+    }
+}
+
+/// A setting that's on or off, as an ember switch.
+struct SettingToggle: View {
+    let title: String
+    var detail: String?
+    @Binding var isOn: Bool
+
+    init(_ title: String, detail: String? = nil, isOn: Binding<Bool>) {
+        self.title = title
+        self.detail = detail
+        self._isOn = isOn
+    }
+
+    var body: some View {
+        SettingRow(title, detail: detail) {
+            Toggle(title, isOn: $isOn).toggleStyle(.switch).labelsHidden().tint(Color.wrenEmber)
+        }
+    }
+}
+
+/// The body of an admin page: scrolls, padded like every other page, and
+/// kept to a readable width.
+struct PageScroll<Content: View>: View {
+    var maxWidth: CGFloat = 820
+    @ViewBuilder var content: Content
+
+    init(maxWidth: CGFloat = 820, @ViewBuilder content: () -> Content) {
+        self.maxWidth = maxWidth
+        self.content = content()
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) { content }
+                .frame(maxWidth: maxWidth, alignment: .leading)
+                .padding(28)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 }
 
 struct PosterCard: View {

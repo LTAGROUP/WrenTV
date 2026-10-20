@@ -120,24 +120,14 @@ struct LiveTVView: View {
             if groups.count > 1 && !searching {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        chip("All", selected: group == nil) { group = nil }
-                        ForEach(groups, id: \.self) { g in chip(g, selected: group == g) { group = g } }
+                        Chip("All", selected: group == nil) { group = nil }
+                        ForEach(groups, id: \.self) { g in Chip(g, selected: group == g) { group = g } }
                     }
                 }
             }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
-    }
-
-    private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).font(.callout)
-                .padding(.horizontal, 12).padding(.vertical, 5)
-                .foregroundStyle(selected ? Color.black : Color.primary)
-                .background(selected ? AnyShapeStyle(Color.white) : AnyShapeStyle(Color.white.opacity(0.08)), in: Capsule())
-        }
-        .buttonStyle(.plain)
     }
 
     private func page(_ dir: Int) {
