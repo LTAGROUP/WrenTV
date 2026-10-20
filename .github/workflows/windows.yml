@@ -70,10 +70,15 @@ jobs:
           Copy-Item "$env:RUNNER_TEMP\mpv\out\libmpv-2.dll" WrenTV/lib/x64/
           Get-Item WrenTV/lib/x64/libmpv-2.dll | Format-List Name, Length
 
+      # Visual Studio's MSBuild, not `dotnet publish`: the Windows App SDK's
+      # resource (PRI) tasks ship with Visual Studio, not the .NET SDK.
+      - uses: microsoft/setup-msbuild@v2
+
       - name: Publish
         run: >
-          dotnet publish WrenTV/WrenTV.csproj -c Release -r win-x64 -p:Platform=x64
-          -p:Version=${{ steps.v.outputs.version }} -o dist/app
+          msbuild WrenTV/WrenTV.csproj -restore -t:Publish -v:m -nologo
+          -p:Configuration=Release -p:RuntimeIdentifier=win-x64 -p:Platform=x64
+          -p:Version=${{ steps.v.outputs.version }} -p:PublishDir=$PWD\dist\app\
 
       - name: Check output
         run: |
