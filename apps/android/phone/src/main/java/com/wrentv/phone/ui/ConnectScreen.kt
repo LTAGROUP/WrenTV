@@ -60,6 +60,8 @@ import kotlinx.coroutines.launch
 fun ConnectScreen() {
     val state = LocalAppState.current
     var byAddress by remember { mutableStateOf(false) }
+    // Signing in to an account server with a local username instead.
+    var useUsername by remember { mutableStateOf(false) }
     var offline by remember { mutableStateOf(false) }
 
     if (offline) {
@@ -86,7 +88,18 @@ fun ConnectScreen() {
                 server != null && state.serverUrl != null -> {
                     BackHandler { state.switchServer() }
                     Text(server.name.ifEmpty { "Wren TV server" }, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    if (server.usesAccounts) AccountForm(server = true) else LocalLogin(server.setupRequired)
+                    if (server.usesAccounts && !useUsername) {
+                        AccountForm(server = true)
+                        if (server.localAccounts == true) {
+                            TextButton({ useUsername = true }, Modifier.fillMaxWidth()) { Text("Have a username for this server? Sign in with it") }
+                        }
+                    } else {
+                        if (server.usesAccounts) Text("Sign in with the username the server's admin gave you.", color = Wren.secondary)
+                        LocalLogin(server.needsOwner)
+                        if (server.usesAccounts) {
+                            TextButton({ useUsername = false }, Modifier.fillMaxWidth()) { Text("Sign in with a Wren TV account instead") }
+                        }
+                    }
                     TextButton({ state.switchServer() }, Modifier.fillMaxWidth()) { Text("Use a different server") }
                 }
                 state.account != null && !byAddress -> ServerPicker { byAddress = true }

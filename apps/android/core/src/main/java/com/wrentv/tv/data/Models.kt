@@ -91,9 +91,13 @@ data class ServerInfo(
     val localUrls: List<String>? = null,
     /** The admin has set up live TV (IPTV) and it has channels. */
     val liveTv: Boolean? = null,
+    /** Account servers also take local (username) accounts the admin added. */
+    val localAccounts: Boolean? = null,
 ) {
     /** Signs in with a Wren TV account (email) rather than a server-local username. */
     val usesAccounts: Boolean get() = authMode == "supabase" && supabase != null
+    /** A local server with no accounts yet: the first sign-in creates the owner. */
+    val needsOwner: Boolean get() = setupRequired && !usesAccounts
     val addressId: String get() = serverId?.takeIf { it.isNotEmpty() } ?: machineId
 }
 

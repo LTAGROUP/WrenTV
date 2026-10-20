@@ -78,17 +78,18 @@ public sealed class AppState
                 return;
             }
             Server = info;
-            if (info.UsesAccounts)
+            // Account servers can also have local accounts, so a saved local token comes first.
+            if (Store.GetSecret(url.AbsoluteUri) is { } token)
+            {
+                await FinishSignIn(url, new TokenSource(token), null);
+            }
+            else if (info.UsesAccounts)
             {
                 var client = new AccountClient(info.Supabase!);
                 if (Store.Session(client.StoreKey) is { } session)
                     await FinishSignIn(baseUrl, new TokenSource(client, session), session.Email);
                 else
                     await RestoreAccount();
-            }
-            else if (Store.GetSecret(url.AbsoluteUri) is { } token)
-            {
-                await FinishSignIn(url, new TokenSource(token), null);
             }
         }
         finally

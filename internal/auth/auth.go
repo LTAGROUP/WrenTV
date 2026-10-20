@@ -2,7 +2,7 @@
 //
 // Two modes:
 //   - local: accounts live in this server's database (username/password).
-//   - supabase: Wren TV accounts. Users sign in once (any device), link other
+//   - supabase: Wren TV accounts, plus any local accounts an admin adds. Users sign in once (any device), link other
 //     devices with a short code, and server owners share libraries with other
 //     accounts. The server verifies Supabase-issued JWTs and asks Supabase
 //     (with its own server secret) what each user may access.
@@ -65,6 +65,25 @@ func (p *Principal) Visible(all []*db.Library) []string {
 type Provider interface {
 	Mode() string
 	Authenticate(ctx context.Context, token string) (*Principal, error)
+}
+
+// Either accepts tokens from the local provider first, then from next. Local
+// tokens are checked with this server's signing key, so trying them first
+// costs nothing for account tokens.
+func Either(local *Local, next Provider) Provider { return &either{local, next} }
+
+type either struct {
+	local *Local
+	next  Provider
+}
+
+func (e *either) Mode() string { return e.next.Mode() }
+
+func (e *either) Authenticate(ctx context.Context, token string) (*Principal, error) {
+	if p, err := e.local.Authenticate(ctx, token); err == nil {
+		return p, nil
+	}
+	return e.next.Authenticate(ctx, token)
 }
 
 // BearerToken extracts a token from the Authorization header or ?token=.

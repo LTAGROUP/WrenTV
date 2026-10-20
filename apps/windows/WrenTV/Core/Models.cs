@@ -102,8 +102,12 @@ public sealed class ServerInfo
     public string? ServerId { get; set; }
     public List<string>? LocalUrls { get; set; }
     public bool? LiveTv { get; set; }
+    /// Account servers also take local (username) accounts the admin added.
+    public bool? LocalAccounts { get; set; }
 
     public bool UsesAccounts => AuthMode == "supabase" && Supabase != null;
+    /// A local server with no accounts yet: the first sign-in creates the owner.
+    public bool NeedsOwner => SetupRequired && !UsesAccounts;
     public string Identity => string.IsNullOrEmpty(ServerId) ? MachineId : ServerId!;
 }
 

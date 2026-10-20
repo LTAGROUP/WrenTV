@@ -256,6 +256,8 @@ private fun ByAddress(back: () -> Unit) {
     val scope = rememberCoroutineScope()
     var address by remember { mutableStateOf(state.serverUrl?.toString()?.trimEnd('/') ?: "") }
     var connected by remember { mutableStateOf(false) }
+    // Signing in to an account server with a local username instead.
+    var useUsername by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -279,7 +281,8 @@ private fun ByAddress(back: () -> Unit) {
 
     val server = state.server
     // Approving from a phone needs someone already signed in.
-    val pairing = connected && server != null && state.accessIssue == null && !server.setupRequired && !server.usesAccounts
+    val pairing = connected && server != null && state.accessIssue == null && !server.needsOwner &&
+        (!server.usesAccounts || server.localAccounts == true)
     Page(side = if (pairing) { m -> PairingCard(m) } else null) {
         if (!connected || server == null) {
             Text("Connect to a server", style = MaterialTheme.typography.displaySmall, color = Wren.text)
@@ -309,10 +312,18 @@ private fun ByAddress(back: () -> Unit) {
             val issue = state.accessIssue
             if (issue != null) {
                 AccessIssue(issue)
-            } else if (server.usesAccounts) {
+            } else if (server.usesAccounts && !useUsername) {
                 AccountForm(title = "Sign in with your Wren TV account") { email, password, name -> state.accountSignIn(email, password, name) }
+                if (server.localAccounts == true) {
+                    Spacer(Modifier.height(16.dp))
+                    PillButton("Sign in with a Username Instead", { useUsername = true })
+                }
             } else {
-                LocalForm(server.setupRequired)
+                LocalForm(server.needsOwner)
+                if (server.usesAccounts) {
+                    Spacer(Modifier.height(16.dp))
+                    PillButton("Sign in with a Wren TV Account Instead", { useUsername = false })
+                }
             }
         }
         error?.let {

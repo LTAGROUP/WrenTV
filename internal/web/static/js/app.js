@@ -1,4 +1,4 @@
-import { api, account, local, state, saveSession, isSupabase, img, ApiError } from './api.js';
+import { api, account, local, state, saveSession, isSupabase, usingAccount, img, ApiError } from './api.js';
 import { esc, $, $$, el, toast, icons, fmtRuntime, fmtDuration, fmtSize } from './ui.js';
 import { openPlayer } from './player.js';
 import * as manage from './manage.js';
@@ -82,7 +82,7 @@ async function boot() {
   document.title = state.server.name ? `${state.server.name} · Wren TV` : 'Wren TV';
   // A session from another server or auth mode is useless here.
   const s = state.session;
-  if (s && (isSupabase() ? !s.access_token : !s.token)) saveSession(null);
+  if (s && !s.token && !(isSupabase() && s.access_token)) saveSession(null);
   render();
 }
 
@@ -136,7 +136,7 @@ export async function refreshLibraries() {
 }
 
 export function signOut() {
-  (isSupabase() ? account.signOut() : Promise.resolve(saveSession(null))).finally(() => {
+  (usingAccount() ? account.signOut() : Promise.resolve(saveSession(null))).finally(() => {
     state.user = null;
     go('/');
   });
@@ -170,11 +170,13 @@ function bindForm(onSubmit) {
 
 function viewSignIn(mode = 'in') {
   const srv = state.server;
-  if (!isSupabase()) {
-    authCard(`<p class="muted">${location.pathname === '/link' ? 'Sign in to approve your TV.' : `Sign in to <b>${esc(srv.name)}</b>.`}</p>
+  if (!isSupabase() || mode === 'local') {
+    authCard(`<p class="muted">${location.pathname === '/link' ? 'Sign in to approve your TV.' : `Sign in to <b>${esc(srv.name)}</b>${isSupabase() ? ' with the username the server admin gave you' : ''}.`}</p>
       <form><div class="field"><label>Username</label><input name="username" autocomplete="username" required></div>
       <div class="field"><label>Password</label><input name="password" type="password" autocomplete="current-password" required></div>
-      <p class="error" hidden></p><button class="btn primary lg" style="width:100%">Sign in</button></form>`);
+      <p class="error" hidden></p><button class="btn primary lg" style="width:100%">Sign in</button></form>
+      ${isSupabase() ? '<p class="switch muted">Have a Wren TV account? <a data-acct>Sign in with it</a></p>' : ''}`);
+    if (isSupabase()) $('[data-acct]', app).onclick = () => viewSignIn('in');
     return bindForm(async (v) => { await local.login(v.username, v.password); render(); });
   }
   const up = mode === 'up';
@@ -184,8 +186,10 @@ function viewSignIn(mode = 'in') {
     <div class="field"><label>Email</label><input name="email" type="email" autocomplete="email" required></div>
     <div class="field"><label>Password</label><input name="password" type="password" minlength="8" autocomplete="${up ? 'new-password' : 'current-password'}" required></div>
     <p class="error" hidden></p><button class="btn primary lg" style="width:100%">${up ? 'Create account' : 'Sign in'}</button></form>
-    <p class="switch muted">${up ? 'Already have an account? <a data-sw>Sign in</a>' : 'New to Wren TV? <a data-sw>Create an account</a>'}</p>`);
+    <p class="switch muted">${up ? 'Already have an account? <a data-sw>Sign in</a>' : 'New to Wren TV? <a data-sw>Create an account</a>'}</p>
+    ${srv.localAccounts ? '<p class="switch muted">Got a username from this server\'s admin? <a data-local>Sign in with it</a></p>' : ''}`);
   $('[data-sw]', app).onclick = () => viewSignIn(up ? 'in' : 'up');
+  if (srv.localAccounts) $('[data-local]', app).onclick = () => viewSignIn('local');
   bindForm(async (v) => {
     if (up) {
       const signedIn = await account.signUp(v.email.trim(), v.password, v.name.trim());
@@ -252,7 +256,7 @@ async function viewLink() {
   let info;
   let viaAccount = false;
   let accountErr;
-  if (isSupabase()) {
+  if (usingAccount()) {
     try {
       const d = await account.fn('link-device', { code, check: true });
       info = { device: d.deviceName || 'Your TV' };
@@ -277,7 +281,7 @@ async function viewLink() {
     <div class="actions"><button class="btn primary lg" id="approve" style="flex:1">Sign in TV</button><a class="btn ghost lg" href="/">Not now</a></div>
     <p class="switch muted">Not you? <a data-out>Sign out</a></p>`);
   // Signing out stays on this page, so another account can approve.
-  $('[data-out]', app).onclick = () => (isSupabase() ? account.signOut() : Promise.resolve(saveSession(null))).finally(() => { state.user = null; render(); });
+  $('[data-out]', app).onclick = () => (usingAccount() ? account.signOut() : Promise.resolve(saveSession(null))).finally(() => { state.user = null; render(); });
   $('#approve').onclick = async (e) => {
     e.target.disabled = true;
     try {

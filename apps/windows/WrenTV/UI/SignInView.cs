@@ -16,6 +16,8 @@ sealed class SignInView : Grid
 
     enum Mode { Account, CreateAccount, Address }
     Mode mode = Mode.Account;
+    // Signing in to an account server with a local username instead.
+    bool useUsername;
     readonly Grid card = new();
     bool busy;
 
@@ -251,8 +253,8 @@ sealed class SignInView : Grid
 
     UIElement ServerSignIn(ServerInfo info)
     {
-        if (info.UsesAccounts) return ServerAccountForm(info);
-        var setup = info.SetupRequired;
+        if (info.UsesAccounts && !useUsername) return ServerAccountForm(info);
+        var setup = info.NeedsOwner;
         var user = Field("Username");
         var pass = Password();
         var confirm = Password("Confirm password");
@@ -265,13 +267,14 @@ sealed class SignInView : Grid
             await State.Login(user.Text.Trim(), pass.Password, setup);
         });
         form.Children.Add(Heading(setup ? $"Set up {info.Name}" : $"Sign in to {info.Name}",
-            setup ? "Create the owner account for this server." : "Use your account on this server."));
+            setup ? "Create the owner account for this server." : info.UsesAccounts ? "Use the username the server's admin gave you." : "Use your account on this server."));
         form.Children.Add(user);
         form.Children.Add(pass);
         if (setup) form.Children.Add(confirm);
         form.Children.Add(err);
         form.Children.Add(Wide(Ui.Button(setup ? "Create Owner Account" : "Sign In", Submit, accent: true)));
         SubmitOnEnter(setup ? confirm : pass, Submit);
+        if (info.UsesAccounts) form.Children.Add(Link("Sign in with a Wren TV account instead", () => { useUsername = false; Render(); }));
         form.Children.Add(Link("Use a different server", State.ForgetUnreachable));
         return form;
     }
@@ -310,6 +313,7 @@ sealed class SignInView : Grid
             mode = create ? Mode.Account : Mode.CreateAccount;
             Render();
         }));
+        if (info.LocalAccounts == true) form.Children.Add(Link("Have a username for this server? Sign in with it", () => { useUsername = true; Render(); }));
         form.Children.Add(Link("Use a different server", State.ForgetUnreachable));
         return form;
     }

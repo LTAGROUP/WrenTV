@@ -29,6 +29,8 @@ struct ConnectView: View {
     @State private var busy = false
     @State private var error: String?
     @State private var connected = false
+    /// Signing in to an account server with a local username instead.
+    @State private var useUsername = false
 
     var body: some View {
         VStack(spacing: 22) {
@@ -56,10 +58,18 @@ struct ConnectView: View {
                     }
                     if let issue = state.accessIssue {
                         accessIssueView(issue)
-                    } else if server.usesAccounts {
+                    } else if server.usesAccounts && !useUsername {
                         accountForm
+                        if server.localAccounts == true {
+                            Button("Have a username for this server? Sign in with it") { useUsername = true; error = nil }
+                                .buttonStyle(.link).font(.callout).frame(maxWidth: .infinity)
+                        }
                     } else {
                         localForm(server)
+                        if server.usesAccounts {
+                            Button("Sign in with a Wren TV account instead") { useUsername = false; error = nil }
+                                .buttonStyle(.link).font(.callout).frame(maxWidth: .infinity)
+                        }
                     }
                 }
                 if let error {
@@ -115,13 +125,15 @@ struct ConnectView: View {
 
     @ViewBuilder
     private func localForm(_ server: ServerInfo) -> some View {
-        if server.setupRequired {
+        if server.needsOwner {
             Text("Create the owner account for this server.").foregroundStyle(.secondary)
+        } else if server.usesAccounts {
+            Text("Sign in with the username the server's admin gave you.").foregroundStyle(.secondary)
         }
         TextField("Username", text: $username).textFieldStyle(.roundedBorder)
         SecureField("Password", text: $password).textFieldStyle(.roundedBorder).onSubmit(signIn)
         Button(action: signIn) {
-            Text(server.setupRequired ? "Create Account" : "Sign In").frame(maxWidth: .infinity)
+            Text(server.needsOwner ? "Create Account" : "Sign In").frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)
         .disabled(username.isEmpty || password.isEmpty || busy)
@@ -187,7 +199,7 @@ struct ConnectView: View {
         Task {
             defer { busy = false }
             do {
-                try await state.login(username: username, password: password, createOwner: state.server?.setupRequired ?? false)
+                try await state.login(username: username, password: password, createOwner: state.server?.needsOwner ?? false)
             } catch {
                 self.error = error.localizedDescription
             }

@@ -13,7 +13,7 @@ export const state = {
   server: null,      // /api/server
   user: null,        // /api/me user
   libraryIds: null,
-  // local mode: {token}; supabase mode: {access_token, refresh_token, expires_at, user}
+  // local account: {token}; Wren TV account: {access_token, refresh_token, expires_at, user}
   // Sessions saved before the rename live under the old haven.* key.
   session: LS.get('wrentv.session') ?? LS.get('haven.session'),
 };
@@ -25,6 +25,8 @@ export function saveSession(s) {
 }
 
 export const isSupabase = () => state.server?.authMode === 'supabase';
+// Signed in with a Wren TV account, not a local account on an account server.
+export const usingAccount = () => isSupabase() && !state.session?.token;
 const supa = () => state.server.supabase;
 
 // ---------- account service (Supabase GoTrue / PostgREST / Functions) ----------
@@ -78,7 +80,7 @@ let refreshing = null;
 async function accessToken() {
   const s = state.session;
   if (!s) return '';
-  if (!isSupabase()) return s.token;
+  if (s.token) return s.token;
   if (s.expires_at - 60 > Date.now() / 1000) return s.access_token;
   refreshing ??= supaFetch('/auth/v1/token?grant_type=refresh_token', { method: 'POST', body: { refresh_token: s.refresh_token }, auth: false })
     .then(acceptSession)

@@ -67,10 +67,9 @@ final class AppState {
             return // Server offline: show the connect screen with the URL filled in.
         }
         server = info
-        if info.usesAccounts, let supa = info.supabase {
-            let client = AccountClient(supa)
-            guard let session = Keychain.session(for: client.keychainKey) else { return }
-            await finishSignIn(url: base, auth: TokenSource(account: client, session: session), email: session.email)
+        // Account servers can also have local accounts, so fall back to a saved local token.
+        if info.usesAccounts, let supa = info.supabase, let session = Keychain.session(for: AccountClient(supa).keychainKey) {
+            await finishSignIn(url: base, auth: TokenSource(account: AccountClient(supa), session: session), email: session.email)
         } else if let token = Keychain.get(s) {
             await finishSignIn(url: url, auth: TokenSource(localToken: token), email: nil)
         }

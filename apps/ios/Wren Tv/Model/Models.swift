@@ -92,9 +92,13 @@ struct ServerInfo: Codable {
     var localUrls: [String]?
     /// The owner has set up live TV (IPTV) and it has channels.
     var liveTv: Bool?
+    /// Account servers also take local (username) accounts the admin added.
+    var localAccounts: Bool?
 
     /// Signs in with a Wren TV account (email) rather than a server-local username.
     var usesAccounts: Bool { authMode == "supabase" && supabase != nil }
+    /// A local server with no accounts yet: the first sign-in creates the owner.
+    var needsOwner: Bool { setupRequired && !usesAccounts }
 }
 
 struct AuthResponse: Codable {

@@ -338,13 +338,16 @@ private struct ByAddressView: View {
     let back: () -> Void
     @State private var address = ""
     @State private var connected = false
+    /// Signing in to an account server with a local username instead.
+    @State private var useUsername = false
     @State private var busy = false
     @State private var error: String?
 
     var body: some View {
         let server = state.server
         // Approving from a phone needs someone already signed in on the server.
-        let pairing = connected && server != nil && state.accessIssue == nil && !(server?.setupRequired ?? true) && !(server?.usesAccounts ?? true)
+        let pairing = connected && server != nil && state.accessIssue == nil && !(server?.needsOwner ?? true)
+            && (server?.usesAccounts == false || server?.localAccounts == true)
         Group {
             if pairing {
                 Page(side: { PairingCard() }) { content(server) }
@@ -387,12 +390,18 @@ private struct ByAddressView: View {
                 }
                 if let issue = state.accessIssue {
                     AccessIssueView(issue: issue)
-                } else if server.usesAccounts {
+                } else if server.usesAccounts && !useUsername {
                     AccountForm(title: "Sign in with your Wren TV account") { email, password, name in
                         try await state.accountSignIn(email: email, password: password, name: name)
                     }
+                    if server.localAccounts == true {
+                        Button("Sign in with a Username Instead") { useUsername = true }
+                    }
                 } else {
-                    LocalForm(setup: server.setupRequired)
+                    LocalForm(setup: server.needsOwner)
+                    if server.usesAccounts {
+                        Button("Sign in with a Wren TV Account Instead") { useUsername = false }
+                    }
                 }
             }
             if let error { Text(error).foregroundStyle(Color.wrenBad) }

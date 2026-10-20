@@ -72,11 +72,11 @@ func (w *withDevices) Authenticate(ctx context.Context, token string) (*Principa
 	if err != nil {
 		return nil, ErrUnauthorized
 	}
-	if w.d.supa != nil {
-		if u.ExternalID == "" {
-			return nil, ErrUnauthorized
-		}
+	if w.d.supa != nil && u.ExternalID != "" {
 		return w.d.supa.principal(ctx, u)
+	}
+	if w.d.local == nil || u.PasswordHash == "" {
+		return nil, ErrUnauthorized
 	}
 	return w.d.local.principal(ctx, u)
 }

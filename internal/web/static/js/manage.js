@@ -1,5 +1,5 @@
 // Server management: dashboard, libraries, users/sharing, downloads, settings.
-import { api, account, state, isSupabase } from './api.js';
+import { api, account, state, isSupabase, usingAccount } from './api.js';
 import { esc, $, $$, el, toast, modal, confirmDialog, fmtSize, timeAgo } from './ui.js';
 import { setTitle, refreshLibraries, render, isAdmin } from './app.js';
 
@@ -148,7 +148,14 @@ export function confirmForget(it) {
 // ---------------------------------------------------------------- users / sharing
 
 export async function viewUsers() {
-  return isSupabase() ? viewSharing() : viewLocalUsers();
+  if (!isSupabase()) return viewLocalUsers();
+  // Account servers can also have local accounts, for people without a Wren
+  // TV account. They sign in by typing the server's address.
+  const local = await viewLocalUsers(true);
+  if (!usingAccount()) return local;
+  const node = await viewSharing();
+  node.append(local);
+  return node;
 }
 
 function libraryChecks(libs, selected, all) {
@@ -201,19 +208,24 @@ function limitsSummary(e) {
   return `<span class="small muted">${parts.join(' · ')}</span>`;
 }
 
-async function viewLocalUsers() {
+async function viewLocalUsers(alongsideAccounts = false) {
   setTitle('Users');
-  const [users, libs, settings] = await Promise.all([api('/api/users'), api('/api/libraries'), api('/api/admin/settings')]);
+  const [allUsers, libs, settings] = await Promise.all([api('/api/users'), api('/api/libraries'), api('/api/admin/settings')]);
+  const users = alongsideAccounts ? allUsers.filter((u) => !u.externalId) : allUsers;
   const fileLibs = libs.filter((l) => l.source !== 'stream');
   const defaults = settings.userDefaults || {};
-  const node = el(`<div><div class="page-head"><h1>Users</h1><button class="btn primary" data-add>Add user</button></div>
-    <div class="panel table-wrap"><table class="table"><tr><th>Name</th><th>Username</th><th>Access</th><th>Limits</th><th></th></tr>
+  const head = alongsideAccounts
+    ? `<div class="page-head" style="margin-top:28px"><h2>Local accounts</h2><button class="btn" data-add>Add local account</button></div>
+      <p class="muted" style="margin-top:-8px">For people without a Wren TV account. They open the app, choose <b>Connect to a server by address</b>, enter this server's address, then sign in with the username and password you set here.</p>`
+    : '<div class="page-head"><h1>Users</h1><button class="btn primary" data-add>Add user</button></div>';
+  const node = el(`<div>${head}
+    ${alongsideAccounts && !users.length ? '' : `<div class="panel table-wrap"><table class="table"><tr><th>Name</th><th>Username</th><th>Access</th><th>Limits</th><th></th></tr>
     ${users.map((u) => `<tr><td><b>${esc(u.displayName)}</b></td><td>${esc(u.username)}</td>
       <td>${u.isAdmin ? 'Admin · all libraries' : u.libraryIds.length ? u.libraryIds.map((id) => esc(libs.find((l) => l.id === id)?.name || id)).join(', ') : '<span class="muted">No libraries</span>'}</td>
       <td>${limitsSummary(u.effective)}</td>
       <td style="text-align:right;white-space:nowrap"><button class="btn small" data-edit="${u.id}">Edit</button>
-      ${u.id !== state.user.id ? `<button class="btn small danger" data-del="${u.id}">Remove</button>` : ''}</td></tr>`).join('')}</table></div>
-    <p class="small muted">Defaults for everyone are in <a href="/manage/settings#users" style="color:var(--accent)">Settings → Users</a>. Streamed titles are visible to anyone allowed to stream.</p></div>`);
+      ${u.id !== state.user.id ? `<button class="btn small danger" data-del="${u.id}">Remove</button>` : ''}</td></tr>`).join('')}</table></div>`}
+    ${alongsideAccounts ? '' : `<p class="small muted">Defaults for everyone are in <a href="/manage/settings#users" style="color:var(--accent)">Settings → Users</a>. Streamed titles are visible to anyone allowed to stream.</p>`}</div>`);
 
   const edit = async (u) => {
     const body = `${u ? '' : '<div class="field"><label>Username</label><input name="username" required></div>'}

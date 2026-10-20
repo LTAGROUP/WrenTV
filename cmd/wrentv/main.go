@@ -266,7 +266,10 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 			return err
 		}
 		srv.Supa = auth.NewSupabase(d, cfg)
-		srv.Auth = srv.Supa
+		// Local accounts work alongside Wren TV accounts: admins can add
+		// username/password users who sign in by typing the server's address.
+		srv.Local = auth.NewLocal(d, cfg.Auth.SigningKey)
+		srv.Auth = auth.Either(srv.Local, srv.Supa)
 		if !srv.Supa.Claimed() {
 			if cfg.Auth.Supabase.ClaimCode == "" {
 				cfg.Auth.Supabase.ClaimCode = auth.NewClaimCode()

@@ -14,11 +14,11 @@ import (
 func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 	setup := false
 	switch {
+	case s.Supa != nil:
+		setup = !s.Supa.Claimed()
 	case s.Local != nil:
 		n, _ := s.DB.CountUsers(r.Context())
 		setup = n == 0
-	case s.Supa != nil:
-		setup = !s.Supa.Claimed()
 	}
 	info := map[string]any{
 		"name":          s.Cfg.ServerName,
@@ -26,6 +26,7 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 		"version":       s.Version,
 		"authMode":      s.Auth.Mode(),
 		"setupRequired": setup,
+		"localAccounts": s.Local != nil,
 		"streaming":     s.Streaming.Active(),
 		"liveTv":        s.LiveTV.Active(),
 		"localUrls":     s.advertisedLocalURLs(),
@@ -44,7 +45,7 @@ type userResponse struct {
 
 // handleSetupOwner creates the first (admin) account in local mode.
 func (s *Server) handleSetupOwner(w http.ResponseWriter, r *http.Request) {
-	if s.Local == nil {
+	if s.Local == nil || s.Supa != nil {
 		writeErr(w, http.StatusBadRequest, "this server uses Wren TV accounts; claim it instead")
 		return
 	}
@@ -199,7 +200,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if s.Local == nil {
-		writeErr(w, http.StatusBadRequest, "in Wren TV account mode, share with people by email from the app")
+		writeErr(w, http.StatusBadRequest, "local accounts are turned off on this server")
 		return
 	}
 	var req struct {
