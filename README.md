@@ -1,49 +1,88 @@
 # Wren TV
 
-A fast, ad-free personal media server. Wren TV aims for **direct play at full
-quality**: Dolby Vision and Dolby Atmos pass through untouched. Transcoding
-happens only when the client truly can't play the file. With a debrid
-account, it can also stream any movie or show, Stremio-style, for everyone
-you share the server with.
+**A free, self-hosted media server for your movies and shows: direct play at full quality, no ads, no paywalls.**
 
-- **Runs anywhere:** Docker, Linux (systemd), macOS (launchd) and Windows (service). Single static Go binary.
-- **Hardware transcoding:** VideoToolbox, NVENC, Quick Sync, VAAPI and AMF, auto-detected. HDR→SDR tone mapping runs on the GPU.
-- **Playback ladder:**
-  1. Direct play.
-  2. Lossless remux to HLS/fMP4. Dolby Vision and HDR10 are kept, and Atmos (E-AC-3 JOC) passes through.
-  3. TrueHD/DTS audio becomes lossless ALAC while the HDR video stays native.
-  4. Clients with libmpv play anything directly (for example DV profile 7).
-  5. Transcode, as a last resort.
-- **Fast scanning:**
-  - Incremental and parallel: only new or changed files are touched.
-  - Items appear instantly from their file names; metadata (TMDB) fills in concurrently.
-  - Watched folders pick up new episodes in seconds.
-- **Streaming (optional):**
-  - Search shows every movie and show on TMDB. Press play and the server finds a cached release through TorBox, AllDebrid or Real-Debrid using Stremio addons (Torrentio and Comet by default), then streams it through itself.
-  - It saves the stream for the rest of the season, and the other quality (4K and 1080p), for later. Only links are stored, never video, unless download mode is on.
-  - Streams and files mix: a file added later replaces the stream. Without a debrid key, streamed titles disappear.
-  - Limits for size per quality, bandwidth, concurrent streams and downloads, and disk use. Per-user stream and download limits.
-- **Downloads:** viewers can save a movie or episode to their device (the Mac app plays them offline). Admins can download streamed titles to the server as regular files.
-- **Accounts:** local accounts today. Supabase-backed Plex-style accounts (server claiming, sharing, device linking) are ready to switch on.
+Dolby Vision, HDR10 and Dolby Atmos play untouched. The server transcodes only when a device truly can't play the
+file, and hardware transcoding is free. Accounts are optional: run it fully offline with local usernames, or turn on
+Wren TV accounts for Plex-style sharing and automatic remote access.
+
+![Home screen](docs/screenshots/home.jpg)
+
+| Library | Title page |
+|---|---|
+| ![Library](docs/screenshots/library.jpg) | ![Title page](docs/screenshots/title.jpg) |
+
+## Highlights
+
+- **Direct play first.** Remuxing keeps Dolby Vision and HDR10 and passes Atmos through. TrueHD/DTS becomes lossless
+  ALAC instead of a lossy transcode. Transcoding is the last resort.
+- **Free hardware transcoding.** VideoToolbox, NVENC, Quick Sync, VAAPI and AMF are auto-detected, and HDR→SDR tone
+  mapping runs on the GPU.
+- **No account required.** Local accounts work with no internet and no outside service. Wren TV accounts are an
+  optional extra (sharing by email, signing in a TV with a QR code, remote HTTPS without a domain).
+- **Apps for every screen.** Web, iPhone/iPad, Apple TV, Android, Android TV, macOS and Windows, with offline
+  downloads on phones, tablets and the Mac.
+- **Fast scans.** New episodes show up in seconds, and metadata fills in while you browse.
+- **Optional debrid streaming.** With TorBox, AllDebrid or Real-Debrid, search any movie or show and play it
+  Stremio-style, with per-user limits.
+- **Built for backends.** Integration API, signed webhooks, and one static Go binary that runs on Docker, Linux,
+  macOS and Windows.
+
+## How it compares
+
+| | Wren TV | Plex | Jellyfin | Emby |
+|---|---|---|---|---|
+| Price | Free | Free; Plex Pass for remote streaming, downloads, HW transcoding | Free | Free; Premiere for HW transcoding, downloads |
+| Source code | Public | Closed | Open (GPL) | Closed |
+| Account required | No (optional) | Yes | No | No (optional) |
+| Works with no internet | Yes | Limited | Yes | Yes |
+| Hardware transcoding | Free | Plex Pass | Free | Premiere |
+| Dolby Vision + Atmos kept when remuxing | Yes | Partly | Partly | Partly |
+| Remote HTTPS without a domain or proxy | Yes (with a Wren TV account) | Yes | No (reverse proxy) | No (reverse proxy) |
+| Offline downloads on devices | Free | Plex Pass | Some apps | Premiere |
+| Built-in debrid streaming | Yes | No | Plugins | No |
+| Ads or promoted content | None | Yes | None | None |
+| Music, photos, smart-TV apps (Roku, Samsung, LG) | Not yet | Yes | Yes | Yes |
+| Maturity | New | Mature | Mature | Mature |
+
+**Why not Jellyfin?** Jellyfin is great, and if it works for you, keep it. Wren TV is for people who want Plex's
+polish and conveniences (one-tap sharing, QR sign-in on TVs, remote access with no setup) without Plex's
+account requirement and paywalls, plus playback that keeps Dolby Vision and Atmos intact on Apple devices.
+
+**Not there yet:** music, photos, and apps for Roku, Samsung, LG and game consoles. The iPhone and Apple TV apps are
+in TestFlight beta. Wren TV is young, so expect rough edges and please [open an issue](https://github.com/LTAGROUP/WrenTV/issues).
 
 ## Quick start
 
 ### Docker
 
+The image is published to GitHub Container Registry on every push to `main`:
+
+```bash
+docker pull ghcr.io/ltagroup/wrentv:latest
+docker run -d --name wrentv -p 32500:32500 \
+  -v ./config:/config -v /path/to/media:/media:ro \
+  ghcr.io/ltagroup/wrentv:latest
+```
+
+Or use the compose file:
+
 ```bash
 docker compose -f deploy/docker/docker-compose.yml up -d
 ```
 
-Every push to `main` publishes `ghcr.io/ltagroup/wrentv:latest` (GitHub Actions, `.github/workflows/docker.yml`).
-To update a server that uses the image:
+Then open `http://<server>:32500`, create the owner account, and add a library (for example `/media/Movies`).
+A free [TMDB API key](https://www.themoviedb.org/settings/api) in **Settings** gives you posters and metadata.
+
+To update:
 
 ```bash
 docker compose pull && docker compose up -d
 ```
 
 Use `network_mode: host` on Linux so automatic port forwarding (UPnP) and LAN address detection see the real network.
-Mount your media read-only (for example at `/media`). Config and the database live in `/config`. The image bundles
-jellyfin-ffmpeg; uncomment `/dev/dri` (Intel/AMD) or the NVIDIA block in the compose file for hardware transcoding.
+Mount your media read-only. Config and the database live in `/config`. The image bundles jellyfin-ffmpeg; uncomment
+`/dev/dri` (Intel/AMD) or the NVIDIA block in the compose file for hardware transcoding.
 
 ### Native
 
@@ -57,12 +96,35 @@ sudo ./bin/wrentv install    # install as a system service (systemd / launchd / 
 Requires `ffmpeg` and `ffprobe` on `PATH` (or set `transcode.ffmpeg_path`). On macOS, `brew install ffmpeg`.
 Unit files: `deploy/systemd/wrentv.service`, `deploy/launchd/com.wrentv.server.plist`, `deploy/windows/README.md`.
 
-### First run
+### Apps
+
+| Platform | Get it |
+|---|---|
+| Web | Built into the server at `http://<server>:32500` |
+| macOS | [WrenTV-macOS.dmg](https://github.com/LTAGROUP/WrenTV/releases/latest/download/WrenTV-macOS.dmg) (updates itself) |
+| Windows | [WrenTV-Windows-Setup.exe](https://github.com/LTAGROUP/WrenTV/releases/latest/download/WrenTV-Windows-Setup.exe) |
+| Android | [WrenTV-Android.apk](https://github.com/LTAGROUP/WrenTV/releases/latest/download/WrenTV-Android.apk) |
+| Android TV / Google TV | [WrenTV-AndroidTV.apk](https://github.com/LTAGROUP/WrenTV/releases/latest/download/WrenTV-AndroidTV.apk) |
+| iPhone, iPad, Apple TV | [TestFlight beta](https://testflight.apple.com/join/VzW2XUBM) |
+
+Full docs: [wrentv.com/docs](https://wrentv.com/docs/).
+
+### Signing in
+
+- **Local accounts** (the default): the first person to open the server creates the owner account. Admins add
+  everyone else under **Users**. In the apps, choose **Connect to a server by address**, enter the address, then
+  sign in with the username and password.
+- **Wren TV accounts** (optional, see [below](#accounts-with-supabase-optional)): people sign in with their email,
+  and the apps find their servers automatically. Owners share by email. Admins can still add local accounts under
+  **Sharing → Local accounts** for people who don't want a Wren TV account. Those users connect by address and sign
+  in with their username.
+
+### First run from the command line
 
 ```bash
 curl -X POST localhost:32500/api/setup/owner -d '{"username":"me","password":"…"}'      # → {token}
 curl -X POST localhost:32500/api/libraries -H "Authorization: Bearer $TOKEN" \
-     -d '{"name":"Movies","type":"movie","paths":["/media/Movies"]}'
+     -d '{"name":"Movies","type":"movies","paths":["/media/Movies"]}'
 ```
 
 ## Configuration
@@ -82,7 +144,7 @@ listen: ":32500"
 public_url: ""                 # externally reachable URL
 integration_key: wtv_…         # generated; for backend services (X-WrenTV-Key)
 auth:
-  mode: local                  # local | supabase
+  mode: local                  # local | supabase (local accounts work in both)
   supabase: { url: "", publishable_key: "" }
 remote_access:                 # automatic HTTPS addresses (supabase mode only)
   enabled: true
@@ -233,6 +295,10 @@ Authenticate with `Authorization: Bearer <token>` (from `/api/auth/login`).
 `supabase/migrations/` contains the account backend: profiles, server claiming, and sharing and invites.
 Apply the migrations to your Supabase project, then set `auth.mode: supabase` with your project URL and publishable
 key. Open the web app, sign in, and claim the server with the claim code printed in the server log.
+
+Local accounts keep working in this mode. Admins create them under **Sharing → Local accounts** (or `POST /api/users`),
+and those people sign in by entering the server's address in the app and then their username and password.
+`GET /api/server` reports `"localAccounts": true` so apps know to offer the username form.
 
 ### Remote access (automatic HTTPS)
 
