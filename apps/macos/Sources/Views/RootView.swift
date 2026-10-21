@@ -31,6 +31,9 @@ struct ConnectView: View {
     @State private var connected = false
     /// Signing in to an account server with a local username instead.
     @State private var useUsername = false
+    /// Connecting by typing a server's address instead of through an account.
+    @State private var byAddress = false
+    @State private var opening: String?
 
     var body: some View {
         VStack(spacing: 22) {
@@ -40,9 +43,19 @@ struct ConnectView: View {
             Text("Wren TV").font(.system(size: 34, weight: .bold))
 
             VStack(alignment: .leading, spacing: 12) {
-                if !connected {
+                if state.account != nil && !byAddress {
+                    serverPicker
+                } else if !byAddress {
+                    accountForm
+                    Divider().padding(.vertical, 4)
+                    Button { byAddress = true; error = nil } label: {
+                        Label("Connect to a server by address", systemImage: "network").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.link)
+                    .font(.callout)
+                } else if !connected {
                     Text("Server").font(.headline)
-                    TextField("localhost:32500", text: $address)
+                    TextField("192.168.1.10:32500", text: $address)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit(connect)
                     Button(action: connect) {
@@ -50,6 +63,12 @@ struct ConnectView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(address.isEmpty || busy)
+                    Button { byAddress = false; error = nil } label: {
+                        Label(state.account != nil ? "Back to your servers" : "Sign in with a Wren TV account instead", systemImage: "person.crop.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.link)
+                    .font(.callout)
                 } else if let server = state.server {
                     HStack {
                         Label(server.name, systemImage: "server.rack").font(.headline)
@@ -76,7 +95,7 @@ struct ConnectView: View {
                     Text(error).foregroundStyle(.red).font(.callout)
                 }
             }
-            .frame(width: 320)
+            .frame(width: 340)
             .padding(24)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
             if busy { ProgressView().controlSize(.small) }
@@ -86,9 +105,90 @@ struct ConnectView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
-            if let url = state.serverURL {
+            if let url = state.serverURL, state.account == nil {
+                byAddress = true
                 address = url.absoluteString
                 connect()
+            }
+        }
+    }
+
+    /// The account's servers, once signed in to a Wren TV account.
+    @ViewBuilder
+    private var serverPicker: some View {
+        HStack {
+            Label(state.accountEmail ?? "", systemImage: "person.crop.circle")
+                .foregroundStyle(.secondary).lineLimit(1)
+            Spacer()
+            Button("Sign Out") { state.signOut() }.buttonStyle(.link)
+        }
+        .font(.callout)
+        Text("Your servers").font(.headline).padding(.top, 4)
+        if let servers = state.accountServers {
+            if servers.isEmpty {
+                Text("No servers yet. Install Wren TV on a computer and claim it with this account, or ask a server's owner to share it with \(state.accountEmail ?? "this email").")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(servers) { s in
+                Button { open(s) } label: { serverRow(s) }
+                    .buttonStyle(.plain)
+                    .disabled(opening != nil)
+            }
+        } else if let e = state.accountServersError {
+            Text(e).font(.callout).foregroundStyle(.red)
+        } else {
+            ProgressView().frame(maxWidth: .infinity)
+        }
+        if let issue = state.accessIssue {
+            Text(issue).font(.callout).fixedSize(horizontal: false, vertical: true)
+        }
+        HStack {
+            Button {
+                Task { await state.loadAccountServers() }
+            } label: { Label("Refresh", systemImage: "arrow.clockwise") }
+            Spacer()
+            Button("Use an address") { byAddress = true; error = nil }
+        }
+        .buttonStyle(.link)
+        .font(.callout)
+        .padding(.top, 4)
+    }
+
+    private func serverRow(_ s: AccountServer) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "server.rack").font(.title3).foregroundStyle(Color.wrenEmber).frame(width: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(s.name).font(.headline).lineLimit(1)
+                Text(serverDetail(s)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+            if opening == s.id {
+                ProgressView()
+            } else {
+                Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(12)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+        .contentShape(Rectangle())
+    }
+
+    private func serverDetail(_ s: AccountServer) -> String {
+        let whose = s.owner_id == state.account?.userId ? "Yours" : "Shared with you"
+        guard let seen = s.lastSeen else { return whose + " · never online" }
+        if Date().timeIntervalSince(seen) < 600 { return whose + " · online" }
+        return whose + " · seen " + seen.formatted(.relative(presentation: .named))
+    }
+
+    private func open(_ s: AccountServer) {
+        opening = s.id
+        error = nil
+        Task {
+            defer { opening = nil }
+            do {
+                try await state.open(s)
+            } catch {
+                self.error = error.localizedDescription
             }
         }
     }
@@ -119,6 +219,7 @@ struct ConnectView: View {
                 notice = nil
             }
             .buttonStyle(.link)
+            .font(.callout)
             Spacer()
         }
     }
@@ -166,8 +267,12 @@ struct ConnectView: View {
         Task {
             defer { busy = false }
             do {
-                let ok = try await state.accountSignIn(email: email.trimmingCharacters(in: .whitespaces), password: password,
-                                                       name: creating ? name.trimmingCharacters(in: .whitespaces) : nil)
+                let e = email.trimmingCharacters(in: .whitespaces)
+                let n = creating ? name.trimmingCharacters(in: .whitespaces) : nil
+                // Signed in through a server typed in by address, or straight to the account.
+                let ok = connected
+                    ? try await state.accountSignIn(email: e, password: password, name: n)
+                    : try await state.signInToAccount(email: e, password: password, name: n)
                 if !ok {
                     notice = "Check your email to confirm your account, then sign in."
                     creating = false

@@ -8,6 +8,51 @@ struct AccountSession: Codable, Sendable {
     var email: String
 }
 
+extension SupabaseInfo {
+    /// The Wren TV account service. The publishable key is public: every
+    /// account server hands it to its clients in /api/server.
+    static let wrenTV = SupabaseInfo(url: "https://buycndonhmcafzzcvmgu.supabase.co",
+                                     publishableKey: "sb_publishable_vNiXbucy_8L_RQBFPoBPvA_HNZv1i15")
+}
+
+extension AccountSession {
+    /// The account's user id, from the access token.
+    var userId: String? {
+        let parts = accessToken.split(separator: ".")
+        guard parts.count > 1 else { return nil }
+        var b64 = parts[1].replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while b64.count % 4 != 0 { b64 += "=" }
+        guard let data = Data(base64Encoded: b64),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return obj["sub"] as? String
+    }
+}
+
+/// A server this account owns or has been shared, as the account service lists it.
+struct AccountServer: Decodable, Identifiable, Hashable {
+    var id: String
+    var name: String
+    var owner_id: String
+    var local_urls: [String]?
+    var public_url: String?
+    var remote_url: String?
+    var last_seen_at: String?
+
+    var lastSeen: Date? {
+        guard let s = last_seen_at else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: s) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: s)
+    }
+
+    /// Every address the server published, best first.
+    var candidates: [URL] {
+        AddressPicker.candidates(entered: nil, localUrls: local_urls ?? [], publicUrl: public_url, remoteUrl: remote_url)
+    }
+}
+
 /// Talks to the Wren TV account service (Supabase Auth over REST).
 struct AccountClient: Sendable {
     let url: URL
@@ -105,6 +150,72 @@ struct AccountClient: Sendable {
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return (try? JSONDecoder().decode([ServerAddresses].self, from: data))?.first
+    }
+
+    /// The servers this account owns or has been shared, most recently seen first.
+    func servers(_ s: AccountSession) async throws -> [AccountServer] {
+        var c = URLComponents(url: URL(string: "/rest/v1/servers", relativeTo: url)!, resolvingAgainstBaseURL: true)!
+        c.queryItems = [.init(name: "select", value: "id,name,owner_id,local_urls,public_url,remote_url,last_seen_at"),
+                        .init(name: "order", value: "last_seen_at.desc.nullslast")]
+        var req = URLRequest(url: c.url!)
+        req.setValue(publishableKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(s.accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if status >= 400 { throw WrenTVError(message: "Couldn't load your servers", status: status) }
+        return try JSONDecoder().decode([AccountServer].self, from: data)
+    }
+
+    struct LinkedDevice: Decodable { var deviceName: String }
+
+    /// Looks up (check) or approves a sign-in code a TV shows before it knows
+    /// any server; approving signs the TV in to this account.
+    func linkDevice(code: String, check: Bool, accessToken: String) async throws -> LinkedDevice {
+        var req = URLRequest(url: URL(string: "/functions/v1/link-device", relativeTo: url)!)
+        req.httpMethod = "POST"
+        req.setValue(publishableKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["code": code, "check": check])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if status >= 400 {
+            let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+            throw WrenTVError(message: msg ?? HTTPURLResponse.localizedString(forStatusCode: status), status: status)
+        }
+        return try JSONDecoder().decode(LinkedDevice.self, from: data)
+    }
+
+    /// A sign-in code shown on a TV until a signed-in phone or browser approves it.
+    struct DeviceLink: Decodable, Sendable {
+        var code: String
+        var device_secret: String
+    }
+
+    /// Asks for a code to show on this TV; anyone signed in on a phone or
+    /// browser can approve it.
+    func startLink(deviceName: String, platform: String) async throws -> DeviceLink {
+        let data = try await request("/rest/v1/rpc/create_device_link", body: ["p_device_name": deviceName, "p_platform": platform])
+        guard let link = try JSONDecoder().decode([DeviceLink].self, from: data).first else { throw WrenTVError(message: "Couldn't get a sign-in code") }
+        return link
+    }
+
+    /// The TV's own session once the code is approved; nil while waiting.
+    /// Throws (404) once the code has expired.
+    func pollLink(_ link: DeviceLink) async throws -> AccountSession? {
+        struct Poll: Decodable { var status: String; var token_hash: String? }
+        let data = try await request("/rest/v1/rpc/poll_device_link", body: ["p_code": link.code, "p_device_secret": link.device_secret])
+        guard let p = try JSONDecoder().decode([Poll].self, from: data).first else { return nil }
+        switch p.status {
+        case "expired": throw WrenTVError(message: "This code has expired", status: 404)
+        case "approved": break
+        default: return nil
+        }
+        guard let hash = p.token_hash else { return nil }
+        let verified = try await request("/auth/v1/verify", body: ["type": "magiclink", "token_hash": hash])
+        guard let s = try session(from: verified, email: "") else { throw WrenTVError(message: "Sign-in failed") }
+        await acceptInvites(s)
+        return s
     }
 
     /// Turns pending share invites for this email into access.

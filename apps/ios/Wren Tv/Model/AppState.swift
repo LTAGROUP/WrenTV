@@ -105,6 +105,9 @@ final class AppState {
         account = session
         accountEmail = session.email
         await loadAccountServers()
+        if let servers = accountServers, servers.count == 1 {
+            try? await open(servers[0])
+        }
     }
 
     /// Signs in to a Wren TV account without a server address. Returns false

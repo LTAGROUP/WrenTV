@@ -13,11 +13,11 @@ enum AddressPicker {
 
     /// Candidates, best first: secure LAN, plain LAN, the owner's public
     /// address, the automatic remote address, then the address typed in.
-    static func candidates(entered: URL, localUrls: [String], publicUrl: String?, remoteUrl: String?) -> [URL] {
+    static func candidates(entered: URL?, localUrls: [String], publicUrl: String?, remoteUrl: String?) -> [URL] {
         let lan = localUrls.compactMap(URL.init(string:))
         var out = lan.filter { $0.scheme == "https" } + lan.filter { $0.scheme != "https" }
         out += [publicUrl, remoteUrl].compactMap { $0.flatMap(URL.init(string:)) }
-        out.append(entered)
+        if let entered { out.append(entered) }
         var seen = Set<String>()
         return out.filter { seen.insert(key($0)).inserted }
     }

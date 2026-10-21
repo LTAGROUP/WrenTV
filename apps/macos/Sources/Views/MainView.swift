@@ -68,6 +68,11 @@ struct MainView: View {
                     SettingsLink { Image(systemName: "gearshape") }
                         .buttonStyle(.borderless)
                         .help("Your Settings")
+                    if state.account != nil {
+                        Button { state.switchServer() } label: { Image(systemName: "arrow.left.arrow.right") }
+                            .buttonStyle(.borderless)
+                            .help("Switch Server")
+                    }
                     Button { state.signOut() } label: { Image(systemName: "rectangle.portrait.and.arrow.right") }
                         .buttonStyle(.borderless)
                         .help("Sign Out")

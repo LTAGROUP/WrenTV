@@ -219,7 +219,7 @@ private struct ActivityTab: View {
             } catch is CancellationError {
                 return
             } catch {
-                if act == nil { self.error = error.localizedDescription }
+                if act == nil { self.error = statsError(error) }
             }
             try? await Task.sleep(for: .seconds(3))
             polls += 1
@@ -609,7 +609,7 @@ private struct StatsLoader<Content: View>: View {
                 if let d = try await state.api?.stats(days: days) { nav.stats[days] = d }
                 error = nil
             } catch {
-                if nav.stats[days] == nil { self.error = error.localizedDescription }
+                if nav.stats[days] == nil { self.error = statsError(error) }
             }
         }
     }
@@ -832,7 +832,7 @@ private struct HistoryTab: View {
                 error = nil
             } catch is CancellationError {
             } catch {
-                self.error = error.localizedDescription
+                self.error = statsError(error)
             }
         }
         .onChange(of: "\(search)|\(days)|\(nav.historyUser)|\(kind)|\(method)") { offset = 0 }
@@ -1069,7 +1069,7 @@ private struct ViewersTab: View {
                 }
             }
             .task(id: state.refreshTick) {
-                do { list = try await state.api?.viewers(); error = nil } catch { self.error = error.localizedDescription }
+                do { list = try await state.api?.viewers(); error = nil } catch { self.error = statsError(error) }
             }
         }
     }
@@ -1172,7 +1172,7 @@ private struct ViewerDetailView: View {
             }
         }
         .task(id: "\(id)|\(state.refreshTick)") {
-            do { v = try await state.api?.viewer(id); error = nil } catch { self.error = error.localizedDescription }
+            do { v = try await state.api?.viewer(id); error = nil } catch { self.error = statsError(error) }
         }
     }
 
@@ -1271,7 +1271,7 @@ private struct LibrariesTab: View {
             }
         }
         .task(id: state.refreshTick) {
-            do { lib = try await state.api?.stats(days: 30).library; error = nil } catch { if lib == nil { self.error = error.localizedDescription } }
+            do { lib = try await state.api?.stats(days: 30).library; error = nil } catch { if lib == nil { self.error = statsError(error) } }
         }
     }
 
@@ -2070,4 +2070,13 @@ private enum Fmt {
         let names = long ? Calendar.current.weekdaySymbols : Calendar.current.shortWeekdaySymbols
         return names[i % 7]
     }
+}
+
+/// What a stats page says when it can't load. A server from before a page
+/// existed answers 404, or sends figures in an older shape.
+private func statsError(_ error: Error) -> String {
+    if (error as? WrenTVError)?.status == 404 || error is DecodingError {
+        return "This needs a newer Wren TV server. Update the server to see it."
+    }
+    return error.localizedDescription
 }

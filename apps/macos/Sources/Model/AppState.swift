@@ -33,6 +33,13 @@ final class AppState {
     var accessIssue: String?
     var accountEmail: String?
 
+    /// Signed in to a Wren TV account but no server picked yet: the app
+    /// lists the account's servers.
+    var account: AccountSession?
+    var accountServers: [AccountServer]?
+    var accountServersError: String?
+    private let accountClient = AccountClient(.wrenTV)
+
     var isAdmin: Bool { user.map { $0.isAdmin || $0.role == "owner" || $0.role == "admin" } ?? false }
 
     init() {
@@ -51,7 +58,10 @@ final class AppState {
 
     private func restore() async {
         defer { restoring = false }
-        guard let s = UserDefaults.standard.string(forKey: "serverURL"), let url = URL(string: s) else { return }
+        guard let s = UserDefaults.standard.string(forKey: "serverURL"), let url = URL(string: s) else {
+            await restoreAccount()
+            return
+        }
         serverURL = url
         // The typed address may only work at home: also try every address the
         // server published last time.
@@ -64,7 +74,10 @@ final class AppState {
             info = try? await WrenTVAPI(baseURL: found).serverInfo()
         }
         guard let info else {
-            return // Server offline: show the connect screen with the URL filled in.
+            // Server offline: list the account's servers, or show the connect
+            // screen with the URL filled in.
+            await restoreAccount()
+            return
         }
         server = info
         // Account servers can also have local accounts, so fall back to a saved local token.
@@ -73,6 +86,104 @@ final class AppState {
         } else if let token = Keychain.get(s) {
             await finishSignIn(url: url, auth: TokenSource(localToken: token), email: nil)
         }
+    }
+
+    // MARK: Wren TV account
+
+    /// Picks up a saved account sign-in and lists its servers.
+    private func restoreAccount() async {
+        guard let session = Keychain.session(for: accountClient.keychainKey) else { return }
+        account = session
+        accountEmail = session.email
+        await loadAccountServers()
+        if let servers = accountServers, servers.count == 1 {
+            try? await open(servers[0])
+        }
+    }
+
+    /// Signs in to a Wren TV account without a server address. Returns false
+    /// when a new account must confirm its email first.
+    @discardableResult
+    func signInToAccount(email: String, password: String, name: String?) async throws -> Bool {
+        let session: AccountSession
+        if let name {
+            guard let s = try await accountClient.signUp(email: email, password: password, name: name) else { return false }
+            session = s
+        } else {
+            session = try await accountClient.signIn(email: email, password: password)
+        }
+        Keychain.setSession(session, for: accountClient.keychainKey)
+        account = session
+        accountEmail = session.email
+        await loadAccountServers()
+        // One server: go straight to it.
+        if let servers = accountServers, servers.count == 1 {
+            try? await open(servers[0])
+        }
+        return true
+    }
+
+    /// Lists the servers the account owns or has been shared, accepting any
+    /// waiting invites first.
+    func loadAccountServers() async {
+        guard var session = account else { return }
+        if session.expiresAt - 60 < Date().timeIntervalSince1970 {
+            guard let fresh = try? await accountClient.refresh(session) else {
+                // The sign-in expired for good: sign in again.
+                Keychain.setSession(nil, for: accountClient.keychainKey)
+                account = nil
+                return
+            }
+            session = fresh
+            account = fresh
+            Keychain.setSession(fresh, for: accountClient.keychainKey)
+        }
+        await accountClient.acceptInvites(session)
+        do {
+            accountServers = try await accountClient.servers(session)
+            accountServersError = nil
+        } catch {
+            accountServersError = error.localizedDescription
+        }
+    }
+
+    /// Connects to one of the account's servers at whichever published address
+    /// answers (home network first, then the remote addresses).
+    func open(_ server: AccountServer) async throws {
+        guard let session = account else { return }
+        guard let url = await AddressPicker.best(server.candidates, id: server.id) else {
+            throw WrenTVError(message: "Couldn't reach \(server.name). Make sure it's running, and connected to the internet if you're away from home.")
+        }
+        let info = try await WrenTVAPI(baseURL: url).serverInfo()
+        serverURL = url
+        self.server = info
+        accessIssue = nil
+        let d = UserDefaults.standard
+        d.set(url.absoluteString, forKey: "serverURL")
+        d.set(server.id, forKey: "serverId")
+        d.set(server.candidates.map(\.absoluteString), forKey: "serverAddresses")
+        let client = AccountClient(info.supabase ?? .wrenTV)
+        if client.keychainKey != accountClient.keychainKey { Keychain.setSession(session, for: client.keychainKey) }
+        await finishSignIn(url: url, auth: TokenSource(account: client, session: session), email: session.email)
+    }
+
+    /// Leaves this server but stays signed in to the account.
+    func switchServer() {
+        eventsTask?.cancel()
+        api = nil
+        user = nil
+        limits = nil
+        libraries = []
+        accessIssue = nil
+        downloads.disconnect()
+        forgetServer()
+        Task { await loadAccountServers() }
+    }
+
+    private func forgetServer() {
+        serverURL = nil
+        server = nil
+        UserDefaults.standard.removeObject(forKey: "serverURL")
     }
 
     func connect(_ raw: String) async throws -> ServerInfo {
@@ -139,6 +250,7 @@ final class AppState {
     private func finishSignIn(url: URL, auth: TokenSource, email: String?) async {
         let api = WrenTVAPI(baseURL: url, auth: auth)
         accountEmail = email
+        if let session = await auth.accountSession { account = session }
         do {
             let me = try await api.me()
             accessIssue = nil
@@ -171,6 +283,12 @@ final class AppState {
             if let s = Keychain.session(for: client.keychainKey) { Task { await client.signOut(s) } }
             Keychain.setSession(nil, for: client.keychainKey)
         }
+        if let s = account ?? Keychain.session(for: accountClient.keychainKey) {
+            Task { [accountClient] in await accountClient.signOut(s) }
+        }
+        Keychain.setSession(nil, for: accountClient.keychainKey)
+        account = nil
+        accountServers = nil
         accountEmail = nil
         accessIssue = nil
     }
@@ -220,6 +338,8 @@ final class AppState {
     }
 
     func signOut() {
+        // Account servers are found through the account next time, not by address.
+        if server?.usesAccounts == true || account != nil { forgetServer() }
         clearCredentials()
         eventsTask?.cancel()
         api = nil
