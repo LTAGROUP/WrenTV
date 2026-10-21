@@ -383,6 +383,8 @@ func (d *DB) GenreBackdrops(ctx context.Context, libraryIDs []string, kind strin
 
 type PlayStart struct {
 	SessionID, UserID, FileID, Method, Engine, Client string
+	IP, Quality, Reasons                              string
+	StreamHeight                                      int
 	Item                                              *Item
 	ShowTitle                                         string
 	VideoCopy                                         bool
@@ -400,15 +402,18 @@ func (d *DB) StartPlay(ctx context.Context, p PlayStart) error {
 		ORDER BY last_seen_at DESC LIMIT 1`, p.UserID, it.ID, now-600).Scan(&id)
 	if err == nil {
 		_, err = d.ExecContext(ctx, `UPDATE play_history SET session_id=?, file_id=?, method=?, engine=?, video_copy=?, height=?, client=?,
-			last_seen_at=? WHERE id=?`, p.SessionID, p.FileID, p.Method, p.Engine, p.VideoCopy, p.Height, p.Client, now, id)
+			ip=?, quality=?, stream_height=?, reasons=?, last_seen_at=? WHERE id=?`, p.SessionID, p.FileID, p.Method, p.Engine, p.VideoCopy,
+			p.Height, p.Client, p.IP, p.Quality, p.StreamHeight, p.Reasons, now, id)
 		return err
 	}
 	poster := it.PosterPath
 	_, err = d.ExecContext(ctx, `INSERT INTO play_history (id, session_id, user_id, item_id, show_id, library_id, kind, title, show_title, year,
-		poster_path, file_id, method, engine, video_copy, height, client, started_at, last_seen_at, position_start, position_end, duration)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		poster_path, file_id, method, engine, video_copy, height, client, started_at, last_seen_at, position_start, position_end, duration,
+		ip, quality, stream_height, reasons)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		NewID(), p.SessionID, p.UserID, it.ID, it.ShowID, it.LibraryID, it.Kind, it.Title, p.ShowTitle, it.Year, poster,
-		p.FileID, p.Method, p.Engine, p.VideoCopy, p.Height, p.Client, now, now, p.Position, p.Position, p.Duration)
+		p.FileID, p.Method, p.Engine, p.VideoCopy, p.Height, p.Client, now, now, p.Position, p.Position, p.Duration,
+		p.IP, p.Quality, p.StreamHeight, p.Reasons)
 	return err
 }
 
@@ -475,37 +480,18 @@ type HistoryRow struct {
 	Duration      float64 `json:"duration"`
 	PlayedSeconds float64 `json:"playedSeconds"`
 	Completed     bool    `json:"completed"`
+	LibraryID     string  `json:"libraryId,omitempty"`
+	IP            string  `json:"ip,omitempty"`
+	Quality       string  `json:"quality,omitempty"`
+	StreamHeight  int     `json:"streamHeight,omitempty"`
+	Reasons       string  `json:"reasons,omitempty"`
 }
 
 const userNameExpr = `COALESCE(NULLIF(u.display_name,''), NULLIF(u.username,''), NULLIF(u.email,''), u.id)`
 
 func (d *DB) RecentHistory(ctx context.Context, since int64, userID string, limit int) ([]HistoryRow, error) {
-	q := `SELECT h.id, h.user_id, ` + userNameExpr + `, COALESCE(h.item_id,''), h.show_id, h.kind, h.title, h.show_title, h.year, h.poster_path,
-		h.method, h.engine, h.video_copy, h.height, h.client, h.started_at, h.last_seen_at, h.position_end, h.duration, h.played_seconds, h.completed
-		FROM play_history h JOIN users u ON u.id=h.user_id WHERE h.started_at >= ?`
-	args := []any{since}
-	if userID != "" {
-		q += ` AND h.user_id=?`
-		args = append(args, userID)
-	}
-	q += ` ORDER BY h.started_at DESC LIMIT ?`
-	args = append(args, limit)
-	rows, err := d.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []HistoryRow{}
-	for rows.Next() {
-		var h HistoryRow
-		if err := rows.Scan(&h.ID, &h.UserID, &h.UserName, &h.ItemID, &h.ShowID, &h.Kind, &h.Title, &h.ShowTitle, &h.Year, &h.PosterPath,
-			&h.Method, &h.Engine, &h.VideoCopy, &h.Height, &h.Client, &h.StartedAt, &h.LastSeenAt, &h.PositionEnd, &h.Duration,
-			&h.PlayedSeconds, &h.Completed); err != nil {
-			return nil, err
-		}
-		out = append(out, h)
-	}
-	return out, rows.Err()
+	rows, _, err := d.History(ctx, HistoryFilter{Since: since, UserID: userID, Limit: limit})
+	return rows, err
 }
 
 // ---------- stats ----------
@@ -514,6 +500,14 @@ type DayStat struct {
 	Date  string  `json:"date"`
 	Plays int     `json:"plays"`
 	Hours float64 `json:"hours"`
+	// Plays split by what was watched and how it was sent.
+	Movies    int `json:"movies"`
+	Episodes  int `json:"episodes"`
+	Direct    int `json:"direct"`
+	Remux     int `json:"remux"`
+	Transcode int `json:"transcode"`
+	// Peak is the most streams playing at once that day.
+	Peak int `json:"peak"`
 }
 
 type TopTitle struct {
@@ -553,6 +547,22 @@ type PlayStats struct {
 	TopMovies []TopTitle `json:"topMovies"`
 	TopShows  []TopTitle `json:"topShows"`
 	TopUsers  []TopUser  `json:"topUsers"`
+
+	MovieHours   float64 `json:"movieHours"`
+	EpisodeHours float64 `json:"episodeHours"`
+	// Most watched by how many people, not how many plays.
+	PopularMovies []TopTitle `json:"popularMovies"`
+	PopularShows  []TopTitle `json:"popularShows"`
+	// Most streams at once in the period, and when.
+	PeakStreams int        `json:"peakStreams"`
+	PeakAt      int64      `json:"peakAt,omitempty"`
+	SourceRes   []Count    `json:"sourceResolutions"`
+	StreamRes   []Count    `json:"streamResolutions"`
+	ByLibrary   []LibPlays `json:"byLibrary"`
+	// How each player and each viewer's plays were sent.
+	ClientMethods []MethodSplit `json:"clientMethods"`
+	UserMethods   []MethodSplit `json:"userMethods"`
+	Monthly       []MonthStat   `json:"monthly"`
 }
 
 // Stats aggregates play history since a time. tzOffset (seconds east of
@@ -571,28 +581,79 @@ func (d *DB) Stats(ctx context.Context, since int64, days int, tzOffset int) (*P
 		date := start.AddDate(0, 0, i).Format("2006-01-02")
 		byDay[date] = &DayStat{Date: date}
 	}
-	rows, err := d.QueryContext(ctx, `SELECT date(started_at + ?, 'unixepoch'), CAST(strftime('%H', started_at + ?, 'unixepoch') AS INTEGER),
-		CAST(strftime('%w', started_at + ?, 'unixepoch') AS INTEGER), played_seconds FROM play_history WHERE started_at >= ?`,
+	rows, err := d.QueryContext(ctx, `SELECT date(h.started_at + ?, 'unixepoch'), CAST(strftime('%H', h.started_at + ?, 'unixepoch') AS INTEGER),
+		CAST(strftime('%w', h.started_at + ?, 'unixepoch') AS INTEGER), h.played_seconds, h.kind, h.method, h.video_copy, h.height,
+		h.stream_height, h.client, `+userNameExpr+`, h.started_at, h.last_seen_at
+		FROM play_history h JOIN users u ON u.id=h.user_id WHERE h.started_at >= ?`,
 		tzOffset, tzOffset, tzOffset, since)
 	if err != nil {
 		return nil, err
 	}
+	srcRes, outRes := map[string]int{}, map[string]int{}
+	byClient, byUser := map[string]*MethodSplit{}, map[string]*MethodSplit{}
+	var spans [][2]int64
 	for rows.Next() {
-		var day string
-		var hour, wd int
+		var day, kind, method, client, user string
+		var hour, wd, height, outHeight int
+		var videoCopy bool
 		var secs float64
-		if err := rows.Scan(&day, &hour, &wd, &secs); err != nil {
+		var from, to int64
+		if err := rows.Scan(&day, &hour, &wd, &secs, &kind, &method, &videoCopy, &height, &outHeight, &client, &user, &from, &to); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		if ds := byDay[day]; ds != nil {
-			ds.Plays++
-			ds.Hours += secs / 3600
+		ds := byDay[day]
+		if ds == nil {
+			ds = &DayStat{}
+		}
+		ds.Plays++
+		ds.Hours += secs / 3600
+		switch kind {
+		case "movie":
+			ds.Movies++
+			s.MovieHours += secs / 3600
+		case "episode":
+			ds.Episodes++
+			s.EpisodeHours += secs / 3600
+		}
+		cls := methodClass(method, videoCopy)
+		switch cls {
+		case "direct":
+			ds.Direct++
+		case "remux":
+			ds.Remux++
+		default:
+			ds.Transcode++
 		}
 		s.ByHour[hour%24]++
 		s.ByWeekday[wd%7]++
+		srcRes[ResLabel(height)]++
+		if cls == "transcode" && !videoCopy {
+			outRes[ResLabel(outHeight)]++
+		} else {
+			outRes[ResLabel(height)]++
+		}
+		for _, m := range []struct {
+			to  map[string]*MethodSplit
+			key string
+		}{{byClient, cmpOr(client, "Unknown")}, {byUser, user}} {
+			x := m.to[m.key]
+			if x == nil {
+				x = &MethodSplit{Name: m.key}
+				m.to[m.key] = x
+			}
+			x.add(cls)
+		}
+		spans = append(spans, [2]int64{from, max(to, from+1)})
 	}
 	rows.Close()
+	s.SourceRes, s.StreamRes = sortedCounts(srcRes), sortedCounts(outRes)
+	s.ClientMethods, s.UserMethods = sortedSplits(byClient), sortedSplits(byUser)
+	s.PeakStreams, s.PeakAt = peakConcurrency(spans, func(at int64, n int) {
+		if ds := byDay[time.Unix(at+int64(tzOffset), 0).UTC().Format("2006-01-02")]; ds != nil && n > ds.Peak {
+			ds.Peak = n
+		}
+	})
 	for i := 0; i < days; i++ {
 		s.Daily = append(s.Daily, *byDay[start.AddDate(0, 0, i).Format("2006-01-02")])
 	}
@@ -650,6 +711,23 @@ func (d *DB) Stats(ctx context.Context, since int64, days int, tzOffset int) (*P
 		return nil, err
 	}
 
+	if s.PopularMovies, err = top(`SELECT COALESCE(h.item_id,''), h.title, h.year, COALESCE(i.poster_path, h.poster_path), COUNT(*) c,
+		COUNT(DISTINCT h.user_id) u, SUM(h.played_seconds)/3600.0 FROM play_history h LEFT JOIN items i ON i.id=h.item_id
+		WHERE h.kind='movie' AND h.started_at >= ? GROUP BY h.title, h.year ORDER BY u DESC, c DESC LIMIT 10`); err != nil {
+		return nil, err
+	}
+	if s.PopularShows, err = top(`SELECT h.show_id, h.show_title, COALESCE(sh.year,0), COALESCE(sh.poster_path, h.poster_path), COUNT(*) c,
+		COUNT(DISTINCT h.user_id) u, SUM(h.played_seconds)/3600.0 FROM play_history h LEFT JOIN items sh ON sh.id=h.show_id
+		WHERE h.kind='episode' AND h.started_at >= ? GROUP BY h.show_id ORDER BY u DESC, c DESC LIMIT 10`); err != nil {
+		return nil, err
+	}
+	if s.ByLibrary, err = d.libraryPlays(ctx, since); err != nil {
+		return nil, err
+	}
+	if s.Monthly, err = d.monthly(ctx, tzOffset); err != nil {
+		return nil, err
+	}
+
 	rows, err = d.QueryContext(ctx, `SELECT h.user_id, `+userNameExpr+`, COUNT(*), SUM(h.played_seconds)/3600.0, MAX(h.last_seen_at),
 		(SELECT CASE WHEN h2.show_title != '' THEN h2.show_title ELSE h2.title END FROM play_history h2 WHERE h2.user_id=h.user_id ORDER BY h2.last_seen_at DESC LIMIT 1)
 		FROM play_history h JOIN users u ON u.id=h.user_id WHERE h.started_at >= ? GROUP BY h.user_id ORDER BY 4 DESC LIMIT 20`, since)
@@ -669,23 +747,32 @@ func (d *DB) Stats(ctx context.Context, since int64, days int, tzOffset int) (*P
 }
 
 type LibraryStats struct {
-	Movies      int     `json:"movies"`
-	Shows       int     `json:"shows"`
-	Episodes    int     `json:"episodes"`
-	Files       int     `json:"files"`
-	Bytes       int64   `json:"bytes"`
-	Hours       float64 `json:"hours"`
-	Resolutions []Count `json:"resolutions"`
-	HDR         []Count `json:"hdr"`
-	VideoCodecs []Count `json:"videoCodecs"`
-	Containers  []Count `json:"containers"`
-	Libraries   []struct {
-		ID    string `json:"id"`
-		Name  string `json:"name"`
-		Type  string `json:"type"`
-		Items int    `json:"items"`
-		Bytes int64  `json:"bytes"`
-	} `json:"libraries"`
+	Movies      int          `json:"movies"`
+	Shows       int          `json:"shows"`
+	Episodes    int          `json:"episodes"`
+	Files       int          `json:"files"`
+	Bytes       int64        `json:"bytes"`
+	Hours       float64      `json:"hours"`
+	Resolutions []Count      `json:"resolutions"`
+	HDR         []Count      `json:"hdr"`
+	VideoCodecs []Count      `json:"videoCodecs"`
+	Containers  []Count      `json:"containers"`
+	Libraries   []LibraryRow `json:"libraries"`
+}
+
+// LibraryRow is one library's size and all-time watching.
+type LibraryRow struct {
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	Type       string  `json:"type"`
+	Items      int     `json:"items"`
+	Episodes   int     `json:"episodes,omitempty"`
+	Bytes      int64   `json:"bytes"`
+	Paths      string  `json:"-"`
+	Plays      int     `json:"plays"`
+	Hours      float64 `json:"hours"`
+	LastPlayed string  `json:"lastPlayed,omitempty"`
+	LastAt     int64   `json:"lastPlayedAt,omitempty"`
 }
 
 func (d *DB) LibraryStats(ctx context.Context) (*LibraryStats, error) {
@@ -719,24 +806,28 @@ func (d *DB) LibraryStats(ctx context.Context) (*LibraryStats, error) {
 		COUNT(*) c FROM media_files GROUP BY h ORDER BY c DESC`)
 	s.VideoCodecs = counts(`SELECT CASE WHEN video_codec != '' THEN UPPER(video_codec) ELSE 'Not analyzed' END v, COUNT(*) c FROM media_files GROUP BY v ORDER BY c DESC`)
 	s.Containers = counts(`SELECT CASE WHEN container != '' THEN UPPER(container) ELSE 'Not analyzed' END v, COUNT(*) c FROM media_files GROUP BY v ORDER BY c DESC`)
-	rows, err := d.QueryContext(ctx, `SELECT l.id, l.name, l.type, (SELECT COUNT(*) FROM items i WHERE i.library_id=l.id AND i.kind IN ('movie','show')),
-		(SELECT COALESCE(SUM(size),0) FROM media_files f WHERE f.library_id=l.id) FROM libraries l ORDER BY l.name`)
+	rows, err := d.QueryContext(ctx, `SELECT l.id, l.name, l.type, l.paths, (SELECT COUNT(*) FROM items i WHERE i.library_id=l.id AND i.kind IN ('movie','show')),
+		(SELECT COUNT(*) FROM items i WHERE i.library_id=l.id AND i.kind='episode'),
+		(SELECT COALESCE(SUM(size),0) FROM media_files f WHERE f.library_id=l.id),
+		(SELECT COUNT(*) FROM play_history h WHERE h.library_id=l.id),
+		(SELECT COALESCE(SUM(played_seconds),0)/3600.0 FROM play_history h WHERE h.library_id=l.id)
+		FROM libraries l ORDER BY l.name`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	for rows.Next() {
-		var l struct {
-			ID    string `json:"id"`
-			Name  string `json:"name"`
-			Type  string `json:"type"`
-			Items int    `json:"items"`
-			Bytes int64  `json:"bytes"`
-		}
-		if err := rows.Scan(&l.ID, &l.Name, &l.Type, &l.Items, &l.Bytes); err != nil {
+		var l LibraryRow
+		if err := rows.Scan(&l.ID, &l.Name, &l.Type, &l.Paths, &l.Items, &l.Episodes, &l.Bytes, &l.Plays, &l.Hours); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		s.Libraries = append(s.Libraries, l)
+	}
+	rows.Close()
+	for i := range s.Libraries {
+		l := &s.Libraries[i]
+		_ = d.QueryRowContext(ctx, `SELECT CASE WHEN show_title != '' THEN show_title ELSE title END, last_seen_at FROM play_history
+			WHERE library_id=? ORDER BY last_seen_at DESC LIMIT 1`, l.ID).Scan(&l.LastPlayed, &l.LastAt)
 	}
 	return s, rows.Err()
 }

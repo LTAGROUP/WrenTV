@@ -128,6 +128,11 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusTooManyRequests, err.Error())
 		return
 	}
+	// A player that retries after an admin stopped it mustn't just start again.
+	if msg, stopped := s.act().refused(p.User.ID, it.ID); stopped {
+		writeErr(w, http.StatusForbidden, msg)
+		return
+	}
 	streamed := s.isStreamLibrary(ctx, it.LibraryID)
 	// steps times each part of starting playback, for the debug log.
 	t0, last, steps := time.Now(), time.Now(), []any{}
@@ -288,7 +293,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		SubtitleIndex: preferredSubtitle(info, prefs.SubtitleLanguage),
 	}
 	resp.Versions = versionViews(files)
-	s.recordPlay(r, it, f, sess.ID, dec, info)
+	s.recordPlay(r, it, f, sess, dec, info)
 	if iv := s.startThumbs(f, src, info, sess); iv > 0 {
 		resp.Thumbs = &thumbsView{URL: "/stream/" + sess.ID + "/thumbs/", Interval: iv, Width: thumbs.Width}
 	}
@@ -339,9 +344,18 @@ func (s *Server) markersFor(ctx context.Context, f *db.MediaFile, info *media.In
 	return m
 }
 
+// handleStopSession ends a playback. A player closing calls it for its own
+// session; an admin stopping someone's stream from the dashboard passes
+// kill=1 and an optional message, which the player is told instead of the
+// stream just failing, and which keeps it from starting straight back up.
 func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
 	sid := chi.URLParam(r, "sid")
+	kill := r.URL.Query().Get("kill") == "1" && principal(r).IsAdmin()
 	if sess := s.Streams.Get(sid); sess != nil && (sess.UserID == principal(r).User.ID || principal(r).IsAdmin()) {
+		if kill {
+			s.act().kill(sid, sess.UserID, sess.ItemID, r.URL.Query().Get("message"))
+			slog.Info("stream stopped by admin", "session", sid, "by", principal(r).User.ID)
+		}
 		s.Streams.Stop(sid)
 		if s.Tracking != nil {
 			s.Tracking.Stopped(sess.UserID, sess.ItemID)
@@ -350,6 +364,10 @@ func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
 		if itemID := s.DB.PlayItemBySession(r.Context(), sid, principal(r).User.ID); itemID != "" {
 			s.Tracking.Stopped(principal(r).User.ID, itemID)
 		}
+	}
+	if ls := s.LiveTV.Get(sid); ls != nil && kill {
+		s.act().kill(sid, ls.UserID, "live:"+ls.ChannelID, r.URL.Query().Get("message"))
+		slog.Info("live stream stopped by admin", "session", sid, "by", principal(r).User.ID)
 	}
 	s.LiveTV.Stop(sid, principal(r).User.ID, principal(r).IsAdmin())
 	w.WriteHeader(http.StatusNoContent)
@@ -520,11 +538,18 @@ func versionLabel(f *db.MediaFile) string {
 }
 
 // recordPlay starts a play-history entry for stats.
-func (s *Server) recordPlay(r *http.Request, it *db.Item, f *db.MediaFile, sid string, dec media.Decision, info *media.Info) {
+func (s *Server) recordPlay(r *http.Request, it *db.Item, f *db.MediaFile, sess *stream.Session, dec media.Decision, info *media.Info) {
 	ctx := r.Context()
 	p := principal(r)
-	ps := db.PlayStart{SessionID: sid, UserID: p.User.ID, FileID: f.ID, Method: string(dec.Method), Engine: dec.Engine,
-		Client: clientName(r), Item: it, VideoCopy: dec.VideoCopy, Height: fileHeight(f), Duration: info.Duration}
+	ip := clientIP(r)
+	s.act().started(sess.ID, ip, clientName(r))
+	out := fileHeight(f)
+	if d := sess.Delivery(); d.OutHeight > 0 && !dec.VideoCopy {
+		out = d.OutHeight
+	}
+	ps := db.PlayStart{SessionID: sess.ID, UserID: p.User.ID, FileID: f.ID, Method: string(dec.Method), Engine: dec.Engine,
+		Client: clientName(r), Item: it, VideoCopy: dec.VideoCopy, Height: fileHeight(f), Duration: info.Duration,
+		IP: ip, Quality: versionLabel(f), StreamHeight: out, Reasons: strings.Join(dec.Reasons, "; ")}
 	if ws, _ := s.DB.GetWatchState(ctx, p.User.ID, it.ID); ws != nil && !ws.Watched {
 		ps.Position = ws.Position
 	}

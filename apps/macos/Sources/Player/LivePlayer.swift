@@ -23,6 +23,7 @@ final class LivePlayerModel {
     @ObservationIgnored private var layer: MPVLayer?
     @ObservationIgnored private var layerReady = false
     @ObservationIgnored private var pendingURL: URL?
+    @ObservationIgnored private var streamURL: URL?
     @ObservationIgnored private var sessionId: String?
     @ObservationIgnored private var tuneTask: Task<Void, Never>?
     @ObservationIgnored private var stopped = false
@@ -35,7 +36,7 @@ final class LivePlayerModel {
         // mpv calls these on the main queue.
         mpv.onPause = { [weak self] in self?.paused = $0 }
         mpv.onBuffering = { [weak self] in self?.buffering = $0 }
-        mpv.onEnd = { [weak self] in self?.phase = .error("The channel stopped sending video.") }
+        mpv.onEnd = { [weak self] in self?.ended(self?.streamURL, fallback: "The channel stopped sending video.") }
         mpv.onError = { [weak self] in self?.phase = .error($0) }
     }
 
@@ -80,11 +81,26 @@ final class LivePlayerModel {
             }
             sessionId = r.sessionId
             let url = api.absolute(r.url)
+            streamURL = url
             if layerReady { mpv.load(url, start: 0) } else { pendingURL = url }
             phase = .playing
             UserDefaults.standard.set(ch.id, forKey: "lastLiveChannel")
         } catch {
             if !Task.isCancelled { phase = .error(error.localizedDescription) }
+        }
+    }
+
+    /// Shows why the channel ended: when the server owner stopped it, the
+    /// stream's URL now answers 410 with their message.
+    private func ended(_ url: URL?, fallback: String) {
+        phase = .error(fallback)
+        guard let url else { return }
+        Task {
+            guard let (data, resp) = try? await URLSession.shared.data(from: url),
+                  (resp as? HTTPURLResponse)?.statusCode == 410,
+                  let why = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  why.hasPrefix("The server owner") else { return }
+            phase = .error(why)
         }
     }
 

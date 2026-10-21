@@ -212,6 +212,11 @@ struct GenreCount: Codable, Hashable, Identifiable {
     var id: String { genre }
 }
 
+/// Opens an item known only by its id, as from Stats.
+struct ItemIDRoute: Hashable {
+    var id: String
+}
+
 /// Opens a genre's titles, optionally within one library.
 struct GenreRoute: Hashable {
     var genre: String
@@ -653,6 +658,20 @@ struct DayStat: Codable, Hashable {
     var date: String
     var plays: Int
     var hours: Double
+    var movies: Int?
+    var episodes: Int?
+    var direct: Int?
+    var remux: Int?
+    var transcode: Int?
+    var peak: Int?
+}
+
+struct MonthStat: Codable, Hashable {
+    var month: String // 2026-10
+    var plays: Int
+    var movies: Int
+    var episodes: Int
+    var hours: Double
 }
 
 struct TopTitle: Codable, Hashable {
@@ -674,6 +693,24 @@ struct TopUser: Codable, Hashable {
     var lastPlayed: String
 }
 
+/// Plays by Direct Play, Direct Stream and Transcode for one player or viewer.
+struct MethodSplit: Codable, Hashable {
+    var name: String
+    var direct: Int
+    var remux: Int
+    var transcode: Int
+    var total: Int { direct + remux + transcode }
+}
+
+struct LibPlays: Codable, Hashable {
+    var id: String
+    var name: String
+    var type: String
+    var plays: Int
+    var users: Int
+    var hours: Double
+}
+
 struct PlayStats: Codable {
     var plays: Int
     var hours: Double
@@ -681,12 +718,24 @@ struct PlayStats: Codable {
     var titles: Int
     var daily: [DayStat]
     var byHour: [Int]
-    var byWeekday: [Int]
+    var byWeekday: [Int] // Sunday first
     var byMethod: [StatCount]?
     var byClient: [StatCount]?
     var topMovies: [TopTitle]?
     var topShows: [TopTitle]?
     var topUsers: [TopUser]?
+    var movieHours: Double?
+    var episodeHours: Double?
+    var popularMovies: [TopTitle]?
+    var popularShows: [TopTitle]?
+    var peakStreams: Int?
+    var peakAt: Int64?
+    var sourceResolutions: [StatCount]?
+    var streamResolutions: [StatCount]?
+    var byLibrary: [LibPlays]?
+    var clientMethods: [MethodSplit]?
+    var userMethods: [MethodSplit]?
+    var monthly: [MonthStat]?
 }
 
 struct LibraryStats: Codable {
@@ -695,7 +744,12 @@ struct LibraryStats: Codable {
         var name: String
         var type: String
         var items: Int
+        var episodes: Int?
         var bytes: Int64
+        var plays: Int?
+        var hours: Double?
+        var lastPlayed: String?
+        var lastPlayedAt: Int64?
     }
     var movies: Int
     var shows: Int
@@ -710,34 +764,233 @@ struct LibraryStats: Codable {
     var libraries: [Lib]?
 }
 
+/// A file's or a stream's tracks, as the dashboard describes them.
+struct TrackInfo: Codable, Hashable {
+    var container: String?
+    var kbps: Int?
+    var videoCodec: String?
+    var videoProfile: String?
+    var width: Int?
+    var height: Int?
+    var frameRate: Double?
+    var hdr: String?
+    var bitDepth: Int?
+    var audioCodec: String?
+    var audioChannels: Int?
+    var audioLayout: String?
+    var audioLanguage: String?
+    var audioTitle: String?
+    /// For a stream: "direct", "copy" or "transcode".
+    var video: String?
+    var audio: String?
+}
+
+/// What the server has sent a stream's player, and how its encode is going.
+struct StreamDelivery: Codable, Hashable {
+    var bytes: Int64?
+    /// The send rate over the last ten seconds.
+    var kbps: Int?
+    var bufferSeconds: Double?
+    var speed: Double?
+    var encodeDone: Bool?
+}
+
 struct NowPlaying: Codable, Hashable, Identifiable {
     var sessionId: String
+    var userId: String?
     var userName: String
     var itemId: String
+    var kind: String? // movie, episode or live
     var title: String
     var subtitle: String?
+    var year: Int?
     var posterPath: String?
     var backdropPath: String?
-    var method: String
-    var quality: String
-    var client: String
+    var library: String?
+    var state: String?
     var position: Double
+    /// When position was reported, in server time.
+    var positionAt: Double?
     var duration: Double
+    var started: Int64?
+    var client: String
+    var ip: String?
+    var local: Bool?
+    var method: String
+    var engine: String?
+    var videoCopy: Bool?
+    var reasons: [String]?
+    var quality: String
+    var source: TrackInfo?
+    var stream: TrackInfo?
+    var delivery: StreamDelivery?
+    var hw: String?
+    var hwDecode: Bool?
+    var tonemap: Bool?
+    var stripDolbyVision: Bool?
+    var channelLogo: String?
     var id: String { sessionId }
+
+    var isLive: Bool { kind == "live" }
+    var isPaused: Bool { state == "paused" }
+    /// Transcoding the audio while the video is copied.
+    var audioOnly: Bool { method == "transcode" && videoCopy == true }
+    /// Where playback is now, moved on from the last report.
+    func position(at serverNow: Double) -> Double {
+        var p = position + (isPaused ? 0 : max(0, serverNow - (positionAt ?? serverNow)))
+        if duration > 0 { p = min(p, duration) }
+        return p
+    }
+}
+
+struct ActivityTotals: Codable, Hashable {
+    var streams: Int
+    var direct: Int
+    var remux: Int
+    var transcode: Int
+    var kbps: Int
+    var lanKbps: Int
+    var wanKbps: Int
+}
+
+struct SystemSample: Codable, Hashable {
+    var t: Int64
+    var cpu: Double
+    var mem: Int64
+    var procCpu: Double
+    var procMem: Int64
+}
+
+struct SystemInfo: Codable, Hashable {
+    var os: String
+    var arch: String
+    var cpus: Int
+    var memTotal: Int64
+    /// False when the server can only see its own container.
+    var host: Bool?
+    /// "Container" or "Wren TV": what the second series measures.
+    var procLabel: String?
+    var procCpuAvailable: Bool?
+    var memLimit: Int64?
+    var cpuLimit: Double?
+}
+
+struct ActivityResponse: Codable {
+    var serverTime: Double
+    var sessions: [NowPlaying]
+    var totals: ActivityTotals
+    var system: SystemSample?
+    var systemInfo: SystemInfo?
+}
+
+struct HardwareInfo: Codable, Hashable {
+    var kind: String
+    var h264Encoder: String?
+    var hwDecode: Bool?
+    var tonemap: String?
+    var dovi: Bool?
+}
+
+struct DiskInfo: Codable, Hashable {
+    var path: String
+    var total: Int64
+    var free: Int64
+    var label: String
+}
+
+struct SystemResponse: Codable {
+    var version: String?
+    var hardware: HardwareInfo?
+    var disks: [DiskInfo]?
+    var samples: [SystemSample]?
+    var info: SystemInfo?
+    var uptime: Int64?
 }
 
 struct HistoryRow: Codable, Hashable, Identifiable {
     var id: String
+    var userId: String?
     var userName: String
     var itemId: String?
     var kind: String
     var title: String
     var showTitle: String?
+    var year: Int?
+    var posterPath: String?
     var method: String
+    var videoCopy: Bool?
+    var height: Int?
     var client: String
     var startedAt: Int64
+    var lastSeenAt: Int64?
+    var position: Double?
+    var duration: Double?
     var playedSeconds: Double
     var completed: Bool
+    var ip: String?
+    var quality: String?
+    var streamHeight: Int?
+    var reasons: String?
+}
+
+struct HistoryPage: Codable {
+    var total: Int
+    var rows: [HistoryRow]
+}
+
+struct Viewer: Codable, Hashable, Identifiable {
+    var userId: String
+    var name: String
+    var admin: Bool
+    var joined: Int64
+    var plays: Int
+    var hours: Double
+    var lastSeen: Int64?
+    var lastPlayed: String?
+    var lastClient: String?
+    var lastIp: String?
+    var id: String { userId }
+}
+
+struct ViewerDetail: Codable {
+    struct Totals: Codable, Hashable {
+        var label: String
+        var plays: Int
+        var hours: Double
+    }
+    struct UsedFrom: Codable, Hashable {
+        var name: String
+        var plays: Int
+        var hours: Double
+        var lastSeen: Int64
+        var detail: String?
+    }
+    var userId: String
+    var name: String
+    var admin: Bool
+    var joined: Int64
+    var plays: Int
+    var hours: Double
+    var lastSeen: Int64?
+    var totals: [Totals]
+    var players: [UsedFrom]
+    var addresses: [UsedFrom]
+    var topTitles: [TopTitle]
+    var methods: MethodSplit
+    var recent: [HistoryRow]
+}
+
+struct RecentlyAdded: Codable, Hashable {
+    var itemId: String
+    var kind: String
+    var title: String
+    var showId: String?
+    var showTitle: String?
+    var season: Int?
+    var episode: Int?
+    var year: Int?
+    var posterPath: String?
+    var addedAt: Int64
 }
 
 struct StatsResponse: Codable {
@@ -746,6 +999,7 @@ struct StatsResponse: Codable {
     var library: LibraryStats
     var nowPlaying: [NowPlaying]?
     var recent: [HistoryRow]?
+    var recentlyAdded: [RecentlyAdded]?
 }
 
 // MARK: Live TV

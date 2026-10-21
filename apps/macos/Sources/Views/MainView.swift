@@ -81,6 +81,7 @@ struct MainView: View {
                 content
                     .searchBar($search)
                     .navigationDestination(for: Item.self) { ItemDetailView(itemId: $0.id, seed: $0).searchBar($search) }
+                    .navigationDestination(for: ItemIDRoute.self) { ItemDetailView(itemId: $0.id).searchBar($search) }
                     .navigationDestination(for: WrenCollection.self) { CollectionDetailView(seed: $0).searchBar($search) }
                     .navigationDestination(for: GenreRoute.self) { GenreItemsView(route: $0).searchBar($search) }
                     .navigationDestination(for: StreamTitleRoute.self) { StreamTitleView(route: $0).searchBar($search) }

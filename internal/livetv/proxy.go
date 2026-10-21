@@ -32,6 +32,7 @@ type Session struct {
 	ChannelID string
 	// Kind is "hls" or "ts".
 	Kind      string
+	Started   time.Time
 	upstream  string
 	userAgent string
 	key       []byte   // signs the upstream URLs in rewritten playlists
@@ -106,7 +107,7 @@ func (s *Service) Play(ctx context.Context, userID, channelID string, wantHLS bo
 	}
 	sctx, cancel := context.WithCancel(context.Background())
 	sess := &Session{
-		ID: randomHex(16), UserID: userID, ChannelID: channelID, Kind: kind,
+		ID: randomHex(16), UserID: userID, ChannelID: channelID, Kind: kind, Started: time.Now(),
 		upstream: c.URL, userAgent: c.UserAgent, key: []byte(randomHex(16)), ctx: sctx, cancel: cancel,
 	}
 	if kind == "ts" && wantHLS && s.FFmpeg != "" {
@@ -187,6 +188,21 @@ func (s *Service) Stop(id, userID string, admin bool) bool {
 	ss.stopLocked(id)
 	return true
 }
+
+// Sessions lists who is watching what, for the dashboard.
+func (s *Service) Sessions() []*Session {
+	ss := &s.sessions
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	out := make([]*Session, 0, len(ss.byID))
+	for _, x := range ss.byID {
+		out = append(out, x)
+	}
+	return out
+}
+
+// Remuxed says whether a TS channel is being repackaged as HLS by ffmpeg.
+func (x *Session) Remuxed() bool { return x.remux != nil }
 
 // Playing counts sessions, for the dashboard.
 func (s *Service) Playing() int {

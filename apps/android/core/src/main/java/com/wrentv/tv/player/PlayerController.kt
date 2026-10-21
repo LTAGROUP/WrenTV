@@ -212,7 +212,7 @@ class PlayerController(
         scope.launch {
             while (isActive) {
                 delay(10_000)
-                if (phase == Phase.Playing && position > 5 && !paused) report(position)
+                if (phase == Phase.Playing && position > 5) report(position)
             }
         }
     }
@@ -346,7 +346,21 @@ class PlayerController(
         val id = itemId
         val dur = duration
         if (isOffline) downloads.savePosition(id, pos, dur)
-        api?.let { a -> appScope.launch { runCatching { a.reportProgress(id, pos, dur) } } }
+        val held = paused
+        api?.let { a ->
+            appScope.launch {
+                val reason = a.reportProgress(id, pos, dur, held) ?: return@launch
+                scope.launch { stoppedByServer(reason) }
+            }
+        }
+    }
+
+    /** The server owner ended this stream from the dashboard: stop and say why. */
+    private fun stoppedByServer(message: String) {
+        if (stopped || phase != Phase.Playing) return
+        sessionId = null
+        player.stop()
+        phase = Phase.Failed(message)
     }
 
     // Controls

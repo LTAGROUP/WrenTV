@@ -178,9 +178,9 @@ private struct HoverLift: ViewModifier {
             .overlay(RoundedRectangle(cornerRadius: cornerRadius).stroke(.white.opacity(hover ? 0.35 : 0), lineWidth: 1))
             .brightness(hover ? 0.04 : 0)
             .scaleEffect(hover ? 1.04 : 1)
-            .shadow(color: .black.opacity(hover ? 0.55 : 0.25), radius: hover ? 16 : 4, y: hover ? 10 : 2)
+            .shadow(color: .black.opacity(hover ? 0.55 : 0), radius: hover ? 16 : 0, y: hover ? 10 : 0) // none at rest: a blur per card costs while scrolling
             .animation(.spring(response: 0.3, dampingFraction: 0.75), value: hover)
-            .onHover { hover = $0 }
+            .cardHover { hover = $0 }
     }
 }
 

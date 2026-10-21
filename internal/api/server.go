@@ -29,6 +29,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 	"github.com/LTAGROUP/wrentv/internal/stream"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
+	"github.com/LTAGROUP/wrentv/internal/sysstat"
 	"github.com/LTAGROUP/wrentv/internal/thumbs"
 	"github.com/LTAGROUP/wrentv/internal/tracking"
 	"github.com/LTAGROUP/wrentv/internal/web"
@@ -54,7 +55,13 @@ type Server struct {
 	Thumbs    *thumbs.Manager // seek thumbnails
 	// thumbJobs starts a streamed file's thumbnails on first request, by session.
 	thumbJobs sync.Map
-	Direct    *direct.Manager // automatic HTTPS addresses (supabase mode)
+	Direct    *direct.Manager  // automatic HTTPS addresses (supabase mode)
+	Sys       *sysstat.Sampler // CPU and memory for the stats dashboard
+
+	// activity keeps each playback's latest progress and the streams an
+	// admin stopped.
+	activity     *activity
+	activityOnce sync.Once
 
 	Auth  auth.Provider
 	Local *auth.Local    // set in local mode
@@ -99,7 +106,11 @@ func (s *Server) Router() http.Handler {
 	r.HandleFunc("/stream/{sid}/*", func(w http.ResponseWriter, r *http.Request) {
 		sess := s.Streams.Get(chi.URLParam(r, "sid"))
 		if sess == nil {
-			http.Error(w, "session expired", http.StatusGone)
+			msg := "session expired"
+			if k, ok := s.act().killed(chi.URLParam(r, "sid")); ok {
+				msg = k
+			}
+			http.Error(w, msg, http.StatusGone)
 			return
 		}
 		sess.ServeHTTP(w, r, chi.URLParam(r, "*"))
@@ -107,7 +118,11 @@ func (s *Server) Router() http.Handler {
 	r.HandleFunc("/live/{sid}/*", func(w http.ResponseWriter, r *http.Request) {
 		sess := s.LiveTV.Get(chi.URLParam(r, "sid"))
 		if sess == nil {
-			http.Error(w, "session expired", http.StatusGone)
+			msg := "session expired"
+			if k, ok := s.act().killed(chi.URLParam(r, "sid")); ok {
+				msg = k
+			}
+			http.Error(w, msg, http.StatusGone)
 			return
 		}
 		sess.ServeHTTP(w, r, chi.URLParam(r, "*"))
@@ -210,6 +225,10 @@ func (s *Server) Router() http.Handler {
 			r.Post("/api/admin/livetv/refresh", s.handleLiveTVRefresh)
 			r.Post("/api/admin/livetv/check", s.handleLiveTVCheck)
 			r.Get("/api/admin/history", s.handleHistory)
+			r.Get("/api/admin/activity", s.handleActivity)
+			r.Get("/api/admin/system", s.handleSystem)
+			r.Get("/api/admin/viewers", s.handleViewers)
+			r.Get("/api/admin/viewers/{id}", s.handleViewer)
 			r.Post("/api/hubs", s.handleCreateHub)
 			r.Patch("/api/hubs/{id}", s.handleUpdateHub)
 			r.Delete("/api/hubs/{id}", s.handleDeleteHub)

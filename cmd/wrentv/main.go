@@ -40,6 +40,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/simkl"
 	"github.com/LTAGROUP/wrentv/internal/stream"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
+	"github.com/LTAGROUP/wrentv/internal/sysstat"
 	"github.com/LTAGROUP/wrentv/internal/thumbs"
 	"github.com/LTAGROUP/wrentv/internal/tracking"
 	"github.com/LTAGROUP/wrentv/internal/webhook"
@@ -257,6 +258,7 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 		OMDb: omdb.New(func() string { return cfg.Metadata.OMDbAPIKey }, d), Markers: analyzer,
 		Streaming: streamer, LiveTV: live, Hub: hub, Hooks: hooks, Tracking: tracker, Images: images.New(filepath.Join(dataDir, "images")),
 		Thumbs: thumbs.New(filepath.Join(cfg.DataDir, "cache", "thumbs"), cfg.Transcode.FFmpegPath),
+		Sys:    sysstat.Start(),
 	}
 	switch cfg.Auth.Mode {
 	case "supabase":

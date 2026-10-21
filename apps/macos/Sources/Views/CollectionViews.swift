@@ -281,7 +281,7 @@ private struct GenreTile: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(hover ? Color.wrenEmber : .white.opacity(0.08), lineWidth: hover ? 2 : 1))
-        .onHover { hover = $0 }
+        .cardHover { hover = $0 }
         .animation(.easeOut(duration: 0.15), value: hover)
     }
 

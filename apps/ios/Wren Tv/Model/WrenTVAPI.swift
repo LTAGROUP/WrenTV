@@ -60,7 +60,8 @@ struct WrenTVAPI: Sendable {
         let (data, resp) = try await Self.session.data(for: req)
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         if status >= 400 {
-            let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+            struct Body: Decodable { var error: String? } // not [String: String]: a stopped stream's also says "stopped": true
+            let msg = (try? JSONDecoder().decode(Body.self, from: data))?.error
             throw WrenTVError(message: msg ?? HTTPURLResponse.localizedString(forStatusCode: status), status: status)
         }
         return (data, status)
@@ -145,6 +146,22 @@ struct WrenTVAPI: Sendable {
         let tz = TimeZone.current.secondsFromGMT()
         return try await get("/api/admin/stats", query: [.init(name: "days", value: String(days)), .init(name: "tz", value: String(tz))])
     }
+    /// What's playing now, the bandwidth it takes and the machine's load.
+    func activity() async throws -> ActivityResponse { try await get("/api/admin/activity") }
+    /// CPU and memory over the last hour, six hours or day ("1h", "6h", "24h").
+    func system(range: String) async throws -> SystemResponse {
+        try await get("/api/admin/system", query: [.init(name: "range", value: range)])
+    }
+    func history(days: Int, user: String? = nil, kind: String? = nil, method: String? = nil, search: String? = nil,
+                 offset: Int = 0, limit: Int = 50) async throws -> HistoryPage {
+        var q: [URLQueryItem] = [.init(name: "days", value: String(days)), .init(name: "offset", value: String(offset)), .init(name: "limit", value: String(limit))]
+        for (k, v) in [("user", user), ("kind", kind), ("method", method), ("q", search)] {
+            if let v, !v.isEmpty { q.append(.init(name: k, value: v)) }
+        }
+        return try await get("/api/admin/history", query: q)
+    }
+    func viewers() async throws -> [Viewer] { try await get("/api/admin/viewers") }
+    func viewer(_ id: String) async throws -> ViewerDetail { try await get("/api/admin/viewers/\(id)") }
 
     func item(_ id: String) async throws -> ItemDetail { try await get("/api/items/\(id)") }
     func extras(_ id: String) async throws -> Extras { try await get("/api/items/\(id)/extras") }
@@ -165,9 +182,17 @@ struct WrenTVAPI: Sendable {
 
     func versions(_ id: String) async throws -> VersionsResponse { try await get("/api/items/\(id)/versions") }
 
-    func reportProgress(_ id: String, position: Double, duration: Double) async {
-        struct P: Encodable { var position: Double; var duration: Double }
-        _ = try? await send("POST", "/api/items/\(id)/progress", body: P(position: position, duration: duration))
+    /// Saves how far playback got. Returns the server owner's message when
+    /// they've stopped this stream from the dashboard.
+    @discardableResult
+    func reportProgress(_ id: String, position: Double, duration: Double, paused: Bool? = nil) async -> String? {
+        struct P: Encodable { var position: Double; var duration: Double; var state: String? }
+        do {
+            try await send("POST", "/api/items/\(id)/progress", body: P(position: position, duration: duration, state: paused.map { $0 ? "paused" : "playing" }))
+        } catch let e as WrenTVError where e.status == 410 {
+            return e.message
+        } catch {}
+        return nil
     }
 
     func setWatched(_ id: String, _ watched: Bool) async throws {
@@ -205,6 +230,10 @@ struct WrenTVAPI: Sendable {
 
     func stopSession(_ sid: String) async {
         _ = try? await send("DELETE", "/api/sessions/\(sid)")
+    }
+    /// Ends someone's stream from the dashboard: their player stops and shows the message.
+    func killSession(_ sid: String, message: String) async throws {
+        try await send("DELETE", "/api/sessions/\(sid)", query: [.init(name: "kill", value: "1"), .init(name: "message", value: message)])
     }
 
     // Streaming

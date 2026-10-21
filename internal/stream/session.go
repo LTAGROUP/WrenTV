@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/LTAGROUP/wrentv/internal/media"
@@ -73,6 +74,23 @@ type Session struct {
 
 	remux *remuxer
 	tx    *transcoder
+
+	// Delivery stats: bytes sent, per-second buckets for the current rate,
+	// the last segment asked for, and the encode's progress for its speed.
+	bytes    atomic.Int64
+	rateMu   sync.Mutex
+	buckets  [12]rateBucket
+	lastSeg  atomic.Int64
+	txSample struct {
+		at  time.Time
+		end float64
+	}
+	txSpeed float64
+}
+
+type rateBucket struct {
+	sec   int64
+	bytes int64
 }
 
 type segment struct {
@@ -213,6 +231,14 @@ func (s *Session) close() {
 //	subs/N.m3u8, subs/N/K.vtt the same as an HLS subtitle rendition
 func (s *Session) ServeHTTP(w http.ResponseWriter, r *http.Request, file string) {
 	s.touch()
+	// Stopping the session cuts transfers already under way, not just new
+	// ones: a direct-play client holds one long range request.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	stopWatch := context.AfterFunc(s.ctx, cancel)
+	defer stopWatch()
+	r = r.WithContext(ctx)
+	w = &countingWriter{ResponseWriter: w, s: s}
 	track := ""
 	if s.remux != nil {
 		if t, rest, ok := strings.Cut(file, "/"); ok && (t == "v" || t == "a") {
@@ -233,6 +259,9 @@ func (s *Session) ServeHTTP(w http.ResponseWriter, r *http.Request, file string)
 		if err != nil || n < 0 || n >= len(s.plan) {
 			http.NotFound(w, r)
 			return
+		}
+		if track != "a" {
+			s.lastSeg.Store(int64(n))
 		}
 		s.serveSegment(w, r, track, n)
 	case strings.HasPrefix(file, "subs/") && strings.HasSuffix(file, ".m3u8"):
@@ -310,6 +339,123 @@ func (s *Session) serveSegment(w http.ResponseWriter, r *http.Request, track str
 	}
 	w.Header().Set("Content-Type", "video/iso.segment")
 	http.ServeFile(w, r, path)
+}
+
+var errStopped = errors.New("playback stopped")
+
+// countingWriter tallies what a session sends and refuses to write once the
+// session has been stopped, which ends the response.
+type countingWriter struct {
+	http.ResponseWriter
+	s *Session
+}
+
+func (c *countingWriter) Write(b []byte) (int, error) {
+	if c.s.ctx.Err() != nil {
+		return 0, errStopped
+	}
+	n, err := c.ResponseWriter.Write(b)
+	c.s.addBytes(int64(n))
+	return n, err
+}
+
+func (c *countingWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
+
+func (s *Session) addBytes(n int64) {
+	s.bytes.Add(n)
+	now := time.Now().Unix()
+	s.rateMu.Lock()
+	b := &s.buckets[now%int64(len(s.buckets))]
+	if b.sec != now {
+		b.sec, b.bytes = now, 0
+	}
+	b.bytes += n
+	s.rateMu.Unlock()
+}
+
+// Delivery is how a session is being sent right now.
+type Delivery struct {
+	Bytes int64 `json:"bytes"`
+	// Kbps is the send rate over the last ten seconds.
+	Kbps int `json:"kbps"`
+	// For transcodes: how far the encode is ahead of the player, its speed
+	// (2 = twice real time) and whether it has reached the end.
+	BufferSeconds float64 `json:"bufferSeconds,omitempty"`
+	Speed         float64 `json:"speed,omitempty"`
+	Encoding      bool    `json:"encoding,omitempty"`
+	EncodeDone    bool    `json:"encodeDone,omitempty"`
+	// Output is what a transcode produces.
+	OutWidth    int    `json:"outWidth,omitempty"`
+	OutHeight   int    `json:"outHeight,omitempty"`
+	OutKbps     int    `json:"outKbps,omitempty"`
+	OutCodec    string `json:"outCodec,omitempty"`
+	HWKind      string `json:"hw,omitempty"`
+	HWDecode    bool   `json:"hwDecode,omitempty"`
+	Tonemap     bool   `json:"tonemap,omitempty"`
+	IdleSeconds int    `json:"idleSeconds"`
+}
+
+// Delivery reports the session's send rate and, for a transcode, its encode.
+func (s *Session) Delivery() Delivery {
+	now := time.Now().Unix()
+	var sum int64
+	s.rateMu.Lock()
+	for _, b := range s.buckets {
+		// The current second is still filling; average the ten before it.
+		if b.sec < now && b.sec >= now-10 {
+			sum += b.bytes
+		}
+	}
+	s.rateMu.Unlock()
+	d := Delivery{Bytes: s.bytes.Load(), Kbps: int(sum * 8 / 10 / 1000), IdleSeconds: int(s.Idle().Seconds())}
+	if s.tx == nil {
+		return d
+	}
+	hw := s.m.cfg.HW
+	d.OutKbps, d.OutCodec, d.HWKind, d.HWDecode = s.KbpsTarget, "h264", hw.Kind, hw.Decode
+	if v := s.Info.PrimaryVideo(); v != nil {
+		d.OutWidth, d.OutHeight = v.Width, v.Height
+		if s.MaxWidth > 0 && v.Width > s.MaxWidth {
+			d.OutWidth, d.OutHeight = s.MaxWidth, v.Height*s.MaxWidth/v.Width
+		}
+		d.Tonemap = v.HDR != ""
+	}
+	s.tx.mu.Lock()
+	running := s.tx.cmd != nil
+	hi := s.tx.produced()
+	var finished bool
+	if s.tx.done != nil {
+		select {
+		case <-s.tx.done:
+			finished = true
+		default:
+		}
+	}
+	s.tx.mu.Unlock()
+	d.Encoding = running && !finished
+	if hi < 0 || hi >= len(s.plan) {
+		return d
+	}
+	end := s.plan[hi].end
+	d.EncodeDone = hi == len(s.plan)-1
+	if seg := int(s.lastSeg.Load()); seg >= 0 && seg < len(s.plan) {
+		d.BufferSeconds = max(0, end-s.plan[seg].start)
+	}
+	s.rateMu.Lock()
+	t := time.Now()
+	if prev := s.txSample; !prev.at.IsZero() && t.Sub(prev.at) >= 2*time.Second {
+		if dt := t.Sub(prev.at).Seconds(); end >= prev.end {
+			s.txSpeed = (end - prev.end) / dt
+		}
+		s.txSample.at, s.txSample.end = t, end
+	} else if prev.at.IsZero() {
+		s.txSample.at, s.txSample.end = t, end
+	}
+	if d.Encoding {
+		d.Speed = s.txSpeed
+	}
+	s.rateMu.Unlock()
+	return d
 }
 
 func randID() string {

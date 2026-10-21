@@ -155,9 +155,13 @@ public sealed class WrenTVApi
 
     public Task<VersionsResponse> Versions(string id) => Get<VersionsResponse>($"/api/items/{id}/versions");
 
-    public async Task ReportProgress(string id, double position, double duration)
+    /// Null, or why the server owner stopped this stream.
+    public async Task<string?> ReportProgress(string id, double position, double duration, bool? paused = null)
     {
-        try { await Send(HttpMethod.Post, $"/api/items/{id}/progress", body: new { position, duration }); } catch { }
+        try { await Send(HttpMethod.Post, $"/api/items/{id}/progress", body: new { position, duration, state = paused switch { true => "paused", false => "playing", null => null } }); }
+        catch (WrenTVException e) when (e.Status == 410) { return e.Message; }
+        catch { }
+        return null;
     }
 
     public Task SetWatched(string id, bool watched) => Send(HttpMethod.Post, $"/api/items/{id}/watched", body: new { watched });

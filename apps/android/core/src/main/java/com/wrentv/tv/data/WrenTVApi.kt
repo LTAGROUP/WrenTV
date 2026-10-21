@@ -177,6 +177,15 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
         return get("/api/admin/stats", mapOf("days" to days.toString(), "tz" to tz.toString()))
     }
 
+    /** What's playing now, the bandwidth it takes and the machine's load. */
+    suspend fun activity(): ActivityResponse = get("/api/admin/activity")
+    /** CPU and memory over the last hour, six hours or day ("1h", "6h", "24h"). */
+    suspend fun system(range: String): SystemResponse = get("/api/admin/system", mapOf("range" to range))
+    /** Ends someone's stream from the dashboard: their player stops and shows the message. */
+    suspend fun killSession(sid: String, message: String) {
+        send("DELETE", "/api/sessions/$sid", mapOf("kill" to "1", "message" to message))
+    }
+
     suspend fun item(id: String): ItemDetail = get("/api/items/$id")
     suspend fun extras(id: String): Extras = get("/api/items/$id/extras")
 
@@ -224,10 +233,16 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
         json.decodeFromString(serializer<PlayResponse>(), send("POST", "/api/items/$id/play", body = enc(req), http = Http.slow))
     suspend fun versions(id: String): VersionsResponse = get("/api/items/$id/versions")
 
-    suspend fun reportProgress(id: String, position: Double, duration: Double) {
-        runCatching {
-            send("POST", "/api/items/$id/progress", body = buildJsonObject { put("position", position); put("duration", duration) })
-        }
+    /** Null, or why the server owner stopped this stream. */
+    suspend fun reportProgress(id: String, position: Double, duration: Double, paused: Boolean = false): String? = try {
+        send("POST", "/api/items/$id/progress", body = buildJsonObject {
+            put("position", position); put("duration", duration); put("state", if (paused) "paused" else "playing")
+        })
+        null
+    } catch (e: WrenTVException) {
+        if (e.status == 410) e.message else null
+    } catch (e: Exception) {
+        null
     }
 
     suspend fun setWatched(id: String, watched: Boolean) {

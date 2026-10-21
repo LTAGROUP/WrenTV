@@ -16,7 +16,7 @@ struct DiscoverHomeView: View {
 
     private var discover: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
+            LazyVStack(alignment: .leading, spacing: 30) {
                 if let home {
                     if !home.hero.isEmpty { DiscoverHero(titles: home.hero, play: play) } else { Color.clear.frame(height: 40) }
                     if !home.continueWatching.isEmpty {
@@ -155,7 +155,7 @@ private struct DiscoverHero: View {
             .padding(.horizontal, 28)
             .padding(.bottom, 6)
         }
-        .onHover { hovering = $0 }
+        .cardHover { hovering = $0 }
         .alert(notice ?? "", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) { Button("OK") {} }
         .task(id: titles.map(\.id)) {
             while !Task.isCancelled {

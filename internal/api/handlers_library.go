@@ -495,12 +495,21 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Position float64 `json:"position"`
 		Duration float64 `json:"duration"`
+		// State is "playing", "paused" or "buffering"; players that don't
+		// say are taken to be paused once their reports stop.
+		State string `json:"state"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
 	u := principal(r).User
+	if msg, stopped := s.act().stoppedFor(u.ID, it.ID); stopped {
+		// An admin stopped this playback: the player ends it and says why.
+		writeJSON(w, http.StatusGone, map[string]any{"error": msg, "stopped": true})
+		return
+	}
+	s.act().progress(u.ID, it.ID, req.Position, req.Duration, req.State)
 	prefs, _ := s.DB.GetPrefs(r.Context(), u.ID)
 	at := prefs.WatchedAt()
 	justWatched, err := s.DB.SetProgress(r.Context(), u.ID, it.ID, req.Position, req.Duration, at)

@@ -71,15 +71,16 @@ final class LivePlayerModel {
                 phase = .error("This channel sends a stream this device can't play, and the server can't convert it. Update the server to watch it here.")
                 return
             }
-            let item = AVPlayerItem(url: api.absolute(r.url))
+            let url = api.absolute(r.url)
+            let item = AVPlayerItem(url: url)
             item.preferredForwardBufferDuration = 6
             item.publisher(for: \.status).receive(on: DispatchQueue.main).sink { [weak self] s in
-                if s == .failed { self?.phase = .error(item.error?.localizedDescription ?? "The channel didn't play.") }
+                if s == .failed { self?.ended(url, fallback: item.error?.localizedDescription ?? "The channel didn't play.") }
             }.store(in: &itemSubs)
             NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification, object: item)
                 .merge(with: NotificationCenter.default.publisher(for: AVPlayerItem.failedToPlayToEndTimeNotification, object: item))
                 .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in self?.phase = .error("The channel stopped sending video.") }
+                .sink { [weak self] _ in self?.ended(url, fallback: "The channel stopped sending video.") }
                 .store(in: &itemSubs)
             player.replaceCurrentItem(with: item)
             player.play()
@@ -88,6 +89,20 @@ final class LivePlayerModel {
             updateNowPlaying()
         } catch {
             if !Task.isCancelled { phase = .error(error.localizedDescription) }
+        }
+    }
+
+    /// Shows why the channel ended: when the server owner stopped it, the
+    /// stream's URL now answers 410 with their message.
+    private func ended(_ url: URL?, fallback: String) {
+        phase = .error(fallback)
+        guard let url else { return }
+        Task {
+            guard let (data, resp) = try? await URLSession.shared.data(from: url),
+                  (resp as? HTTPURLResponse)?.statusCode == 410,
+                  let why = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  why.hasPrefix("The server owner") else { return }
+            phase = .error(why)
         }
     }
 

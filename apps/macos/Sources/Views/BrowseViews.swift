@@ -19,7 +19,7 @@ struct LibraryHomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
+            LazyVStack(alignment: .leading, spacing: 30) {
                 if let home {
                     let picks = featured(home)
                     if !picks.isEmpty { FeatureHero(items: picks, play: play) } else { Color.clear.frame(height: 40) }
@@ -466,7 +466,7 @@ private struct FeatureHero: View {
             .padding(.horizontal, 28)
             .padding(.bottom, 6)
         }
-        .onHover { hovering = $0 }
+        .cardHover { hovering = $0 }
         .task(id: items.map(\.id)) {
             // Take turns every few seconds, pausing while the pointer is over it.
             while !Task.isCancelled {

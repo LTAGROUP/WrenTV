@@ -1,6 +1,6 @@
 // Full-screen web player: <video> + hls.js (native HLS on Safari), with its
 // own controls for chapters, skip intro/credits and up next.
-import { api, browserCaps, img } from './api.js';
+import { api, browserCaps, img, ApiError } from './api.js';
 import { esc, $, $$, el, toast, fmtDuration } from './ui.js';
 
 const qualities = [
@@ -249,7 +249,10 @@ class Player {
       hls.on(window.Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
         if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-        else this.setWait('Playback failed: ' + (data.details || data.type), true);
+        else {
+          this.setWait('Playback failed: ' + (data.details || data.type), true);
+          if (data.response?.code === 410) this.report(true); // stopped: the progress answer says why
+        }
       });
       hls.loadSource(url);
       hls.attachMedia(v);
@@ -492,6 +495,7 @@ class Player {
     const err = this.video.error;
     if (!err || this.hls) return;
     this.setWait(`This browser can't play this stream (${err.message || 'error ' + err.code}). Try a lower quality.`, true);
+    this.report(true);
   }
 
   report(force) {
@@ -500,7 +504,19 @@ class Player {
     const now = Date.now();
     if (!force && now - this.lastReport < 10000) return;
     this.lastReport = now;
-    api(`/api/items/${this.itemId}/progress`, { method: 'POST', body: { position: v.currentTime, duration: this.dur() } }).catch(() => {});
+    api(`/api/items/${this.itemId}/progress`, { method: 'POST', body: { position: v.currentTime, duration: this.dur(), state: v.paused ? 'paused' : 'playing' } })
+      .catch((e) => { if (e instanceof ApiError && e.status === 410) this.stoppedByServer(e.message); });
+  }
+
+  // stoppedByServer ends playback the server owner stopped, saying why.
+  stoppedByServer(msg) {
+    this.sid = null;
+    this.hls?.destroy();
+    this.hls = null;
+    this.video.pause();
+    this.video.removeAttribute('src');
+    this.video.load();
+    this.setWait(msg || 'The server owner stopped this stream.', true);
   }
 
   // ---------- up next

@@ -433,7 +433,7 @@ struct EpisodeRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { hover = $0 }
+        .cardHover { hover = $0 }
     }
 }
 

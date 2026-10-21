@@ -598,7 +598,18 @@ data class ServerEvent(val type: String = "", val libraryId: String? = null, val
 data class StatCount(val name: String, val count: Int)
 
 @Serializable
-data class DayStat(val date: String, val plays: Int, val hours: Double)
+data class DayStat(
+    val date: String,
+    val plays: Int,
+    val hours: Double,
+    val movies: Int? = null,
+    val episodes: Int? = null,
+    val direct: Int? = null,
+    val remux: Int? = null,
+    val transcode: Int? = null,
+    /** The most streams at once that day. */
+    val peak: Int? = null,
+)
 
 @Serializable
 data class TopTitle(
@@ -651,20 +662,132 @@ data class LibraryStats(
     val containers: List<StatCount>? = null,
 )
 
+/** A file's tracks, or what a stream sends of them. */
+@Serializable
+data class TrackInfo(
+    val container: String? = null,
+    val kbps: Int? = null,
+    val videoCodec: String? = null,
+    val videoProfile: String? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    val frameRate: Double? = null,
+    val hdr: String? = null,
+    val audioCodec: String? = null,
+    val audioChannels: Int? = null,
+    val audioLayout: String? = null,
+    val audioLanguage: String? = null,
+    /** For a stream: "direct", "copy" or "transcode". */
+    val video: String? = null,
+    val audio: String? = null,
+)
+
+/** What the server has sent a stream's player, and how its encode is going. */
+@Serializable
+data class StreamDelivery(
+    val bytes: Long? = null,
+    /** The send rate over the last ten seconds. */
+    val kbps: Int? = null,
+    val bufferSeconds: Double? = null,
+    val speed: Double? = null,
+    val encodeDone: Boolean? = null,
+)
+
 @Serializable
 data class NowPlaying(
     val sessionId: String,
     val userName: String = "",
     val itemId: String = "",
+    /** movie, episode or live */
+    val kind: String? = null,
     val title: String = "",
     val subtitle: String? = null,
+    val year: Int? = null,
     val posterPath: String? = null,
     val backdropPath: String? = null,
+    val library: String? = null,
+    val state: String? = null,
     val method: String = "",
+    val engine: String? = null,
+    val videoCopy: Boolean? = null,
+    val reasons: List<String>? = null,
     val quality: String = "",
     val client: String = "",
+    val ip: String? = null,
+    val local: Boolean? = null,
     val position: Double = 0.0,
+    /** When position was reported, in server time. */
+    val positionAt: Double? = null,
     val duration: Double = 0.0,
+    val source: TrackInfo? = null,
+    val stream: TrackInfo? = null,
+    val delivery: StreamDelivery? = null,
+    val hw: String? = null,
+    val hwDecode: Boolean? = null,
+    val tonemap: Boolean? = null,
+    val stripDolbyVision: Boolean? = null,
+    val channelLogo: String? = null,
+) {
+    val isLive get() = kind == "live"
+    val isPaused get() = state == "paused"
+    /** Transcoding the audio while the video is copied. */
+    val audioOnly get() = method == "transcode" && videoCopy == true
+
+    /** Where playback is now, moved on from the last report. */
+    fun positionAt(serverNow: Double): Double {
+        var p = position + if (isPaused) 0.0 else maxOf(0.0, serverNow - (positionAt ?: serverNow))
+        if (duration > 0) p = minOf(p, duration)
+        return p
+    }
+}
+
+@Serializable
+data class ActivityTotals(
+    val streams: Int = 0,
+    val direct: Int = 0,
+    val remux: Int = 0,
+    val transcode: Int = 0,
+    val kbps: Int = 0,
+    val lanKbps: Int = 0,
+    val wanKbps: Int = 0,
+)
+
+/** The machine's and the server's own CPU (percent) and memory (bytes) at a moment. */
+@Serializable
+data class SystemSample(val t: Long = 0, val cpu: Double = 0.0, val mem: Long = 0, val procCpu: Double = 0.0, val procMem: Long = 0)
+
+@Serializable
+data class SystemInfo(
+    val os: String = "",
+    val arch: String = "",
+    val cpus: Int = 0,
+    val memTotal: Long = 0,
+    /** False when the server can only see its own container. */
+    val host: Boolean? = null,
+    /** "Container" or "Wren TV": what the second series measures. */
+    val procLabel: String? = null,
+    val procCpuAvailable: Boolean? = null,
+)
+
+@Serializable
+data class ActivityResponse(
+    val serverTime: Double = 0.0,
+    val sessions: List<NowPlaying> = emptyList(),
+    val totals: ActivityTotals = ActivityTotals(),
+    val system: SystemSample? = null,
+    val systemInfo: SystemInfo? = null,
+)
+
+@Serializable
+data class DiskInfo(val path: String = "", val total: Long = 0, val free: Long = 0, val label: String = "")
+
+@Serializable
+data class SystemResponse(
+    val version: String? = null,
+    val disks: List<DiskInfo>? = null,
+    val samples: List<SystemSample>? = null,
+    val info: SystemInfo? = null,
+    val uptime: Long? = null,
 )
 
 @Serializable

@@ -39,6 +39,11 @@ func (s *Server) handleLivePlay(w http.ResponseWriter, r *http.Request) {
 		HLS bool `json:"hls"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+	// A player that retunes after an admin stopped it mustn't just start again.
+	if msg, stopped := s.act().refused(principal(r).User.ID, "live:"+chi.URLParam(r, "id")); stopped {
+		writeErr(w, http.StatusForbidden, msg)
+		return
+	}
 	sess, err := s.LiveTV.Play(r.Context(), principal(r).User.ID, chi.URLParam(r, "id"), req.HLS)
 	switch {
 	case errors.Is(err, livetv.ErrBusy):

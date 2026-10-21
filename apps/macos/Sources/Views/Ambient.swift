@@ -30,7 +30,7 @@ private struct AmbientSource: ViewModifier {
     let entry: (() -> HeroEntry)?
 
     func body(content: Content) -> some View {
-        content.onHover { inside in
+        content.cardHover { inside in
             guard inside else { return }
             if let backdrop, !backdrop.isEmpty { ambient?.path = backdrop }
             if let entry, let ambient {
@@ -95,8 +95,7 @@ private struct AmbientBackdrop: View {
 
 /// The art's main colour, favouring saturated pixels, kept dark enough for white text.
 private func dominantColor(_ url: URL) async -> Color? {
-    guard let (data, _) = try? await URLSession.shared.data(from: url),
-          let src = NSImage(data: data)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+    guard let src = await ArtworkCache.shared.image(url) else { return nil }
     let w = 32, h = 18
     var px = [UInt8](repeating: 0, count: w * h * 4)
     guard let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
@@ -115,4 +114,32 @@ private func dominantColor(_ url: URL) async -> Color? {
     var hue: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0
     NSColor(red: r / sum, green: g / sum, blue: b / sum, alpha: 1).getHue(&hue, saturation: &s, brightness: &v, alpha: nil)
     return Color(hue: hue, saturation: s, brightness: min(v, 0.62))
+}
+
+/// Whether a scroll is under way. Content moving under a still pointer
+/// reports a hover for every card it passes; acting on each of those is what
+/// made scrolling stutter.
+enum ScrollActivity {
+    nonisolated(unsafe) private static var last: TimeInterval = 0
+    nonisolated(unsafe) private static var monitor: Any?
+
+    static func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { e in
+            last = e.timestamp
+            return e
+        }
+    }
+
+    static var isScrolling: Bool { ProcessInfo.processInfo.systemUptime - last < 0.2 }
+}
+
+extension View {
+    /// onHover that ignores the pointer entering cards while they scroll past it.
+    func cardHover(_ action: @escaping (Bool) -> Void) -> some View {
+        onHover { inside in
+            if inside && ScrollActivity.isScrolling { return }
+            action(inside)
+        }
+    }
 }

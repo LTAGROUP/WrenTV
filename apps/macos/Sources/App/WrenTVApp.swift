@@ -21,6 +21,7 @@ struct WrenTVApp: App {
 
     init() {
         URLCache.shared = URLCache(memoryCapacity: 96 << 20, diskCapacity: 1 << 30)
+        ScrollActivity.start()
     }
 
     var body: some Scene {

@@ -385,6 +385,13 @@ var migrations = []string{
 		PRIMARY KEY (scope, user_id)
 	);
 	` + seedHubsSQL(),
+	// Play history keeps where each play came from, the version played, the
+	// resolution sent and why it transcoded, for the stats dashboard.
+	`ALTER TABLE play_history ADD COLUMN ip TEXT NOT NULL DEFAULT '';
+	ALTER TABLE play_history ADD COLUMN quality TEXT NOT NULL DEFAULT '';
+	ALTER TABLE play_history ADD COLUMN stream_height INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE play_history ADD COLUMN reasons TEXT NOT NULL DEFAULT '';
+	CREATE INDEX play_history_item ON play_history(item_id);`,
 }
 
 // fkOff lists migrations (1-based) that rebuild tables. They run with

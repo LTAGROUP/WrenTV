@@ -432,9 +432,24 @@ final class PlayerModel {
         guard phase == .playing else { return }
         if !isOffline, lastAutoRetry.map({ Date().timeIntervalSince($0) > 120 }) ?? true {
             lastAutoRetry = Date()
-            retry()
+            // The server owner may have stopped it: say so rather than starting again.
+            Task {
+                if let msg = await api.reportProgress(itemId, position: position, duration: duration, paused: true) {
+                    stoppedByServer(msg)
+                } else {
+                    retry()
+                }
+            }
             return
         }
+        phase = .error(message)
+    }
+
+    /// The server owner stopped this stream from the dashboard.
+    private func stoppedByServer(_ message: String) {
+        guard phase == .playing else { return }
+        sessionId = nil
+        teardownEngines()
         phase = .error(message)
     }
 
@@ -543,9 +558,14 @@ final class PlayerModel {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(10))
                 guard let self, !Task.isCancelled else { return }
-                if self.position > 5, !self.paused {
-                    if self.isOffline { self.onLocalProgress?(self.itemId, self.position, self.duration) }
-                    await self.api.reportProgress(self.itemId, position: self.position, duration: self.duration)
+                guard self.position > 5 else { continue }
+                if self.isOffline {
+                    if !self.paused { self.onLocalProgress?(self.itemId, self.position, self.duration) }
+                    continue
+                }
+                // Reported while paused too, so the dashboard shows it paused.
+                if let msg = await self.api.reportProgress(self.itemId, position: self.position, duration: self.duration, paused: self.paused) {
+                    self.stoppedByServer(msg)
                 }
             }
         }

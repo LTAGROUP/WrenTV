@@ -896,63 +896,6 @@ func (s *Server) handleLibraryRowsOrder(w http.ResponseWriter, r *http.Request) 
 
 // ---------- stats ----------
 
-type nowPlaying struct {
-	SessionID  string   `json:"sessionId"`
-	UserID     string   `json:"userId"`
-	UserName   string   `json:"userName"`
-	ItemID     string   `json:"itemId"`
-	Title      string   `json:"title"`
-	Subtitle   string   `json:"subtitle,omitempty"`
-	PosterPath string   `json:"posterPath,omitempty"`
-	Backdrop   string   `json:"backdropPath,omitempty"`
-	Method     string   `json:"method"`
-	Engine     string   `json:"engine"`
-	VideoCopy  bool     `json:"videoCopy"`
-	AudioCodec string   `json:"audioCodec,omitempty"`
-	Reasons    []string `json:"reasons,omitempty"`
-	Quality    string   `json:"quality"`
-	Client     string   `json:"client"`
-	Position   float64  `json:"position"`
-	Duration   float64  `json:"duration"`
-	Started    int64    `json:"started"`
-}
-
-func (s *Server) nowPlaying(ctx context.Context) []nowPlaying {
-	out := []nowPlaying{}
-	for _, sess := range s.Streams.List() {
-		np := nowPlaying{SessionID: sess.ID, UserID: sess.UserID, ItemID: sess.ItemID, Method: string(sess.Decision.Method),
-			Engine: sess.Decision.Engine, VideoCopy: sess.Decision.VideoCopy, AudioCodec: sess.Decision.AudioCodec,
-			Reasons: sess.Decision.Reasons, Started: sess.Started.Unix()}
-		if u, err := s.DB.UserByID(ctx, sess.UserID); err == nil {
-			np.UserName = firstNonEmpty(u.DisplayName, u.Username, u.Email, u.ID)
-		}
-		if it, err := s.DB.GetItem(ctx, sess.ItemID); err == nil {
-			np.Title, np.PosterPath, np.Backdrop = it.Title, it.PosterPath, it.BackdropPath
-			if it.Kind == "episode" {
-				np.Subtitle = it.Title
-				np.Backdrop = it.StillPath
-				if sh, err := s.DB.GetItem(ctx, it.ShowID); err == nil {
-					np.Title, np.PosterPath = sh.Title, sh.PosterPath
-					if np.Backdrop == "" {
-						np.Backdrop = sh.BackdropPath
-					}
-					np.Subtitle = "S" + strconv.Itoa(it.SeasonNumber) + " · E" + strconv.Itoa(it.EpisodeNumber) + " — " + it.Title
-				}
-			}
-		}
-		if f, err := s.DB.GetFile(ctx, sess.FileID); err == nil {
-			np.Quality = versionLabel(f)
-		}
-		np.Position, np.Duration, np.Client = s.DB.PlayBySession(ctx, sess.ID)
-		if sess.Info != nil && np.Duration == 0 {
-			np.Duration = sess.Info.Duration
-		}
-		out = append(out, np)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Started > out[j].Started })
-	return out
-}
-
 func firstNonEmpty(v ...string) string {
 	for _, s := range v {
 		if s != "" {
@@ -985,16 +928,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recent, _ := s.DB.RecentHistory(ctx, since, "", 25)
-	writeJSON(w, 200, map[string]any{"days": days, "stats": stats, "library": lib, "nowPlaying": s.nowPlaying(ctx), "recent": recent})
-}
-
-func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	days := queryInt(r, "days", 90)
-	since := time.Now().AddDate(0, 0, -days).Unix()
-	rows, err := s.DB.RecentHistory(r.Context(), since, r.URL.Query().Get("user"), min(max(queryInt(r, "limit", 200), 1), 2000))
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, rows)
+	added, _ := s.DB.RecentlyAdded(ctx, 24)
+	writeJSON(w, 200, map[string]any{"days": days, "stats": stats, "library": lib, "nowPlaying": s.nowPlaying(ctx), "recent": recent,
+		"recentlyAdded": added})
 }

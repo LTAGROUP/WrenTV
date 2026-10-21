@@ -1,3 +1,4 @@
+import ImageIO
 import SwiftUI
 
 /// Sizes that change between iPhone (compact width) and iPad.
@@ -26,6 +27,7 @@ extension EnvironmentValues {
 struct RemoteImage: View {
     let url: URL?
     var contentMode: ContentMode = .fill
+    @State private var loaded: (url: URL, image: CGImage)?
 
     var body: some View {
         if contentMode == .fill {
@@ -40,13 +42,58 @@ struct RemoteImage: View {
     }
 
     private var image: some View {
-        AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.2))) { phase in
-            if let image = phase.image {
-                image.resizable().aspectRatio(contentMode: contentMode)
+        let image = url.flatMap { u in loaded?.url == u ? loaded?.image : ArtworkCache.shared.cached(u) }
+        return ZStack {
+            if let image {
+                Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: contentMode)
             } else {
                 Rectangle().fill(Color.white.opacity(0.06))
             }
         }
+        .task(id: url) {
+            guard let url, ArtworkCache.shared.cached(url) == nil else { return }
+            if let img = await ArtworkCache.shared.image(url), !Task.isCancelled {
+                withAnimation(.easeOut(duration: 0.2)) { loaded = (url, img) }
+            }
+        }
+    }
+}
+
+/// Decoded artwork by URL. AsyncImage keeps nothing, so every card scrolling
+/// back into view fetched and decoded its art again; here images are fetched
+/// and decoded off the main thread, once each however many cards ask.
+final class ArtworkCache: @unchecked Sendable {
+    static let shared = ArtworkCache()
+    private let cache = NSCache<NSURL, CGImage>()
+    private let lock = NSLock()
+    private var loads: [URL: Task<CGImage?, Never>] = [:]
+
+    init() { cache.totalCostLimit = 200 << 20 }
+
+    func cached(_ url: URL) -> CGImage? { cache.object(forKey: url as NSURL) }
+
+    func image(_ url: URL) async -> CGImage? {
+        if let img = cached(url) { return img }
+        let task = lock.withLock {
+            if let t = loads[url] { return t }
+            let t = Task.detached(priority: .userInitiated) { [self] () -> CGImage? in
+                defer { _ = lock.withLock { loads.removeValue(forKey: url) } }
+                guard let (data, resp) = try? await URLSession.shared.data(from: url),
+                      (resp as? HTTPURLResponse)?.statusCode ?? 200 < 400,
+                      let img = Self.decode(data) else { return nil }
+                cache.setObject(img, forKey: url as NSURL, cost: img.bytesPerRow * img.height)
+                return img
+            }
+            loads[url] = t
+            return t
+        }
+        return await task.value
+    }
+
+    /// Decodes now rather than when first drawn, which would be on the main thread.
+    private static func decode(_ data: Data) -> CGImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        return CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
     }
 }
 

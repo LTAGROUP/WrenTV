@@ -411,9 +411,21 @@ public sealed class PlayerModel
             while (!cts.IsCancellationRequested)
             {
                 try { await Task.Delay(10000, cts.Token); } catch { return; }
-                if (Position > 5 && !Paused) await api.ReportProgress(ItemId, Position, Duration);
+                if (Position <= 5 || await api.ReportProgress(ItemId, Position, Duration, Paused) is not { } reason) continue;
+                StoppedByServer(reason);
+                return;
             }
         });
+    }
+
+    /// The server owner ended this stream from the dashboard: stop and say why.
+    void StoppedByServer(string message)
+    {
+        if (Phase != PhaseKind.Playing) return;
+        progress?.Cancel();
+        sessionId = null;
+        mpv.Command("stop");
+        Set(PhaseKind.Error, message);
     }
 
     void Finished()
