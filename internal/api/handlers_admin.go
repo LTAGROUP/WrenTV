@@ -82,6 +82,7 @@ type streamingView struct {
 	Usenet          bool                   `json:"usenet"`
 	MaxSizeGB       map[string]float64     `json:"maxSizeGB"`
 	Prefetch        bool                   `json:"prefetch"`
+	LookupOnOpen    bool                   `json:"lookupOnOpen"`
 	CheckAddonLinks bool                   `json:"checkAddonLinks"`
 	Mode            string                 `json:"mode"`
 	MovieLibrary    string                 `json:"movieLibrary"`
@@ -146,7 +147,7 @@ func (s *Server) settings() settingsView {
 	}
 	st := c.Streaming
 	sv := streamingView{Enabled: st.Enabled, Active: s.Streaming.Active(), Addons: nonNil(st.Addons), Qualities: nonNil(st.Qualities),
-		PerQuality: max(st.PerQuality, 1), Usenet: st.Usenet, MaxSizeGB: st.MaxSizeGB, Prefetch: st.Prefetch, CheckAddonLinks: st.CheckAddonLinks, Mode: st.Mode, MovieLibrary: st.MovieLibrary, ShowLibrary: st.ShowLibrary,
+		PerQuality: max(st.PerQuality, 1), Usenet: st.Usenet, MaxSizeGB: st.MaxSizeGB, Prefetch: st.Prefetch, LookupOnOpen: st.LookupOnOpen, CheckAddonLinks: st.CheckAddonLinks, Mode: st.Mode, MovieLibrary: st.MovieLibrary, ShowLibrary: st.ShowLibrary,
 		DownloadQuality: st.DownloadQuality, Limits: st.Limits, Debrid: []debridView{},
 		UsenetCacheMB: st.UsenetCacheMB, UsenetDiskGB: st.UsenetDiskCacheGB, ExcludeWords: nonNil(st.ExcludeWords)}
 	if sv.MaxSizeGB == nil {
@@ -218,6 +219,7 @@ type streamingPatch struct {
 	Usenet          *bool                   `json:"usenet"`
 	MaxSizeGB       *map[string]float64     `json:"maxSizeGB"`
 	Prefetch        *bool                   `json:"prefetch"`
+	LookupOnOpen    *bool                   `json:"lookupOnOpen"`
 	CheckAddonLinks *bool                   `json:"checkAddonLinks"`
 	Mode            *string                 `json:"mode"`
 	MovieLibrary    *string                 `json:"movieLibrary"`
@@ -400,6 +402,9 @@ func (s *Server) applyStreaming(r *http.Request, p *streamingPatch) error {
 	}
 	if p.Prefetch != nil {
 		c.Prefetch = *p.Prefetch
+	}
+	if p.LookupOnOpen != nil {
+		c.LookupOnOpen = *p.LookupOnOpen
 	}
 	if p.CheckAddonLinks != nil {
 		c.CheckAddonLinks = *p.CheckAddonLinks

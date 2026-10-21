@@ -414,6 +414,7 @@ function streamingTab(s, libs) {
       <p data-st-status>${streamingStatusLine(st, s)}</p>
       <label class="check"><input type="checkbox" name="stEnabled" ${st.enabled ? 'checked' : ''}> Enable streaming</label>
       <label class="check"><input type="checkbox" name="stPrefetch" ${st.prefetch ? 'checked' : ''}> Find streams in the background before they're played: watchlist titles, and the rest of a season once an episode plays</label>
+      <label class="check"><input type="checkbox" name="stLookupOnOpen" ${st.lookupOnOpen !== false ? 'checked' : ''}> Start finding streams when a movie's or episode's page opens, so play starts sooner</label>
       <label class="check"><input type="checkbox" name="stCheckLinks" ${st.checkAddonLinks ? 'checked' : ''}> Check addon links while finding streams, so dead ones are dropped before play (slower, and addons like StreamNZB start a download for each one checked)</label>
     </div>
 
@@ -899,6 +900,7 @@ export async function viewSettings() {
     const streaming = {
       enabled: !!v.stEnabled,
       prefetch: !!v.stPrefetch,
+      lookupOnOpen: !!v.stLookupOnOpen,
       checkAddonLinks: !!v.stCheckLinks,
       providerOrder: $$('.debrid', node).map((r) => r.dataset.provider),
       addons,

@@ -771,6 +771,7 @@ struct StreamingSettings: Codable, Hashable {
     var qualities: [String]
     var maxSizeGB: [String: Double]?
     var prefetch: Bool
+    var lookupOnOpen: Bool?
     var mode: String
     var movieLibrary: String
     var showLibrary: String

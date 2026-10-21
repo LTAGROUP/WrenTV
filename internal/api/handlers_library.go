@@ -295,7 +295,7 @@ func (s *Server) continueWatching(ctx context.Context, r *http.Request, ids []st
 	upNext := []*db.Item{}
 	if len(ids) > 0 {
 		rows, err := s.DB.QueryContext(ctx, `SELECT DISTINCT i.show_id, MAX(w.updated_at) m FROM watch_state w JOIN items i ON i.id=w.item_id
-			WHERE w.user_id=? AND i.kind='episode' AND w.watched=1 GROUP BY i.show_id ORDER BY m DESC LIMIT 20`, p.User.ID)
+			WHERE w.user_id=? AND i.kind='episode' AND w.watched=1 GROUP BY i.show_id ORDER BY m DESC LIMIT 200`, p.User.ID)
 		if err == nil {
 			var showIDs []string
 			for rows.Next() {
@@ -312,7 +312,11 @@ func (s *Server) continueWatching(ctx context.Context, r *http.Request, ids []st
 					inProgress[c.ShowID] = true
 				}
 			}
+			// Finished shows have no next episode, so look past them.
 			for _, sid := range showIDs {
+				if len(upNext) == 20 {
+					break
+				}
 				if inProgress[sid] {
 					continue
 				}
@@ -409,6 +413,8 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 		resp["onWatchlist"] = s.DB.OnWatchlist(ctx, p.User.ID, it.ID)
 	}
 	streamed := s.isStreamLibrary(ctx, it.LibraryID)
+	// The owner can turn off looking streams up as soon as a page opens.
+	warm := streamed && s.Cfg.Streaming.LookupOnOpen
 	resp["streaming"] = streamed
 	resp["canDownload"] = s.limitsFor(p.User).CanDownload
 	switch it.Kind {
@@ -423,7 +429,7 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 				next.Progress = ws
 			}
 			resp["nextEpisode"] = next
-			if streamed {
+			if warm {
 				s.warmItem(next, p.User)
 			}
 		}
@@ -439,7 +445,7 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 		}
 		fallthrough
 	case "movie":
-		if streamed {
+		if warm {
 			s.warmItem(it, p.User)
 		}
 		files, _ := s.playableFiles(ctx, it)

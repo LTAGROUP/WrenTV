@@ -42,6 +42,10 @@ type Service struct {
 	Simkl  *simkl.Client
 	Hooks  *webhook.Sender
 	Server func() webhook.Server
+	// AddTitle adds a movie or show by TMDB id to the streaming library and
+	// returns its item id, so imported history the library lacks can show
+	// in Continue Watching. Nil (or an error) when streaming is off.
+	AddTitle func(ctx context.Context, kind string, tmdbID int) (string, error)
 
 	mu      sync.Mutex
 	plays   map[string]*play

@@ -64,6 +64,11 @@ func (f *fakeSimkl) handler(t *testing.T) http.HandlerFunc {
 			io.WriteString(w, `{"shows":[{"status":"watching","show":{"title":"Severance","year":2022,"ids":{"imdb":"tt11280740"}},
 				"seasons":[{"number":1,"episodes":[{"number":1,"watched_at":"2024-02-01T00:00:00Z"},{"number":2}]}]}]}`)
 			return
+		case "/sync/playback":
+			io.WriteString(w, `[{"progress":40,"paused_at":"2024-03-01T00:00:00Z","type":"episode","episode":{"season":1,"episode":3},
+				"show":{"title":"Severance","year":2022,"ids":{"imdb":"tt11280740"}}},
+				{"progress":25,"paused_at":"2024-03-02T00:00:00Z","type":"movie","movie":{"title":"Not Here","year":2001,"ids":{"tmdb":"5"}}}]`)
+			return
 		case "/sync/all-items/shows/completed", "/sync/all-items/shows/hold", "/sync/all-items/shows/dropped",
 			"/sync/all-items/anime/watching", "/sync/all-items/anime/completed", "/sync/all-items/anime/hold", "/sync/all-items/anime/dropped":
 			io.WriteString(w, `{}`)
@@ -106,7 +111,7 @@ func setup(t *testing.T) (*Service, *fakeSimkl, *db.DB, *db.User, map[string]*db
 	}
 	for i, k := range []string{"e1", "e2", "e3"} {
 		e := &db.Item{LibraryID: lib.ID, Kind: "episode", ShowID: items["show"].ID, ParentID: items["show"].ID,
-			Title: k, SeasonNumber: 1, EpisodeNumber: i + 1, MatchKey: "sev" + k}
+			Title: k, SeasonNumber: 1, EpisodeNumber: i + 1, MatchKey: "sev" + k, RuntimeMin: 50}
 		if err := d.InsertItem(ctx, e); err != nil {
 			t.Fatal(err)
 		}
@@ -234,5 +239,38 @@ func TestLinkAndImport(t *testing.T) {
 	st, _ := s.SimklStatus(ctx, u.ID)
 	if !st.Linked || st.Pending != nil || !st.Available {
 		t.Fatalf("status %+v", st)
+	}
+}
+
+func TestImportPausedAndMissingTitles(t *testing.T) {
+	s, _, d, u, items := setup(t)
+	ctx := context.Background()
+	var added []int
+	s.AddTitle = func(ctx context.Context, kind string, tmdbID int) (string, error) {
+		added = append(added, tmdbID)
+		it := &db.Item{LibraryID: items["movie"].LibraryID, Kind: kind, Title: "Not Here", TMDBID: tmdbID, MatchKey: "nh", RuntimeMin: 100}
+		return it.ID, d.InsertItem(ctx, it)
+	}
+	if _, err := s.LinkSimkl(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		a, _ := d.GetSimkl(ctx, u.ID)
+		return a != nil && a.ImportStatus == "done"
+	})
+	// Only the paused movie is added; a finished one the library lacks isn't.
+	if len(added) != 1 || added[0] != 5 {
+		t.Fatalf("added %v", added)
+	}
+	ws, _ := d.GetWatchState(ctx, u.ID, items["e3"].ID)
+	if ws == nil || ws.Watched || ws.Position != 1200 || ws.Duration != 3000 || ws.UpdatedAt != 1709251200 {
+		t.Fatalf("e3 progress %+v", ws)
+	}
+	cont, err := d.ContinueWatching(ctx, u.ID, []string{items["movie"].LibraryID}, 60, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cont) != 2 || cont[0].Title != "Not Here" || cont[0].Progress.Position != 1500 || cont[1].ID != items["e3"].ID {
+		t.Fatalf("continue watching %+v", cont)
 	}
 }

@@ -212,6 +212,13 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	streamer := streaming.New(streaming.Deps{Cfg: cfg, DB: d, TMDB: tm, Scanner: scanner, Hub: hub, Hooks: hooks, Server: serverInfo, HTTPPort: port})
 	streamer.Start(ctx)
 	tracker := tracking.New(d, simkl.New(func() string { return cfg.Simkl.ClientID }, version), hooks, serverInfo)
+	tracker.AddTitle = func(ctx context.Context, kind string, tmdbID int) (string, error) {
+		it, err := streamer.AddTitle(ctx, kind, tmdbID)
+		if err != nil {
+			return "", err
+		}
+		return it.ID, nil
+	}
 	tracker.Start(ctx)
 	if cfg.Streaming.Enabled && !streamer.Active() {
 		slog.Warn("streaming is enabled but needs a debrid API key and a TMDB key to work")

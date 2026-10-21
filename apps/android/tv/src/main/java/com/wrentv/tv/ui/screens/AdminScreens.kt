@@ -411,6 +411,7 @@ fun ServerSettingsScreen() {
         val stream = buildJsonObject {
             put("enabled", st.enabled)
             put("prefetch", st.prefetch)
+            put("lookupOnOpen", st.lookupOnOpen)
             put("providerOrder", JsonArray(st.debrid.map { JsonPrimitive(it.provider) }))
             put("addons", json.encodeToJsonElement(st.addons))
             put("qualities", json.encodeToJsonElement(st.qualities))
@@ -501,6 +502,7 @@ fun ServerSettingsScreen() {
                     FormSection("Streaming", "Pressing play finds a cached release through your debrid service and streams it through this server. Only the link is saved, never the video, unless downloads are on.") {
                         ToggleRow("Enable streaming", st.enabled, { streaming = st.copy(enabled = it) }, detail = statusText)
                         ToggleRow("Find streams for the rest of the season in the background", st.prefetch, { streaming = st.copy(prefetch = it) })
+                        ToggleRow("Find streams when a details page opens", st.lookupOnOpen, { streaming = st.copy(lookupOnOpen = it) })
                     }
                     FormSection("Debrid services", "Your keys are used for everyone, tried top to bottom.") {
                         st.debrid.forEachIndexed { i, d ->

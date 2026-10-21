@@ -267,6 +267,40 @@ func (c *Client) AllItems(ctx context.Context, access, kind, status string) (All
 	return out, err
 }
 
+// Playback is a session someone paused partway: progress is a percentage.
+// Simkl's docs name the pause time and episode number two ways each.
+type Playback struct {
+	Progress  float64 `json:"progress"`
+	PausedAt  string  `json:"paused_at"`
+	WatchedAt string  `json:"watched_at"`
+	Movie     *Media  `json:"movie"`
+	Show      *Media  `json:"show"`
+	Anime     *Media  `json:"anime"`
+	Episode   *struct {
+		Season  int `json:"season"`
+		Number  int `json:"number"`
+		Episode int `json:"episode"`
+	} `json:"episode"`
+}
+
+// When is when the session was paused.
+func (p *Playback) When() string { return firstOf(p.PausedAt, p.WatchedAt) }
+
+// SeasonEpisode is the paused episode's season and number.
+func (p *Playback) SeasonEpisode() (int, int) {
+	if p.Episode == nil {
+		return 0, 0
+	}
+	return p.Episode.Season, max(p.Episode.Number, p.Episode.Episode)
+}
+
+// Playbacks lists the user's paused sessions that haven't since been watched.
+func (c *Client) Playbacks(ctx context.Context, access string) ([]Playback, error) {
+	var out []Playback
+	err := c.call(ctx, access, http.MethodGet, "/sync/playback", nil, nil, &out)
+	return out, err
+}
+
 // Username returns the Simkl account's display name.
 func (c *Client) Username(ctx context.Context, access string) (string, error) {
 	var out struct {

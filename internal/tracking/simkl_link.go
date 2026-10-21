@@ -1,6 +1,7 @@
 package tracking
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -246,19 +247,48 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 		return 0, 0, err
 	}
 	m := newMatcher(items)
-	fetch := func(kind, status string) (simkl.AllItems, error) {
-		var out simkl.AllItems
-		var ferr error
-		call := func(access string) error {
-			out, ferr = s.Simkl.AllItems(ctx, access, kind, status)
-			return ferr
+	// withToken calls Simkl, refreshing the token once if it's rejected.
+	withToken := func(call func(access string) error) error {
+		err := call(a.AccessToken)
+		if errors.Is(err, simkl.ErrUnauthorized) && a.RefreshToken != "" && s.refresh(ctx, a) == nil {
+			err = call(a.AccessToken)
 		}
-		if err := call(a.AccessToken); errors.Is(err, simkl.ErrUnauthorized) && a.RefreshToken != "" {
-			if s.refresh(ctx, a) == nil {
-				_ = call(a.AccessToken)
+		return err
+	}
+	fetch := func(kind, status string) (out simkl.AllItems, err error) {
+		err = withToken(func(access string) (err error) {
+			out, err = s.Simkl.AllItems(ctx, access, kind, status)
+			return err
+		})
+		return out, err
+	}
+	// find matches a title, adding it to the streaming library when asked
+	// and it isn't here yet.
+	find := func(kind string, md *simkl.Media, add bool) string {
+		if id := m.find(kind, md); id != "" || !add || s.AddTitle == nil {
+			return id
+		}
+		tmdbID, _ := strconv.Atoi(md.ID("tmdb"))
+		if tmdbID <= 0 {
+			return ""
+		}
+		id, err := s.AddTitle(ctx, kind, tmdbID)
+		if err != nil {
+			return ""
+		}
+		m.tmdb[kind+":"+strconv.Itoa(tmdbID)] = id
+		return id
+	}
+	episodesOf := map[string]map[[2]int]string{}
+	episodeIDs := func(showID string) (map[[2]int]string, error) {
+		eps, ok := episodesOf[showID]
+		if !ok {
+			if eps, err = s.DB.EpisodeIDs(ctx, showID); err != nil {
+				return nil, err
 			}
+			episodesOf[showID] = eps
 		}
-		return out, ferr
+		return eps, nil
 	}
 
 	// Movies the user finished.
@@ -268,7 +298,7 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 		return 0, 0, err
 	}
 	for _, li := range got.Movies {
-		if id := m.find("movie", li.Movie); id != "" {
+		if id := find("movie", li.Movie, false); id != "" {
 			marks[id] = when(li.LastWatchedAt)
 		}
 	}
@@ -276,9 +306,9 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 		return movies, 0, err
 	}
 
-	// Episodes watched, in every list a show can be in.
+	// Episodes watched, in every list a show can be in. Shows still being
+	// watched are added to the library so their next episode is offered.
 	marks = map[string]int64{}
-	episodesOf := map[string]map[[2]int]string{}
 	for _, kind := range []string{"shows", "anime"} {
 		for _, status := range []string{"watching", "completed", "hold", "dropped"} {
 			got, err := fetch(kind, status)
@@ -286,16 +316,13 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 				return movies, 0, err
 			}
 			for _, li := range append(got.Shows, got.Anime...) {
-				showID := m.find("show", li.Show)
+				showID := find("show", li.Show, status == "watching")
 				if showID == "" {
 					continue
 				}
-				eps, ok := episodesOf[showID]
-				if !ok {
-					if eps, err = s.DB.EpisodeIDs(ctx, showID); err != nil {
-						return movies, 0, err
-					}
-					episodesOf[showID] = eps
+				eps, err := episodeIDs(showID)
+				if err != nil {
+					return movies, 0, err
 				}
 				for _, se := range li.Seasons {
 					for _, ep := range se.Episodes {
@@ -307,8 +334,56 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 			}
 		}
 	}
-	episodes, err = s.DB.ImportWatched(ctx, userID, marks)
-	return movies, episodes, err
+	if episodes, err = s.DB.ImportWatched(ctx, userID, marks); err != nil {
+		return movies, episodes, err
+	}
+
+	// Where the user paused, for Continue Watching. Older Simkl apps may
+	// not offer this, so a failure here doesn't fail the import.
+	var paused []simkl.Playback
+	if err := withToken(func(access string) (err error) {
+		paused, err = s.Simkl.Playbacks(ctx, access)
+		return err
+	}); err != nil {
+		slog.Warn("simkl playback import", "user", userID, "err", err)
+		return movies, episodes, nil
+	}
+	resumed := 0
+	for _, pb := range paused {
+		if pb.Progress <= 0 || pb.Progress >= 100 {
+			continue
+		}
+		var id string
+		if pb.Movie != nil {
+			id = find("movie", pb.Movie, true)
+		} else if show := cmp.Or(pb.Show, pb.Anime); show != nil {
+			if showID := find("show", show, true); showID != "" {
+				eps, err := episodeIDs(showID)
+				if err != nil {
+					return movies, episodes, err
+				}
+				sn, en := pb.SeasonEpisode()
+				id = eps[[2]int{sn, en}]
+			}
+		}
+		if id == "" {
+			continue
+		}
+		it, err := s.DB.GetItem(ctx, id)
+		if err != nil || it.RuntimeMin <= 0 {
+			continue
+		}
+		dur := float64(it.RuntimeMin * 60)
+		if ok, err := s.DB.ImportProgress(ctx, userID, id, dur*pb.Progress/100, dur, when(pb.When())); err != nil {
+			return movies, episodes, err
+		} else if ok {
+			resumed++
+		}
+	}
+	if resumed > 0 {
+		slog.Info("simkl import", "user", userID, "resumable", resumed)
+	}
+	return movies, episodes, nil
 }
 
 // SimklWatchlist lists one status ("plantowatch", "watching", "completed"…)

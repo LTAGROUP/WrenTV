@@ -623,6 +623,7 @@ data class StreamingSettings(
     val qualities: List<String> = emptyList(),
     val maxSizeGB: Map<String, Double>? = null,
     val prefetch: Boolean = false,
+    val lookupOnOpen: Boolean = true,
     val mode: String = "stream",
     val movieLibrary: String = "",
     val showLibrary: String = "",

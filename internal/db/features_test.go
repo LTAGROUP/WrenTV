@@ -89,3 +89,55 @@ func TestActiveOn(t *testing.T) {
 		}
 	}
 }
+
+func TestNextEpisodeStreamed(t *testing.T) {
+	ctx := context.Background()
+	d, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &User{Username: "a", DisplayName: "Alex"}
+	if err := d.CreateUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	for _, src := range []string{"files", "stream"} {
+		lib := &Library{Name: src, Type: "shows", Source: src}
+		if err := d.CreateLibrary(ctx, lib); err != nil {
+			t.Fatal(err)
+		}
+		show := &Item{LibraryID: lib.ID, Kind: "show", Title: "Show", MatchKey: "show"}
+		if err := d.InsertItem(ctx, show); err != nil {
+			t.Fatal(err)
+		}
+		var eps []*Item
+		for i, air := range []string{"2020-01-01", "2020-01-08", "2020-01-15", "2999-01-01"} {
+			e := &Item{LibraryID: lib.ID, Kind: "episode", ShowID: show.ID, ParentID: show.ID, Title: air,
+				SeasonNumber: 1, EpisodeNumber: i + 1, AirDate: air, MatchKey: air}
+			if err := d.InsertItem(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+			eps = append(eps, e)
+		}
+		// Only episode 3 has a file; episode 1 is watched.
+		if err := d.InsertFile(ctx, &MediaFile{ItemID: eps[2].ID, LibraryID: lib.ID, Path: "/x/" + src + ".mkv", Size: 1}); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.SetWatched(ctx, u.ID, eps[0].ID, true); err != nil {
+			t.Fatal(err)
+		}
+		// A file library skips to the episode it has; a streamed one offers
+		// the next aired episode, file or not.
+		want := map[string]int{"files": 3, "stream": 2}[src]
+		next, err := d.NextEpisode(ctx, u.ID, show.ID)
+		if err != nil || next.EpisodeNumber != want {
+			t.Fatalf("%s: next %+v, %v; want episode %d", src, next, err, want)
+		}
+		for _, e := range eps[1:3] {
+			_ = d.SetWatched(ctx, u.ID, e.ID, true)
+		}
+		// The unaired episode isn't offered.
+		if next, err := d.NextEpisode(ctx, u.ID, show.ID); err == nil {
+			t.Fatalf("%s: offered unaired %+v", src, next)
+		}
+	}
+}

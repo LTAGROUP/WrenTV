@@ -498,6 +498,7 @@ struct ServerSettingsView: View {
                 SettingToggle("Enable streaming", isOn: binding.enabled)
                 SettingRow("Status") { statusText(binding.wrappedValue) }
                 SettingToggle("Find streams for the rest of the season in the background", isOn: binding.prefetch)
+                SettingToggle("Find streams when a details page opens", isOn: Binding(get: { binding.wrappedValue.lookupOnOpen ?? true }, set: { binding.wrappedValue.lookupOnOpen = $0 }))
             }
             CardSection("Debrid services", footer: "Your keys are used for everyone, tried top to bottom. If every key is removed, streamed titles disappear until one is added back.") {
                 ForEach(Array(binding.wrappedValue.debrid.enumerated()), id: \.element.id) { i, d in
@@ -792,6 +793,7 @@ struct ServerSettingsView: View {
         var stream: [String: AnyEncodable] = [
             "enabled": AnyEncodable(st.enabled),
             "prefetch": AnyEncodable(st.prefetch),
+            "lookupOnOpen": AnyEncodable(st.lookupOnOpen ?? true),
             "providerOrder": AnyEncodable(st.debrid.map(\.provider)),
             "addons": AnyEncodable(st.addons),
             "qualities": AnyEncodable(st.qualities),

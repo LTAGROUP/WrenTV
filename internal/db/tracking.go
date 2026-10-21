@@ -149,3 +149,20 @@ func (d *DB) ImportWatched(ctx context.Context, userID string, marks map[string]
 	}
 	return n, tx.Commit()
 }
+
+// ImportProgress records where a user paused an item (unix seconds) unless
+// it's already watched or has newer progress here. It reports whether it
+// changed anything.
+func (d *DB) ImportProgress(ctx context.Context, userID, itemID string, pos, dur float64, at int64) (bool, error) {
+	if at <= 0 {
+		at = Now()
+	}
+	res, err := d.ExecContext(ctx, `INSERT INTO watch_state (user_id, item_id, position, duration, watched, updated_at) VALUES (?,?,?,?,0,?)
+		ON CONFLICT(user_id, item_id) DO UPDATE SET position=excluded.position, duration=excluded.duration, updated_at=excluded.updated_at
+		WHERE watch_state.watched=0 AND watch_state.updated_at < excluded.updated_at`, userID, itemID, pos, dur, at)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}

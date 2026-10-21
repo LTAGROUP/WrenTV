@@ -171,6 +171,7 @@ streaming:
   qualities: [2160p, 1080p]    # a stream is saved for each
   max_size_gb: { 2160p: 0, 1080p: 0 } # per file; 0 = any size
   prefetch: true               # find the rest of the season in the background
+  lookup_on_open: true         # start finding streams when a details page opens
   mode: stream                 # stream | download (also save what's watched as files)
   movie_library: ""            # where downloads go (library ids)
   show_library: ""

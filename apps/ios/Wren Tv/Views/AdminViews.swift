@@ -408,6 +408,7 @@ struct ServerSettingsView: View {
                 Toggle("Enable streaming", isOn: binding.enabled)
                 LabeledContent("Status") { statusText(binding.wrappedValue) }
                 Toggle("Find streams for the rest of the season in the background", isOn: binding.prefetch)
+                Toggle("Find streams when a details page opens", isOn: Binding(get: { binding.wrappedValue.lookupOnOpen ?? true }, set: { binding.wrappedValue.lookupOnOpen = $0 }))
             } header: {
                 Text("Streaming")
             } footer: {
@@ -705,6 +706,7 @@ struct ServerSettingsView: View {
         var stream: [String: AnyEncodable] = [
             "enabled": AnyEncodable(st.enabled),
             "prefetch": AnyEncodable(st.prefetch),
+            "lookupOnOpen": AnyEncodable(st.lookupOnOpen ?? true),
             "providerOrder": AnyEncodable(st.debrid.map(\.provider)),
             "addons": AnyEncodable(st.addons),
             "qualities": AnyEncodable(st.qualities),

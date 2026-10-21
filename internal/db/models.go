@@ -864,11 +864,15 @@ func (d *DB) ContinueWatching(ctx context.Context, userID string, libraryIDs []s
 	return out, rows.Err()
 }
 
-// NextEpisode returns the first unwatched episode of a show for a user.
+// NextEpisode returns the first unwatched episode of a show for a user that
+// can be played: one with a file, or one that has aired for a streamed show
+// (its stream is found when it's played).
 func (d *DB) NextEpisode(ctx context.Context, userID, showID string) (*Item, error) {
 	return scanItem(d.QueryRowContext(ctx, `SELECT `+itemCols+` FROM items i WHERE i.show_id=? AND i.kind='episode' AND i.season_number > 0
 		AND NOT EXISTS (SELECT 1 FROM watch_state w WHERE w.item_id=i.id AND w.user_id=? AND w.watched=1)
-		AND EXISTS (SELECT 1 FROM media_files f WHERE f.item_id=i.id)
+		AND (EXISTS (SELECT 1 FROM media_files f WHERE f.item_id=i.id)
+			OR (i.air_date <> '' AND i.air_date <= date('now')
+				AND EXISTS (SELECT 1 FROM libraries l WHERE l.id=i.library_id AND l.source='stream')))
 		ORDER BY i.season_number, i.episode_number LIMIT 1`, showID, userID))
 }
 

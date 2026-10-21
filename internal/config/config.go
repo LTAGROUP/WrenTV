@@ -190,6 +190,9 @@ type StreamingConfig struct {
 	// Prefetch looks streams up ahead of play: the rest of the season after
 	// an episode is played, and what's on watchlists.
 	Prefetch bool `yaml:"prefetch"`
+	// LookupOnOpen starts finding a movie's or episode's streams when its
+	// details page opens (a show's next episode too), so play starts sooner.
+	LookupOnOpen bool `yaml:"lookup_on_open"`
 	// CheckAddonLinks opens every addon play link while looking up streams,
 	// so dead ones are dropped before play. Off, links from addons that give
 	// a size are only opened when played (debrid links are always checked).
@@ -315,6 +318,7 @@ func defaults() Config {
 			Usenet:          true,
 			MaxSizeGB:       map[string]float64{"2160p": 0, "1080p": 0},
 			Prefetch:        true,
+			LookupOnOpen:    true,
 			Mode:            "stream",
 			DownloadQuality: "2160p",
 			Limits:          StreamingLimits{MaxDownloads: 2, PrefetchWorkers: 2, MinFreeGB: 20},
