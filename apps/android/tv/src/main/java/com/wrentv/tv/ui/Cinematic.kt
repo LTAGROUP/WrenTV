@@ -77,6 +77,7 @@ private val ShelfHeader = 48.dp
 /** Card sizes on cinematic pages: smaller than a grid's, so the hero has room. */
 val CinematicPoster = 130.dp
 val CinematicLandscape = 240.dp
+private val PosterGap = 20.dp
 
 /**
  * Scrolls a focused card so its row's top sits on the focus line. With
@@ -91,7 +92,11 @@ private class FocusLine(val focusedRow: MutableIntState, val list: LazyListState
     }
 }
 
-class CinematicScope internal constructor(val lazy: LazyListScope, private val focusedRow: MutableIntState, private val rowSpec: BringIntoViewSpec) {
+class CinematicScope internal constructor(
+    val lazy: LazyListScope, private val focusedRow: MutableIntState, private val rowSpec: BringIntoViewSpec,
+    /** How many posters fit across the page. */
+    val posterColumns: Int,
+) {
     private var next = 0
 
     /** A row of the page. Rows above the focused one fade away as they pass behind the hero. */
@@ -102,6 +107,24 @@ class CinematicScope internal constructor(val lazy: LazyListScope, private val f
             // Within a row, cards scroll the usual way.
             CompositionLocalProvider(LocalBringIntoViewSpec provides rowSpec) {
                 Box(Modifier.graphicsLayer { this.alpha = alpha }.onFocusChanged { if (it.hasFocus) focusedRow.intValue = index }) { content() }
+            }
+        }
+    }
+
+    /**
+     * Too many titles for one row to browse: a titled grid of posters,
+     * each line a row of the page, so it scrolls and settles like the rest.
+     */
+    fun <T> grid(key: Any, title: String, subtitle: String?, entries: List<T>, id: (T) -> Any, card: @Composable (T) -> Unit) {
+        entries.chunked(posterColumns).forEachIndexed { i, line ->
+            row("$key:$i") {
+                Column(Modifier.fillMaxWidth()) {
+                    if (i == 0) ShelfTitle(title, subtitle)
+                    Row(Modifier.padding(start = PageGutter, end = PageGutter, top = if (i == 0) 16.dp else 0.dp, bottom = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(PosterGap)) {
+                        line.forEach { androidx.compose.runtime.key(id(it)) { card(it) } }
+                    }
+                }
             }
         }
     }
@@ -178,7 +201,8 @@ fun CinematicBrowse(
                         }
                     }
                 }
-                CinematicScope(this, focusedRow, rowSpec).content()
+                val columns = ((maxWidth - PageGutter * 2 + PosterGap) / (CinematicPoster + PosterGap)).toInt().coerceAtLeast(1)
+                CinematicScope(this, focusedRow, rowSpec, columns).content()
             }
         }
     }

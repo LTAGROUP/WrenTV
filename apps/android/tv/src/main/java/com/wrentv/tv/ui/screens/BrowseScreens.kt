@@ -452,30 +452,24 @@ fun CollectionDetailScreen(seed: WrenCollection) {
             d == null && detail.error != null -> extra("error") { EmptyState("Couldn't load", detail.error, icon = Icons.Rounded.WifiOff) }
             d == null -> extra("loading") { Loading() }
             d.titles != null -> {
-                val titles = sortedTitles(d.titles.orEmpty(), sort)
+                // A list can name a title twice; it's shown once.
+                val titles = sortedTitles(d.titles.orEmpty(), sort).distinctBy { it.id }
                 if (titles.isEmpty()) extra("none") { EmptyState("Nothing in this collection yet") }
-                else row("titles") {
-                    Shelf("All Titles", subtitle = "${titles.count { it.item != null }} in your library") {
-                        items(titles, key = { it.id }) { t -> TitleCard(t, Modifier.rememberFocus("t:${t.id}", default = t == titles.first()), width = CinematicPoster) }
-                    }
+                else grid("titles", "All Titles", "${titles.count { it.item != null }} in your library", titles, { it.id }) { t ->
+                    TitleCard(t, Modifier.rememberFocus("t:${t.id}", default = t == titles.first()), width = CinematicPoster)
                 }
             }
             else -> {
-                if (d.items.isNotEmpty()) row("items") {
-                    Shelf("In Your Library") {
-                        items(d.items, key = { it.id }) { item ->
-                            PosterCard(item, { nav.push(Route.Detail(item.id, item)) }, Modifier.rememberFocus("i:${item.id}", default = item == d.items.first()),
-                                width = CinematicPoster, onLongClick = if (state.isAdmin && c.kind == "manual") ({ removing = item }) else null)
-                        }
-                    }
+                val items = d.items.distinctBy { it.id }
+                if (items.isNotEmpty()) grid("items", "In Your Library", null, items, { it.id }) { item ->
+                    PosterCard(item, { nav.push(Route.Detail(item.id, item)) }, Modifier.rememberFocus("i:${item.id}", default = item == items.first()),
+                        width = CinematicPoster, onLongClick = if (state.isAdmin && c.kind == "manual") ({ removing = item }) else null)
                 }
-                val missing = d.missing.orEmpty()
-                if (missing.isNotEmpty()) row("missing") {
-                    Shelf("Not in Your Library") {
-                        items(missing, key = { "m:${it.id}" }) { t -> TitleCard(t, Modifier.rememberFocus("m:${t.id}"), width = CinematicPoster) }
-                    }
+                val missing = d.missing.orEmpty().distinctBy { it.id }
+                if (missing.isNotEmpty()) grid("missing", "Not in Your Library", null, missing, { "m:${it.id}" }) { t ->
+                    TitleCard(t, Modifier.rememberFocus("m:${t.id}"), width = CinematicPoster)
                 }
-                if (d.items.isEmpty() && missing.isEmpty()) extra("none") { EmptyState("Nothing in this collection yet") }
+                if (items.isEmpty() && missing.isEmpty()) extra("none") { EmptyState("Nothing in this collection yet") }
             }
         }
     }

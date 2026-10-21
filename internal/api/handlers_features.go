@@ -181,7 +181,14 @@ func (s *Server) collectionItems(ctx context.Context, r *http.Request, c *db.Col
 // linked to the library items the caller can see.
 func (s *Server) collectionTitles(ctx context.Context, r *http.Request, c *db.Collection) []titleView {
 	views := make([]titleView, 0, len(c.Titles))
+	seen := map[string]bool{}
 	for _, t := range c.Titles {
+		// Lists can name a title twice; it's shown once.
+		k := t.MediaType + strconv.Itoa(t.TMDBID)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
 		views = append(views, titleView{TMDBID: t.TMDBID, MediaType: t.MediaType, Title: t.Title, Year: t.Year, PosterPath: t.PosterPath})
 	}
 	return nonNil(s.linkLibrary(ctx, r, views, false))

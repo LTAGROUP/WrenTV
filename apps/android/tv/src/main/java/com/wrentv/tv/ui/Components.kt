@@ -397,10 +397,7 @@ val PageGutter = 56.dp
 @Composable
 fun Shelf(title: String, modifier: Modifier = Modifier, subtitle: String? = null, content: LazyListScope.() -> Unit) {
     Column(modifier.fillMaxWidth()) {
-        Row(Modifier.padding(horizontal = PageGutter), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title, style = MaterialTheme.typography.headlineSmall, color = Wren.text)
-            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Wren.secondary)
-        }
+        ShelfTitle(title, subtitle)
         LazyRow(
             // When the page scrolls a shelf into view, its first screenful of
             // cards is composed ahead of time instead of all in one frame.
@@ -409,6 +406,15 @@ fun Shelf(title: String, modifier: Modifier = Modifier, subtitle: String? = null
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             content = content,
         )
+    }
+}
+
+/** A shelf's title line. */
+@Composable
+fun ShelfTitle(title: String, subtitle: String? = null) {
+    Row(Modifier.padding(horizontal = PageGutter), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(title, style = MaterialTheme.typography.headlineSmall, color = Wren.text)
+        if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Wren.secondary)
     }
 }
 
