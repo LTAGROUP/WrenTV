@@ -112,7 +112,7 @@ func (s *Server) handleLayoutConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) layoutOptions(ctx context.Context, r *http.Request, sc *pageScope) []layoutOption {
 	out := []layoutOption{}
 	for _, sh := range builtinShelves {
-		if s.shelfFits(sc, sh) {
+		if s.shelfFits(r, sc, sh) {
 			out = append(out, layoutOption{LayoutEntry: db.LayoutEntry{Type: "shelf", Ref: sh.ref}, Title: sh.title, Detail: "Shelf"})
 		}
 	}

@@ -343,6 +343,42 @@ func (d *DB) GenreCounts(ctx context.Context, libraryIDs []string) ([]GenreCount
 	return out, rows.Err()
 }
 
+// GenreBackdrops lists, for each genre, backdrops of the given libraries'
+// titles of kind ("movie", "show" or "all"): titles mainly of the genre
+// first, the best rated first among them.
+func (d *DB) GenreBackdrops(ctx context.Context, libraryIDs []string, kind string) (map[string][]string, error) {
+	out := map[string][]string{}
+	if len(libraryIDs) == 0 {
+		return out, nil
+	}
+	args := []any{}
+	for _, l := range libraryIDs {
+		args = append(args, l)
+	}
+	kinds := "'movie','show'"
+	if kind == "movie" || kind == "show" {
+		kinds = "'" + kind + "'"
+	}
+	// json_each's key is the genre's place in the title's list, the main one first.
+	rows, err := d.QueryContext(ctx, `SELECT g.value, i.backdrop_path FROM items i, json_each(i.genres) g
+		WHERE i.kind IN (`+kinds+`) AND i.backdrop_path != '' AND i.library_id IN (`+placeholders(len(libraryIDs))+`)
+		ORDER BY g.key, i.rating DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var genre, path string
+		if err := rows.Scan(&genre, &path); err != nil {
+			return nil, err
+		}
+		if len(out[genre]) < 10 {
+			out[genre] = append(out[genre], path)
+		}
+	}
+	return out, rows.Err()
+}
+
 // ---------- play history ----------
 
 type PlayStart struct {

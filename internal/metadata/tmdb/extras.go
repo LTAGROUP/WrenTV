@@ -22,6 +22,7 @@ type Title struct {
 	VoteAverage  float64 `json:"vote_average"`
 	VoteCount    int     `json:"vote_count"`
 	Popularity   float64 `json:"popularity"`
+	GenreIDs     []int   `json:"genre_ids"` // the title's main genre first
 }
 
 func (t Title) DisplayTitle() string {

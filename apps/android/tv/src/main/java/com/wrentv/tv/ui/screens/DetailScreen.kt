@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -36,15 +37,12 @@ import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.BringIntoViewSpec
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.foundation.relocation.bringIntoViewRequester
-import androidx.compose.foundation.relocation.BringIntoViewRequester
 import com.wrentv.tv.player.ThemeMusic
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.DisposableEffect
@@ -182,27 +180,18 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
         // buttons nudged the page up and down. This page scrolls only to bring
         // something on screen; the rows inside keep the default.
         val rows = LocalBringIntoViewSpec.current
-        CompositionLocalProvider(LocalBringIntoViewSpec provides OnlyWhenNeeded) {
+        var heroHeight by remember { mutableIntStateOf(0) }
+        var inHero by remember { mutableStateOf(false) }
+        val spec = remember(list) { DetailScroll(list) { if (inHero) heroHeight else null } }
+        // Ratings and tracks arrive after the page opens; the hero settles again as it grows.
+        LaunchedEffect(heroHeight, inHero) {
+            if (inHero) list.animateScrollToItem(0, spec.heroScroll(heroHeight, list.layoutInfo.viewportSize.height.toFloat()))
+        }
+        CompositionLocalProvider(LocalBringIntoViewSpec provides spec) {
         LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             item("hero") {
-                // Coming back up shows as much of the top of the page as fits above the
-                // buttons, not just the button that took focus. Asked of the list with the
-                // same bands as a button's own request, so the two agree instead of bouncing.
-                val scope = rememberCoroutineScope()
-                val whole = remember { BringIntoViewRequester() }
-                var heroSize by remember { mutableStateOf(IntSize.Zero) }
-                var inHero by remember { mutableStateOf(false) }
                 Column(
-                    Modifier.bringIntoViewRequester(whole).onSizeChanged { heroSize = it }
-                        .onFocusChanged {
-                            val entered = it.hasFocus && !inHero
-                            inHero = it.hasFocus
-                            if (!entered) return@onFocusChanged
-                            val h = heroSize.height.toFloat()
-                            val c = list.layoutInfo.viewportSize.height.toFloat()
-                            val fits = c * (1 - OnlyWhenNeeded.TOP - OnlyWhenNeeded.BOTTOM)
-                            scope.launch { whole.bringIntoView(Rect(0f, (h - fits).coerceAtLeast(0f), heroSize.width.toFloat(), h)) }
-                        }
+                    Modifier.onSizeChanged { heroHeight = it.height }.onFocusChanged { inHero = it.hasFocus }
                         .padding(start = PageGutter, end = PageGutter, top = 150.dp).width(820.dp),
                 ) {
                     TitleBlock(item, detail, nav)
@@ -311,13 +300,23 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
  * Scrolls only as far as it takes to show the target, keeping a band at the top
  * and a bigger one at the bottom (for the text under a card); doesn't move for
  * what's already inside. Something too tall for both bands gets them shrunk.
+ *
+ * While the hero has focus ([hero] gives its height), the page sits where it
+ * opened instead: at the top, or only as far down as shows the buttons.
  */
 @OptIn(ExperimentalFoundationApi::class)
-private object OnlyWhenNeeded : BringIntoViewSpec {
-    const val TOP = 0.06f
-    const val BOTTOM = 0.16f
+private class DetailScroll(val list: LazyListState, val hero: () -> Int?) : BringIntoViewSpec {
+    private val TOP = 0.06f
+    private val BOTTOM = 0.16f
+
+    /** Where the page sits with the hero focused: its bottom just above the bottom band. */
+    fun heroScroll(height: Int, containerSize: Float): Int = (height - containerSize * (1 - BOTTOM)).coerceAtLeast(0f).toInt()
 
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        hero()?.let { h ->
+            // Below the hero, the scroll isn't known exactly; head up until it is.
+            return if (list.firstVisibleItemIndex == 0) (heroScroll(h, containerSize) - list.firstVisibleItemScrollOffset).toFloat() else -containerSize * 4
+        }
         val room = (containerSize - size).coerceAtLeast(0f)
         val fit = (room / ((TOP + BOTTOM) * containerSize)).coerceAtMost(1f)
         val top = TOP * containerSize * fit

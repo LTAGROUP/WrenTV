@@ -190,3 +190,44 @@ func TestHubs(t *testing.T) {
 		t.Fatalf("missing hub: %d", code)
 	}
 }
+
+func TestLayoutStreamingLeavesOutLibraryShelves(t *testing.T) {
+	f := newLayoutFixture(t)
+	f.s.Cfg.Streaming = config.StreamingConfig{Enabled: true, TorBoxKey: "key", ProviderOrder: []string{"torbox"}}
+	if !f.s.Streaming.Active() {
+		t.Skip("streaming not active in the fixture")
+	}
+	libraryOnly := []string{"recentlyAdded", "topRated", "unwatched"}
+	scope := "/api/layouts/library:" + f.lib.ID
+	var out layoutResp
+	// The owner streams; the user doesn't, so still sees what the server has.
+	f.do(t, f.owner, "GET", scope, "", &out)
+	for _, id := range rowIDs(out.Rows) {
+		for _, ref := range libraryOnly {
+			if strings.HasPrefix(id, ref) {
+				t.Errorf("streaming page has %q", id)
+			}
+		}
+	}
+	f.do(t, f.user, "GET", scope, "", &out)
+	if ids := strings.Join(rowIDs(out.Rows), ","); !strings.Contains(ids, "recentlyAdded:"+f.lib.ID) {
+		t.Errorf("library page without streaming: %s", ids)
+	}
+
+	var hub struct {
+		Rows []layoutRow `json:"rows"`
+	}
+	f.do(t, f.owner, "GET", "/api/hubs/genre%3Amovie%3A%3AAction", "", &hub)
+	for _, row := range hub.Rows {
+		if row.Kind == "items" {
+			t.Errorf("streaming genre hub has library shelf %q", row.ID)
+		}
+	}
+}
+
+func TestDistinctArt(t *testing.T) {
+	got := distinctArt([][]string{{"a", "b"}, {"a", "c"}, {"a"}, nil})
+	if want := []string{"a", "c", "a", ""}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}

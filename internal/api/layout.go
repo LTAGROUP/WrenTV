@@ -129,6 +129,7 @@ type shelfInfo struct {
 	ref, title string
 	home       bool // only on Home
 	tmdb       bool // needs TMDB
+	library    bool // what the server has; a streaming server has everything, so it's left out
 	media      string
 }
 
@@ -138,9 +139,9 @@ var builtinShelves = []shelfInfo{
 	{ref: "watchlist", title: "My Watchlist", home: true},
 	{ref: "recentlyWatched", title: "Recently Watched", home: true},
 	{ref: "because", title: "Because You Watched", home: true, tmdb: true},
-	{ref: "recentlyAdded", title: "Recently Added"},
-	{ref: "topRated", title: "Top Rated in Your Library"},
-	{ref: "unwatched", title: "Unwatched"},
+	{ref: "recentlyAdded", title: "Recently Added", library: true},
+	{ref: "topRated", title: "Top Rated in Your Library", library: true},
+	{ref: "unwatched", title: "Unwatched", library: true},
 	{ref: "trending", title: "Trending Now", home: true, tmdb: true},
 	{ref: "chart:trending:movie", title: "Trending Movies", tmdb: true, media: "movie"},
 	{ref: "chart:trending:tv", title: "Trending Series", tmdb: true, media: "tv"},
@@ -162,9 +163,15 @@ func shelfByRef(ref string) (shelfInfo, bool) {
 	return shelfInfo{}, false
 }
 
+// streams reports whether the caller browses all of TMDB rather than the
+// server's own titles.
+func (s *Server) streams(r *http.Request) bool {
+	return s.TMDB.Enabled() && s.Streaming.Active() && s.canStream(r)
+}
+
 // shelfFits reports whether a built-in shelf belongs on the page.
-func (s *Server) shelfFits(sc *pageScope, sh shelfInfo) bool {
-	if sh.home && !sc.home() {
+func (s *Server) shelfFits(r *http.Request, sc *pageScope, sh shelfInfo) bool {
+	if (sh.home && !sc.home()) || (sh.library && s.streams(r)) {
 		return false
 	}
 	if sh.tmdb && !s.TMDB.Enabled() {
@@ -192,7 +199,7 @@ func (s *Server) builtinLayout(r *http.Request, sc *pageScope) []db.LayoutEntry 
 	shelf := func(refs ...string) []db.LayoutEntry {
 		var out []db.LayoutEntry
 		for _, ref := range refs {
-			if sh, ok := shelfByRef(ref); ok && s.shelfFits(sc, sh) {
+			if sh, ok := shelfByRef(ref); ok && s.shelfFits(r, sc, sh) {
 				out = append(out, db.LayoutEntry{Type: "shelf", Ref: ref})
 			}
 		}
@@ -206,7 +213,11 @@ func (s *Server) builtinLayout(r *http.Request, sc *pageScope) []db.LayoutEntry 
 			out = append(out, x...)
 		}
 	}
-	streaming := s.TMDB.Enabled() && s.Streaming.Active() && s.canStream(r)
+	streaming := s.streams(r)
+	charts := map[string][]string{
+		"movie": {"chart:trending:movie", "chart:popular:movie", "chart:now_playing:movie", "chart:upcoming:movie", "chart:top_rated:movie"},
+		"show":  {"chart:trending:tv", "chart:popular:tv", "chart:airing:tv", "chart:top_rated:tv"},
+	}
 	switch {
 	case sc.home() && streaming:
 		add(shelf("continue", "watchlist", "trending"), cols, shelf("recentlyWatched", "because"), category(db.ServicesCategoryID),
@@ -214,12 +225,9 @@ func (s *Server) builtinLayout(r *http.Request, sc *pageScope) []db.LayoutEntry 
 			shelf("chart:now_playing:movie", "chart:airing:tv", "chart:top_rated:movie", "chart:top_rated:tv"))
 	case sc.home():
 		add(shelf("continue", "watchlist", "trending"), cols, shelf("recentlyAdded", "topRated"), category(genresRef(sc)))
-	case sc.lib == nil && sc.kind == "movie":
-		add(shelf("continue"), category(genresRef(sc)), shelf("recentlyAdded"), cols,
-			shelf("chart:trending:movie", "chart:popular:movie", "chart:now_playing:movie", "chart:upcoming:movie", "chart:top_rated:movie"))
-	case sc.lib == nil:
-		add(shelf("continue"), category(genresRef(sc)), shelf("recentlyAdded"), cols,
-			shelf("chart:trending:tv", "chart:popular:tv", "chart:airing:tv", "chart:top_rated:tv"))
+	case sc.lib == nil || streaming:
+		// Library shelves drop out by themselves when the server streams.
+		add(shelf("continue"), category(genresRef(sc)), shelf("recentlyAdded"), cols, shelf(charts[sc.kind]...))
 	default:
 		add(shelf("continue"), category(genresRef(sc)), shelf("recentlyAdded"), cols, shelf("topRated", "unwatched"))
 	}
@@ -358,7 +366,7 @@ func (s *Server) collectionRow(ctx context.Context, r *http.Request, c *db.Colle
 
 func (s *Server) builtinRows(ctx context.Context, r *http.Request, sc *pageScope, ref string) []layoutRow {
 	sh, ok := shelfByRef(ref)
-	if !ok || !s.shelfFits(sc, sh) {
+	if !ok || !s.shelfFits(r, sc, sh) {
 		return nil
 	}
 	uid := principal(r).User.ID
@@ -534,6 +542,9 @@ func (s *Server) resolveShelf(ctx context.Context, r *http.Request, sh db.ShelfD
 			return nil
 		}
 	case "library":
+		if s.streams(r) {
+			return nil
+		}
 		rules := sh.Rules
 		if sh.MediaType != "" {
 			rules.Kind = sh.MediaType
@@ -576,14 +587,14 @@ func (s *Server) hubFor(ctx context.Context, r *http.Request, id string) (*db.Hu
 		if parts[2] != "" && !principal(r).CanAccess(parts[2]) {
 			return nil, db.ErrNotFound
 		}
-		return s.genreHub(ctx, parts[1], parts[2], parts[3]), nil
+		return s.genreHub(ctx, r, parts[1], parts[2], parts[3]), nil
 	}
 	return s.DB.GetHub(ctx, id)
 }
 
 // genreHub builds the hub for one genre of a page: the library's titles in
-// it, then TMDB's when the server has TMDB.
-func (s *Server) genreHub(ctx context.Context, kind, lib, name string) *db.Hub {
+// it, then TMDB's when the server has TMDB. A streaming server has only TMDB's.
+func (s *Server) genreHub(ctx context.Context, r *http.Request, kind, lib, name string) *db.Hub {
 	h := &db.Hub{ID: "genre:" + kind + ":" + lib + ":" + name, Name: name, Kind: "genre"}
 	mediaTypes := []string{kind}
 	if kind == "all" {
@@ -600,7 +611,10 @@ func (s *Server) genreHub(ctx context.Context, kind, lib, name string) *db.Hub {
 		// CollectionID on a library shelf scopes it to that library.
 		return db.ShelfDef{ID: id, Title: title, Source: "library", Sort: sort, Rules: ru, CollectionID: lib}
 	}
-	h.Shelves = append(h.Shelves, library("recent", "Recently Added", "added", false))
+	streaming := s.streams(r)
+	if !streaming {
+		h.Shelves = append(h.Shelves, library("recent", "Recently Added", "added", false))
+	}
 	if s.TMDB.Enabled() {
 		for _, mt := range mediaTypes {
 			if g := s.tmdbGenreID(ctx, tmdbType(mt), name); g > 0 {
@@ -613,11 +627,13 @@ func (s *Server) genreHub(ctx context.Context, kind, lib, name string) *db.Hub {
 			}
 		}
 	}
-	h.Shelves = append(h.Shelves,
-		library("rated", "Top Rated in Your Library", "rating", false),
-		library("unwatched", "Unwatched "+noun, "added", true),
-		library("all", "All "+name+" "+noun, "title", false),
-	)
+	if !streaming {
+		h.Shelves = append(h.Shelves,
+			library("rated", "Top Rated in Your Library", "rating", false),
+			library("unwatched", "Unwatched "+noun, "added", true),
+			library("all", "All "+name+" "+noun, "title", false),
+		)
+	}
 	return h
 }
 
@@ -670,8 +686,8 @@ func (s *Server) genreCards(ctx context.Context, r *http.Request, kind, lib stri
 		}
 	}
 	type genre struct {
-		name, backdrop string
-		count          int
+		name  string
+		count int
 	}
 	var gs []genre
 	counts, _ := s.DB.GenreCounts(ctx, ids)
@@ -683,7 +699,7 @@ func (s *Server) genreCards(ctx context.Context, r *http.Request, kind, lib stri
 			n = g.Shows
 		}
 		if n >= 3 {
-			gs = append(gs, genre{g.Genre, g.BackdropPath, n})
+			gs = append(gs, genre{g.Genre, n})
 		}
 	}
 	// A streaming page browses all of TMDB, so it has every genre.
@@ -713,19 +729,30 @@ func (s *Server) genreCards(ctx context.Context, r *http.Request, kind, lib stri
 		}
 		return gs[i].name < gs[j].name
 	})
+	// Art: the server's own titles, or TMDB's when it streams or has none
+	// of the genre.
+	owned := map[string][]string{}
+	if !s.streams(r) {
+		owned, _ = s.DB.GenreBackdrops(ctx, ids, kind)
+	}
 	cards := make([]hubCard, len(gs))
+	choices := make([][]string, len(gs))
 	var wg sync.WaitGroup
 	for i, g := range gs {
-		cards[i] = hubCard{ID: "genre:" + kind + ":" + lib + ":" + g.name, Name: g.name, Kind: "genre", BackdropPath: g.backdrop}
-		if g.backdrop == "" {
+		cards[i] = hubCard{ID: "genre:" + kind + ":" + lib + ":" + g.name, Name: g.name, Kind: "genre"}
+		choices[i] = owned[g.name]
+		if len(choices[i]) == 0 {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				cards[i].BackdropPath = s.hubArt(ctx, r, s.genreHub(ctx, kind, lib, g.name))
+				choices[i] = s.hubArt(ctx, r, s.genreHub(ctx, r, kind, lib, g.name))
 			}()
 		}
 	}
 	wg.Wait()
+	for i, path := range distinctArt(choices) {
+		cards[i].BackdropPath = path
+	}
 	return cards
 }
 
@@ -747,25 +774,34 @@ func (s *Server) categoryRow(ctx context.Context, r *http.Request, ref string) *
 	if err != nil {
 		return nil
 	}
-	cards := make([]*hubCard, len(c.HubIDs))
+	var cards []*hubCard
+	var choices [][]string
 	var wg sync.WaitGroup
-	for i, id := range c.HubIDs {
+	for _, id := range c.HubIDs {
 		h, err := s.DB.GetHub(ctx, id)
 		if err != nil || !s.hubAvailable(h) {
 			continue
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cards[i] = s.cardOf(ctx, r, h)
-		}()
+		card := s.baseCard(ctx, h)
+		cards = append(cards, card)
+		choices = append(choices, nil)
+		if card.BackdropPath == "" {
+			i := len(choices) - 1
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				choices[i] = s.hubArt(ctx, r, h)
+			}()
+		}
 	}
 	wg.Wait()
+	art := distinctArt(choices)
 	row := &layoutRow{ID: "category:" + c.ID, Kind: "hubs", Title: c.Name, Style: c.Style}
-	for _, card := range cards {
-		if card != nil {
-			row.Hubs = append(row.Hubs, *card)
+	for i, card := range cards {
+		if card.BackdropPath == "" {
+			card.BackdropPath = art[i]
 		}
+		row.Hubs = append(row.Hubs, *card)
 	}
 	if len(row.Hubs) == 0 {
 		return nil
@@ -783,58 +819,109 @@ func (s *Server) hubAvailable(h *db.Hub) bool {
 	return false
 }
 
+// cardOf is a hub's card, with its art.
 func (s *Server) cardOf(ctx context.Context, r *http.Request, h *db.Hub) *hubCard {
-	c := &hubCard{ID: h.ID, Name: h.Name, Kind: h.Kind, Tagline: h.Tagline, BackdropPath: h.BackdropPath, LogoPath: h.LogoPath, Color: h.Color}
+	c := s.baseCard(ctx, h)
 	if c.BackdropPath == "" {
-		c.BackdropPath = s.hubArt(ctx, r, h)
+		if art := s.hubArt(ctx, r, h); len(art) > 0 {
+			c.BackdropPath = art[0]
+		}
 	}
+	return c
+}
+
+// baseCard is a hub's card with only the art it was saved with.
+func (s *Server) baseCard(ctx context.Context, h *db.Hub) *hubCard {
+	c := &hubCard{ID: h.ID, Name: h.Name, Kind: h.Kind, Tagline: h.Tagline, BackdropPath: h.BackdropPath, LogoPath: h.LogoPath, Color: h.Color}
 	if c.LogoPath == "" && h.Kind == "service" {
 		c.LogoPath = s.providerLogo(ctx, h)
 	}
 	return c
 }
 
-// hubArt is the backdrop of a hub's first title, remembered for a while
-// since a row of tiles would otherwise fetch every hub's first shelf.
-func (s *Server) hubArt(ctx context.Context, r *http.Request, h *db.Hub) string {
-	key := h.ID + fmt.Sprint(h.UpdatedAt)
+// hubArt is the backdrops a hub's tile could use, best first, remembered
+// for a while since a row of tiles would otherwise fetch every hub's shelves.
+func (s *Server) hubArt(ctx context.Context, r *http.Request, h *db.Hub) []string {
+	key := h.ID + fmt.Sprint(h.UpdatedAt, s.streams(r))
 	artCache.Lock()
 	e, ok := artCache.m[key]
 	artCache.Unlock()
 	if ok && time.Since(e.at) < 6*time.Hour {
-		return e.path
+		return e.paths
 	}
-	path := ""
+	var paths []string
 	for _, sh := range h.Shelves {
-		row := s.resolveShelf(ctx, r, sh, 1)
-		if row == nil {
-			continue
-		}
-		for _, v := range row.Titles {
-			if v.BackdropPath != "" {
-				path = v.BackdropPath
-				break
-			}
-		}
-		for _, it := range row.Items {
-			if it.BackdropPath != "" {
-				path = it.BackdropPath
-				break
-			}
-		}
-		if path != "" {
+		if paths = append(paths, s.shelfArt(ctx, r, sh)...); len(paths) >= 10 {
 			break
 		}
 	}
 	artCache.Lock()
-	artCache.m[key] = artEntry{path, time.Now()}
+	artCache.m[key] = artEntry{paths, time.Now()}
 	artCache.Unlock()
-	return path
+	return paths
+}
+
+// shelfArt is a shelf's backdrops. On a genre shelf, titles that are
+// mainly of the genre come first, so the art says which genre it is.
+func (s *Server) shelfArt(ctx context.Context, r *http.Request, sh db.ShelfDef) []string {
+	if sh.Source == "discover" && len(sh.GenreIDs) > 0 && s.TMDB.Enabled() {
+		ts, _, err := s.TMDB.DiscoverWith(ctx, tmdbType(sh.MediaType), tmdb.DiscoverQuery{Sort: sh.Sort, Genres: sh.GenreIDs, Providers: sh.Providers})
+		if err != nil {
+			return nil
+		}
+		var mainly, rest []string
+		for _, t := range ts {
+			switch {
+			case t.BackdropPath == "":
+			case len(t.GenreIDs) > 0 && slices.Contains(sh.GenreIDs, t.GenreIDs[0]):
+				mainly = append(mainly, t.BackdropPath)
+			default:
+				rest = append(rest, t.BackdropPath)
+			}
+		}
+		return append(mainly, rest...)
+	}
+	row := s.resolveShelf(ctx, r, sh, 1)
+	if row == nil {
+		return nil
+	}
+	var paths []string
+	for _, v := range row.Titles {
+		if v.BackdropPath != "" {
+			paths = append(paths, v.BackdropPath)
+		}
+	}
+	for _, it := range row.Items {
+		if it.BackdropPath != "" {
+			paths = append(paths, it.BackdropPath)
+		}
+	}
+	return paths
+}
+
+// distinctArt picks each tile's backdrop from its choices, in order, never
+// one an earlier tile has, so a title in several genres doesn't repeat.
+func distinctArt(choices [][]string) []string {
+	used := map[string]bool{}
+	out := make([]string, len(choices))
+	for i, c := range choices {
+		for _, p := range c {
+			if !used[p] {
+				out[i] = p
+				break
+			}
+		}
+		if out[i] == "" && len(c) > 0 {
+			out[i] = c[0]
+		}
+		used[out[i]] = true
+	}
+	return out
 }
 
 type artEntry struct {
-	path string
-	at   time.Time
+	paths []string
+	at    time.Time
 }
 
 var artCache = struct {
