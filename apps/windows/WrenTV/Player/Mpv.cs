@@ -58,15 +58,29 @@ public sealed class Mpv
 
     double position, duration, publishedPosition = -1;
 
-    /// Whether libmpv-2.dll is next to the app.
-    public static bool Available
+    /// Whether libmpv-2.dll loads; see LoadError when it doesn't.
+    public static bool Available => LoadError is null;
+
+    /// Why libmpv-2.dll didn't load, or null when it did. A file that's there
+    /// but built for another processor (x64 on ARM, say) fails here too.
+    public static string? LoadError => loadError.Value;
+
+    static readonly Lazy<string?> loadError = new(() =>
     {
-        get
+        try
         {
-            try { return NativeLibrary.TryLoad(Lib, typeof(Mpv).Assembly, null, out _); }
-            catch { return false; }
+            NativeLibrary.Load(Lib, typeof(Mpv).Assembly, null);
+            return null;
         }
-    }
+        catch (Exception e)
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, Lib);
+            var arch = RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
+            return File.Exists(path)
+                ? $"The video player (libmpv-2.dll) couldn't load on this {arch} PC: {e.Message} Reinstall the latest Wren TV."
+                : "The video player (libmpv-2.dll) is missing. Reinstall Wren TV.";
+        }
+    });
 
     /// post runs a callback on the UI thread.
     public Mpv(IntPtr window, Action<Action> post)

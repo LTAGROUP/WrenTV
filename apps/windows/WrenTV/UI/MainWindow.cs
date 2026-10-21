@@ -229,7 +229,6 @@ sealed class MainWindow : Window
         else
         {
             nav.MenuItems.Add(Item("Collections", "\uE8F1", "collections"));
-            nav.MenuItems.Add(Item("Genres", "\uE8EC", "genres"));
             if (libs.Count > 0)
             {
                 nav.MenuItems.Add(new NavigationViewItemHeader { Content = "Libraries" });
@@ -238,6 +237,7 @@ sealed class MainWindow : Window
         }
         nav.FooterMenuItems.Clear();
         if (State.IsAdmin) nav.FooterMenuItems.Add(Item("Server", "", "admin"));
+        nav.FooterMenuItems.Add(Item("Layouts", "\uE8A9", "layouts"));
         nav.FooterMenuItems.Add(Item("Settings", "", "settings"));
         MarkSelected();
         // The section shown went away (e.g. live TV was turned off).
@@ -260,16 +260,16 @@ sealed class MainWindow : Window
         if (tag == section && stack.Count == 1) { stack[0].Reload(quiet: true); return; }
         Page? page = tag switch
         {
-            "home" => new HomePage(),
+            "home" => new RowsPage("home", "Home", () => new HomePage()),
             "watchlist" => new WatchlistPage(),
-            "movies" => new BrowsePage("movie"),
-            "shows" => new BrowsePage("show"),
+            "movies" => new RowsPage("movies", "Movies", () => new BrowsePage("movie"), () => new BrowsePage("movie")),
+            "shows" => new RowsPage("shows", "TV Shows", () => new BrowsePage("show"), () => new BrowsePage("show")),
             "collections" => new CollectionsPage(),
-            "genres" => new GenresPage(),
+            "layouts" => new LayoutsPage(),
             "live" => new LiveTvPage(),
             "admin" => new AdminPage(),
             "settings" => new SettingsPage(),
-            _ when tag.StartsWith("lib:") && State.Libraries.FirstOrDefault(l => "lib:" + l.Id == tag) is { } lib => new LibraryPage(lib),
+            _ when tag.StartsWith("lib:") && State.Libraries.FirstOrDefault(l => "lib:" + l.Id == tag) is { } lib => new RowsPage("library:" + lib.Id, lib.Name, () => new LibraryPage(lib), () => new LibraryPage(lib)),
             _ => null,
         };
         if (page == null) return;

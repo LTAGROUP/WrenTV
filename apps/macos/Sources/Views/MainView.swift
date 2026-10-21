@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum SidebarItem: Hashable {
-    case home, watchlist, liveTV, collections, genres, movies, shows
+    case home, watchlist, liveTV, collections, movies, shows, layouts
     case library(String)
     case downloads
     case stats, serverDownloads, users, manageLibraries, settings
@@ -30,7 +30,6 @@ struct MainView: View {
                         Label("Collections", systemImage: "square.stack").tag(SidebarItem.collections)
                     } else {
                         Label("Collections", systemImage: "square.stack").tag(SidebarItem.collections)
-                        Label("Genres", systemImage: "tag").tag(SidebarItem.genres)
                     }
                 }
                 if !state.canStream {
@@ -40,8 +39,9 @@ struct MainView: View {
                         }
                     }
                 }
-                if !state.downloads.items.isEmpty || state.limits?.canDownload == true {
-                    Section("This Mac") {
+                Section("This Mac") {
+                    Label("Layouts", systemImage: "rectangle.3.group").tag(SidebarItem.layouts)
+                    if !state.downloads.items.isEmpty || state.limits?.canDownload == true {
                         Label("Downloads", systemImage: "arrow.down.circle")
                             .badge(state.downloads.items.filter(\.active).count)
                             .tag(SidebarItem.downloads)
@@ -84,6 +84,10 @@ struct MainView: View {
                     .navigationDestination(for: WrenCollection.self) { CollectionDetailView(seed: $0).searchBar($search) }
                     .navigationDestination(for: GenreRoute.self) { GenreItemsView(route: $0).searchBar($search) }
                     .navigationDestination(for: StreamTitleRoute.self) { StreamTitleView(route: $0).searchBar($search) }
+                    .navigationDestination(for: HubRoute.self) { HubView(route: $0).searchBar($search) }
+                    .navigationDestination(for: LayoutEditorRoute.self) { LayoutEditorView(route: $0).searchBar($search) }
+                    .navigationDestination(for: Library.self) { LibraryView(library: $0).searchBar($search) }
+                    .navigationDestination(for: CatalogRoute.self) { CatalogView(type: $0.type).searchBar($search) }
             }
         }
         .onChange(of: selection) {
@@ -105,16 +109,21 @@ struct MainView: View {
     @ViewBuilder
     private var page: some View {
         switch selection ?? .home {
-        case .home: HomeView()
+        case .home: LayoutPageView(scope: "home", title: "Home") { HomeView() }
         case .watchlist: WatchlistView()
         case .liveTV: LiveTVView()
         case .collections: CollectionsView()
-        case .genres: GenresView()
-        case .movies: CatalogView(type: "movie")
-        case .shows: CatalogView(type: "show")
+        case .movies:
+            LayoutPageView(scope: "movies", title: "Movies", label: "Movies", browseAll: CatalogRoute(type: "movie")) { CatalogView(type: "movie") }
+        case .shows:
+            LayoutPageView(scope: "shows", title: "TV Shows", label: "TV Shows", browseAll: CatalogRoute(type: "show")) { CatalogView(type: "show") }
+        case .layouts: LayoutsView()
         case .stats: StatsView()
         case .library(let id):
-            if let lib = state.libraries.first(where: { $0.id == id }) { LibraryView(library: lib) }
+            if let lib = state.libraries.first(where: { $0.id == id }) {
+                LayoutPageView(scope: "library:\(lib.id)", title: lib.name, label: lib.name, browseAll: lib) { LibraryView(library: lib) }
+                    .id(lib.id)
+            }
         case .downloads: DownloadsView()
         case .serverDownloads: ServerDownloadsView()
         case .users: UsersView()

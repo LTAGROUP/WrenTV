@@ -32,6 +32,9 @@ env:
   MPV_TAG: '20261007'
   MPV_ASSET: 'mpv-dev-x86_64-20261007-git-eb0ee10315.7z'
   MPV_SHA256: '3fd93055d437310ad094d3f80c9b04f9a56e8b138bcb7d9c5cf01870abbfe5a5'
+  # Windows on ARM (Surface Pro X, Copilot+ PCs) runs its own build.
+  MPV_ARM64_ASSET: 'mpv-dev-aarch64-20261007-git-eb0ee10315.7z'
+  MPV_ARM64_SHA256: 'afd7a1b93c99252960f8baf7b63f0135891f7a513edf7256bf680da418021ab5'
 
 jobs:
   build:
@@ -59,32 +62,47 @@ jobs:
 
       - name: Fetch libmpv
         run: |
-          $url = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/$env:MPV_TAG/$env:MPV_ASSET"
-          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\mpv" | Out-Null
-          $archive = "$env:RUNNER_TEMP\mpv\mpv-dev.7z"
-          Invoke-WebRequest -Uri $url -OutFile $archive
-          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
-          if ($hash -ne $env:MPV_SHA256) { throw "libmpv checksum mismatch: $hash" }
-          7z x $archive -o"$env:RUNNER_TEMP\mpv\out" -y | Out-Null
-          New-Item -ItemType Directory -Force -Path WrenTV/lib/x64 | Out-Null
-          Copy-Item "$env:RUNNER_TEMP\mpv\out\libmpv-2.dll" WrenTV/lib/x64/
-          Get-Item WrenTV/lib/x64/libmpv-2.dll | Format-List Name, Length
+          $builds = @(
+            @{ Platform = 'x64'; Asset = $env:MPV_ASSET; Sha = $env:MPV_SHA256 },
+            @{ Platform = 'ARM64'; Asset = $env:MPV_ARM64_ASSET; Sha = $env:MPV_ARM64_SHA256 }
+          )
+          foreach ($b in $builds) {
+            $dir = "$env:RUNNER_TEMP\mpv\$($b.Platform)"
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $archive = "$dir\mpv-dev.7z"
+            Invoke-WebRequest -Uri "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/$env:MPV_TAG/$($b.Asset)" -OutFile $archive
+            $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+            if ($hash -ne $b.Sha) { throw "libmpv ($($b.Platform)) checksum mismatch: $hash" }
+            7z x $archive -o"$dir\out" -y | Out-Null
+            New-Item -ItemType Directory -Force -Path "WrenTV/lib/$($b.Platform)" | Out-Null
+            Copy-Item "$dir\out\libmpv-2.dll" "WrenTV/lib/$($b.Platform)/"
+            Get-Item "WrenTV/lib/$($b.Platform)/libmpv-2.dll" | Format-List FullName, Length
+          }
 
       # Visual Studio's MSBuild, not `dotnet publish`: the Windows App SDK's
       # resource (PRI) tasks ship with Visual Studio, not the .NET SDK.
       - uses: microsoft/setup-msbuild@v2
 
-      - name: Publish
+      # One installer carries both builds and installs the one the PC runs natively.
+      - name: Publish x64
         run: >
           msbuild WrenTV/WrenTV.csproj -restore -t:Publish -v:m -nologo
           -p:Configuration=Release -p:RuntimeIdentifier=win-x64 -p:Platform=x64
-          -p:Version=${{ steps.v.outputs.version }} -p:PublishDir=$PWD\dist\app\
+          -p:Version=${{ steps.v.outputs.version }} -p:PublishDir=$PWD\dist\app\x64\
+
+      - name: Publish ARM64
+        run: >
+          msbuild WrenTV/WrenTV.csproj -restore -t:Publish -v:m -nologo
+          -p:Configuration=Release -p:RuntimeIdentifier=win-arm64 -p:Platform=ARM64
+          -p:Version=${{ steps.v.outputs.version }} -p:PublishDir=$PWD\dist\app\arm64\
 
       - name: Check output
         run: |
-          Get-ChildItem dist/app -Filter *.pri | Format-Table Name, Length
-          foreach ($f in 'WrenTV.exe', 'libmpv-2.dll', 'resources.pri', 'Assets\lockup.png', 'Assets\WrenTV.ico') {
-            if (-not (Test-Path "dist/app/$f")) { throw "missing $f in the published app" }
+          foreach ($arch in 'x64', 'arm64') {
+            Get-ChildItem "dist/app/$arch" -Filter *.pri | Format-Table Name, Length
+            foreach ($f in 'WrenTV.exe', 'libmpv-2.dll', 'resources.pri', 'Assets\lockup.png', 'Assets\WrenTV.ico') {
+              if (-not (Test-Path "dist/app/$arch/$f")) { throw "missing $f in the published $arch app" }
+            }
           }
 
       - name: Installer

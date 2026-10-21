@@ -1,11 +1,5 @@
 package com.wrentv.tv.ui.screens
 
-import android.annotation.SuppressLint
-import android.content.ActivityNotFoundException
-import android.content.Intent
-import android.net.Uri
-import android.webkit.WebChromeClient
-import android.webkit.WebView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,12 +18,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.wrentv.tv.data.Item
+import com.wrentv.tv.player.TrailerWebView
 import com.wrentv.tv.ui.EmptyState
 import com.wrentv.tv.ui.LocalAppState
 import com.wrentv.tv.ui.LocalNavigator
@@ -69,52 +63,17 @@ fun StreamTitleScreen(route: Route.StreamTitle) {
     }
 }
 
-/**
- * Plays a YouTube trailer in the YouTube app when the TV has it, otherwise
- * in an embedded player.
- */
+/** Plays a YouTube trailer inside the app; Back returns to the title. */
 @Composable
 fun TrailerScreen(youtubeKey: String, title: String) {
-    val context = LocalContext.current
-    val nav = LocalNavigator.current
-    var embedded by remember { mutableStateOf(false) }
-    LaunchedEffect(youtubeKey) {
-        try {
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$youtubeKey")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            // The YouTube app took over; coming back returns to the title.
-            nav.back()
-        } catch (_: ActivityNotFoundException) {
-            embedded = true
-        }
-    }
+    val state = LocalAppState.current
+    val server = state.api?.baseUrl
+    var view by remember { mutableStateOf<TrailerWebView?>(null) }
+    DisposableEffect(youtubeKey) { onDispose { view?.release() } }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        if (embedded) YouTubeEmbed(youtubeKey, title)
+        AndroidView(
+            factory = { ctx -> TrailerWebView(ctx, youtubeKey, server).also { it.contentDescription = title; view = it; it.requestFocus() } },
+            modifier = Modifier.fillMaxSize(),
+        )
     }
-}
-
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-private fun YouTubeEmbed(key: String, title: String) {
-    val html = """
-        <html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>html,body{margin:0;height:100%;background:#000}iframe{border:0;width:100%;height:100%}</style></head>
-        <body><iframe title="${title.replace("\"", "&quot;")}" src="https://www.youtube-nocookie.com/embed/$key?autoplay=1&playsinline=1&rel=0"
-        allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe></body></html>
-    """.trimIndent()
-    var view by remember { mutableStateOf<WebView?>(null) }
-    DisposableEffect(Unit) { onDispose { view?.destroy() } }
-    AndroidView(
-        factory = { ctx ->
-            WebView(ctx).apply {
-                settings.javaScriptEnabled = true
-                settings.mediaPlaybackRequiresUserGesture = false
-                webChromeClient = WebChromeClient()
-                setBackgroundColor(android.graphics.Color.BLACK)
-                loadDataWithBaseURL("https://www.youtube-nocookie.com", html, "text/html", "utf-8", null)
-                requestFocus()
-                view = this
-            }
-        },
-        modifier = Modifier.fillMaxSize(),
-    )
 }

@@ -185,6 +185,21 @@ public sealed class WrenTVApi
     public Task<DiscoverSearch> DiscoverSearch(string q) => Get<DiscoverSearch>("/api/discover/search", [("q", q)]);
     public Task<Item> AddStreamTitle(int tmdbId, string mediaType) => Post<Item>("/api/streaming/titles", new { tmdbId, mediaType });
 
+    // Layouts. Servers from before layouts answer 404.
+    public Task<LayoutResponse> Layout(string scope) => Get<LayoutResponse>($"/api/layouts/{scope}");
+    public Task<HubResponse> Hub(string id) => Get<HubResponse>($"/api/hubs/{Uri.EscapeDataString(id)}");
+
+    /// everyone edits the server's default (admins); otherwise the user's own layout.
+    public Task<LayoutConfig> LayoutConfig(string scope, bool everyone) =>
+        Get<LayoutConfig>($"/api/layouts/{scope}/config", [("target", everyone ? "default" : "me")]);
+
+    public Task SetLayout(string scope, bool everyone, IEnumerable<LayoutEntry> entries) =>
+        Send(HttpMethod.Put, $"/api/layouts/{scope}", [("target", everyone ? "default" : "me")],
+            new { entries = entries.Select(e => new { type = e.Type, @ref = e.Ref, hidden = e.Hidden }).ToList() });
+
+    public Task ResetLayout(string scope, bool everyone) =>
+        Send(HttpMethod.Delete, $"/api/layouts/{scope}", [("target", everyone ? "default" : "me")]);
+
     // Admin
     public Task<List<ServerDownload>> ServerDownloads() => Get<List<ServerDownload>>("/api/admin/downloads");
     public Task CancelServerDownload(string id) => Send(HttpMethod.Delete, $"/api/admin/downloads/{id}");

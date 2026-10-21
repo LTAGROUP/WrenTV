@@ -16,11 +16,7 @@ struct Shelf<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 18) {
-                Text(title).font(.title3.bold())
-                if let subtitle { Text(subtitle).font(.callout).foregroundStyle(.secondary) }
-            }
-            .padding(.horizontal, TV.gutter)
+            ShelfTitle(title: title, subtitle: subtitle)
             ScrollView(.horizontal) {
                 LazyHStack(alignment: .top, spacing: TV.shelfSpacing) { content() }
                     .padding(.horizontal, TV.gutter)
@@ -30,6 +26,20 @@ struct Shelf<Content: View>: View {
             .scrollIndicators(.hidden)
         }
         .focusSection()
+    }
+}
+
+/// A shelf's name, and a line about it.
+struct ShelfTitle: View {
+    let title: String
+    var subtitle: String?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 18) {
+            Text(title).font(.title3.bold())
+            if let subtitle { Text(subtitle).font(.callout).foregroundStyle(.secondary) }
+        }
+        .padding(.horizontal, TV.gutter)
     }
 }
 
@@ -52,6 +62,7 @@ struct PosterCard: View {
             }
             .buttonStyle(.card)
             .contextMenu { ItemMenu(item: item) }
+            .ambient { item.heroEntry }
             Text(item.displayTitle).font(.caption).lineLimit(1)
             if let y = item.year, item.kind != "season" {
                 Text(String(y)).font(.caption2).foregroundStyle(.secondary)
@@ -100,6 +111,7 @@ struct LandscapeCard: View {
             }
             .buttonStyle(.card)
             .contextMenu { ItemMenu(item: item, showDetails: true) }
+            .ambient { item.heroEntry }
             Text(episodeList ? "\(item.episodeNumber). \(item.title)" : item.displayTitle(inShow: false))
                 .font(.caption).lineLimit(1)
             Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(episodeList ? 3 : 1)
@@ -135,6 +147,7 @@ struct TitleCard: View {
     @Environment(AppState.self) private var state
     let title: TitleView
     var rank: Int?
+    var width: CGFloat = TV.poster
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -148,16 +161,17 @@ struct TitleCard: View {
                 }
             }
             .buttonStyle(.card)
+            .ambient { title.heroEntry }
             Text(title.title).font(.caption).lineLimit(1)
             Text(title.item != nil ? "In your library" : (title.year.map(String.init) ?? " "))
                 .font(.caption2).foregroundStyle(title.item != nil ? Color.wrenEmber : .secondary)
         }
-        .frame(width: TV.poster)
+        .frame(width: width)
     }
 
     private var poster: some View {
         RemoteImage(url: state.api?.imageURL(title.posterPath, size: "w342"))
-            .frame(width: TV.poster, height: TV.poster * 1.5)
+            .frame(width: width, height: width * 1.5)
             .overlay(alignment: .bottomLeading) {
                 if let rank {
                     Text("\(rank)")

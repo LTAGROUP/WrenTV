@@ -107,7 +107,7 @@ struct CollectionDetailView: View {
                 header
                 if let detail, let titles = detail.titles {
                     LazyVGrid(columns: m.columns, alignment: .leading, spacing: m.rowSpacing) {
-                        ForEach(sorted(titles)) { TitleCard(title: $0, fill: true) }
+                        ForEach(sorted(titles.uniqued())) { TitleCard(title: $0, fill: true) }
                     }
                     .padding(.horizontal, m.gutter)
                     .padding(.vertical, 20)
@@ -116,7 +116,7 @@ struct CollectionDetailView: View {
                     }
                 } else if let detail {
                     LazyVGrid(columns: m.columns, alignment: .leading, spacing: m.rowSpacing) {
-                        ForEach(detail.items) { item in
+                        ForEach(detail.items.uniqued()) { item in
                             NavigationLink(value: item) { PosterCard(item: item, fill: true) }
                                 .buttonStyle(.plain)
                                 .contextMenu {
@@ -135,7 +135,7 @@ struct CollectionDetailView: View {
                     if let missing = detail.missing, !missing.isEmpty {
                         Text("Not in your library").font(.title3.bold()).padding(.horizontal, m.gutter).padding(.top, 10)
                         LazyVGrid(columns: m.columns, alignment: .leading, spacing: m.rowSpacing) {
-                            ForEach(missing) { TitleCard(title: $0, fill: true) }
+                            ForEach(missing.uniqued()) { TitleCard(title: $0, fill: true) }
                         }
                         .padding(m.gutter)
                     }

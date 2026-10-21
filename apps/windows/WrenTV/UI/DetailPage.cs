@@ -160,7 +160,7 @@ sealed class DetailPage(string id) : Page
             var label = next.InProgress ? $"Resume {next.EpisodeLabel}" : $"Play {next.EpisodeLabel}";
             row.Children.Add(Ui.Button(label, () => Nav.Play(next), "", accent: true));
         }
-        if (extras?.Trailer is { } t) row.Children.Add(Ui.Button("Trailer", () => Ui.Open(t.Url), ""));
+        if (extras?.Trailer is { } t) row.Children.Add(Ui.Button("Trailer", () => App.Shell?.Push(new TrailerPage(t, item.Title)), ""));
         if (item.Kind is "movie" or "show" && d.OnWatchlist is { } on)
         {
             row.Children.Add(Ui.IconButton(on ? "" : "", on ? "Remove from Watchlist" : "Add to Watchlist", async () =>

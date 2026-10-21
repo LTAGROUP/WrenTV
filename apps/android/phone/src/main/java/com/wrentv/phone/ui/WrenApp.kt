@@ -119,9 +119,9 @@ private fun MainScreen() {
 @Composable
 private fun TabRoot(t: Tab) {
     when (t) {
-        Tab.Home -> HomeScreen()
-        Tab.Movies -> CatalogScreen("movie")
-        Tab.Shows -> CatalogScreen("show")
+        Tab.Home -> LayoutPageScreen("home", "Home", root = true) { HomeScreen() }
+        Tab.Movies -> LayoutPageScreen("movies", "Movies", root = true, browseAll = Route.Catalog("movie")) { CatalogScreen("movie") }
+        Tab.Shows -> LayoutPageScreen("shows", "TV Shows", root = true, browseAll = Route.Catalog("show")) { CatalogScreen("show") }
         Tab.Library -> LibrariesScreen()
         Tab.Live -> LiveTvScreen()
         Tab.Downloads -> DownloadsScreen()
@@ -144,5 +144,10 @@ fun RouteScreen(r: Route) {
         Route.LiveTv -> LiveTvScreen()
         Route.Preferences -> PreferencesScreen()
         Route.Search -> SearchScreen()
+        is Route.LibraryPage -> LayoutPageScreen("library:${r.library.id}", r.library.name, root = false, browseAll = Route.LibraryItems(r.library)) { LibraryScreen(r.library) }
+        is Route.Catalog -> CatalogScreen(r.type)
+        is Route.Hub -> HubScreen(r.id, r.name)
+        Route.Layouts -> LayoutsScreen()
+        is Route.LayoutEditor -> LayoutEditorScreen(r.scope, r.title)
     }
 }

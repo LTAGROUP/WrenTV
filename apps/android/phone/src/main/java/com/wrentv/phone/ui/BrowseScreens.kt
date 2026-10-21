@@ -156,7 +156,7 @@ fun CatalogScreen(type: String) {
     }
 }
 
-/** The Library tab on servers without streaming: Watchlist, Collections, Genres, then the libraries. */
+/** The Library tab on servers without streaming: Watchlist, Collections, then the libraries. */
 @Composable
 fun LibrariesScreen() {
     val state = LocalAppState.current
@@ -165,10 +165,9 @@ fun LibrariesScreen() {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 8.dp)) {
             item { NavRow(Icons.Rounded.Bookmark, "Watchlist") { nav.push(Route.Watchlist) } }
             item { NavRow(Icons.Rounded.CollectionsBookmark, "Collections") { nav.push(Route.Collections) } }
-            item { NavRow(Icons.Rounded.Sell, "Genres") { nav.push(Route.Genres()) } }
             item { SectionHeader("Libraries") }
             items(state.libraries, { it.id }) { lib ->
-                NavRow(if (lib.type == "shows") Icons.Rounded.Tv else Icons.Rounded.Movie, lib.name, lib.itemCount?.toString()) { nav.push(Route.LibraryItems(lib)) }
+                NavRow(if (lib.type == "shows") Icons.Rounded.Tv else Icons.Rounded.Movie, lib.name, lib.itemCount?.toString()) { nav.push(Route.LibraryPage(lib)) }
             }
             if (state.libraries.isEmpty()) item { EmptyState(Icons.Rounded.Folder, "No libraries", "Ask the server owner to share a library.") }
         }
@@ -283,10 +282,10 @@ fun CollectionScreen(id: String, name: String) {
         if (d == null) Loading()
         else CardGrid {
             val titles = d.titles
-            if (titles != null && state.canStream) items(titles, { it.id }) { TitleCard(it) }
+            if (titles != null && state.canStream) items(titles.distinctBy { it.id }, { it.id }) { TitleCard(it) }
             else {
-                items(d.items, { it.id }) { PosterCard(it) }
-                d.missing?.let { missing -> items(missing, { "m" + it.id }) { TitleCard(it) } }
+                items(d.items.distinctBy { it.id }, { it.id }) { PosterCard(it) }
+                d.missing?.let { missing -> items(missing.distinctBy { it.id }, { "m" + it.id }) { TitleCard(it) } }
             }
             d.collection.syncError?.takeIf { it.isNotEmpty() }?.let { fullWidth { Text(it, color = Wren.ember) } }
         }

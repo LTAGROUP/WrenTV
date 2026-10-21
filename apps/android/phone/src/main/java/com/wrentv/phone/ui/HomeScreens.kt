@@ -83,7 +83,7 @@ fun HomeScreen() {
 
 /** The search bar floating at the top of Home; opens the search page. */
 @Composable
-private fun HomeSearchBar() {
+fun HomeSearchBar() {
     val nav = LocalNavigator.current
     Row(
         Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().height(46.dp)
@@ -154,7 +154,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.recentlyWatched(h: Di
 private fun metricsLandscape() = metrics().landscape
 
 /** One slide of a hero banner. */
-private class Slide(
+class Slide(
     val key: String,
     val backdrop: String?,
     val logo: String?,
@@ -165,7 +165,7 @@ private class Slide(
 
 /** A banner of titles that take turns every eight seconds, edge to edge under the status bar. */
 @Composable
-private fun Hero(label: String, slides: List<Slide>, actions: @Composable (Int) -> Unit) {
+fun Hero(label: String, slides: List<Slide>, actions: @Composable (Int) -> Unit) {
     val state = LocalAppState.current
     val m = metrics()
     val pager = rememberPagerState { slides.size }
@@ -207,12 +207,12 @@ private fun Hero(label: String, slides: List<Slide>, actions: @Composable (Int) 
     }
 }
 
-private fun metaLine(year: Int?, show: Boolean, rating: Double?): String = listOfNotNull(
+fun metaLine(year: Int?, show: Boolean, rating: Double?): String = listOfNotNull(
     year?.toString(), if (show) "Series" else "Film", rating?.takeIf { it > 0 }?.let { "★ %.1f".format(it) },
 ).joinToString(" · ")
 
 @Composable
-private fun DiscoverHero(titles: List<TitleView>) {
+fun DiscoverHero(titles: List<TitleView>) {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
     val scope = rememberCoroutineScope()

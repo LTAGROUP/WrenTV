@@ -304,7 +304,7 @@ struct PosterCard: View {
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .hoverLift(cornerRadius: 10)
-                    .ambient(item.backdropPath)
+                    .ambient(item.backdropPath) { item.heroEntry }
                 if item.isWatched {
                     Image(systemName: "checkmark.circle.fill")
                         .symbolRenderingMode(.palette)
@@ -344,7 +344,7 @@ struct LandscapeCard: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .hoverLift(cornerRadius: 10)
-                .ambient(item.backdropPath)
+                .ambient(item.backdropPath) { item.heroEntry }
             let left = item.progress.flatMap(timeLeft)
             if item.kind == "episode" {
                 Text(item.showTitle ?? item.title).font(.callout.weight(.medium)).lineLimit(1)

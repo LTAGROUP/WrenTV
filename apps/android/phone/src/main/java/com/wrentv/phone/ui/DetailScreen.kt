@@ -1,8 +1,14 @@
 package com.wrentv.phone.ui
 
-import android.content.Intent
 import android.text.format.Formatter
 import androidx.compose.foundation.background
+import com.wrentv.tv.player.TrailerWebView
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
@@ -69,7 +75,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.net.toUri
 import com.wrentv.tv.data.CastMember
 import com.wrentv.tv.data.Extras
 import com.wrentv.tv.data.Item
@@ -158,9 +163,9 @@ fun DetailScreen(itemId: String, seed: Item?) {
                                 PrimaryButton("${if (next.inProgress) "Resume" else "Play"} ${next.episodeLabel}", Icons.Rounded.PlayArrow, { play(next, false) })
                             }
                             extras?.trailer?.let { t ->
-                                GlassButton("Trailer", Icons.Rounded.SmartDisplay, {
-                                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, "https://www.youtube.com/watch?v=${t.youtubeKey}".toUri())) }
-                                })
+                                var watching by remember { mutableStateOf(false) }
+                                GlassButton("Trailer", Icons.Rounded.SmartDisplay, { watching = true })
+                                if (watching) TrailerDialog(t.youtubeKey, item.title) { watching = false }
                             }
                             d?.onWatchlist?.let { listed -> WatchlistButton(item, listed) }
                             val scope = rememberCoroutineScope()
@@ -435,3 +440,22 @@ private fun FileSection(files: List<MediaFileView>, admin: Boolean) {
     }
 }
 
+
+/** A trailer playing inside the app, over the title's page. */
+@Composable
+private fun TrailerDialog(key: String, title: String, onClose: () -> Unit) {
+    val server = LocalAppState.current.api?.baseUrl
+    var view by remember { mutableStateOf<TrailerWebView?>(null) }
+    DisposableEffect(key) { onDispose { view?.release() } }
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            AndroidView(
+                factory = { ctx -> TrailerWebView(ctx, key, server).also { it.contentDescription = title; view = it } },
+                modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).align(Alignment.Center),
+            )
+            IconButton(onClose, Modifier.statusBarsPadding().padding(8.dp).align(Alignment.TopStart)) {
+                Icon(Icons.Rounded.Close, "Close", tint = Color.White)
+            }
+        }
+    }
+}

@@ -104,39 +104,6 @@ struct GenreView: View {
     }
 }
 
-/// A collection's titles, and (when streaming) the ones the server doesn't have yet.
-struct CollectionView: View {
-    @Environment(AppState.self) private var state
-    let collection: WrenCollection
-    @State private var detail: CollectionDetail?
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
-                Text(collection.name).font(.title2.bold())
-                if !collection.description.isEmpty {
-                    Text(collection.description).foregroundStyle(.secondary).frame(maxWidth: 1100, alignment: .leading)
-                }
-                if let d = detail {
-                    LazyVGrid(columns: posterColumns, alignment: .leading, spacing: 56) {
-                        if let titles = d.titles, !titles.isEmpty {
-                            ForEach(titles) { TitleCard(title: $0) }
-                        } else {
-                            ForEach(d.items) { PosterCard(item: $0) }
-                            ForEach(d.missing ?? []) { TitleCard(title: $0) }
-                        }
-                    }
-                } else {
-                    ProgressView().frame(maxWidth: .infinity).padding(.top, 200)
-                }
-            }
-            .padding(.horizontal, TV.gutter)
-            .padding(.vertical, 40)
-        }
-        .task(id: collection.id) { detail = try? await state.api?.collection(collection.id) }
-    }
-}
-
 /// A title the server doesn't have yet: adds it to the streaming library,
 /// then shows it like any other.
 struct StreamTitleView: View {

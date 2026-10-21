@@ -529,13 +529,15 @@ sealed class CollectionPage(string id, string name) : Page
     protected override async Task<UIElement> Build()
     {
         var c = await App.State.Api!.Collection(id);
+        // Lists can name a title twice; it's shown once.
+        c.Items = c.Items.DistinctBy(i => i.Id).ToList();
         var g = new Grid { RowSpacing = 20, Padding = new Thickness(0, 24, 0, 0) };
         g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         g.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         g.Children.Add(PageTitle(c.Collection.Name.Length > 0 ? c.Collection.Name : name,
             string.IsNullOrEmpty(c.Collection.Description) ? $"{c.Items.Count} titles" : c.Collection.Description));
         UIElement list;
-        var missing = c.Missing ?? c.Titles?.Where(t => t.Item == null).ToList() ?? [];
+        var missing = (c.Missing ?? c.Titles?.Where(t => t.Item == null).ToList() ?? []).DistinctBy(t => t.MediaType + t.TmdbId).ToList();
         if (missing.Count > 0)
         {
             var sections = new List<UIElement>

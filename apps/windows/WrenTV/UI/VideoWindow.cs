@@ -69,7 +69,7 @@ abstract class VideoWindow : Window
         video = Win32.CreateVideoWindow(window);
         try
         {
-            if (!Mpv.Available) throw new InvalidOperationException("The video player (libmpv-2.dll) is missing. Reinstall Wren TV.");
+            if (Mpv.LoadError is { } error) throw new InvalidOperationException(error);
             Mpv = new Mpv(video, a => App.OnUi(a));
             Mpv.OnInput = Input;
         }

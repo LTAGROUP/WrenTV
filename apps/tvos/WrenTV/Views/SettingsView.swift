@@ -40,6 +40,13 @@ struct SettingsView: View {
                     Button("Sign Out", role: .destructive) { state.signOut() }
                 }
                 Section {
+                    NavigationLink("Layouts", value: LayoutsRoute())
+                } header: {
+                    Text("Pages")
+                } footer: {
+                    Text("Choose which rows Home, Movies, TV Shows and each library show, and in what order.")
+                }
+                Section {
                     Picker("Audio language", selection: $audioLanguage) {
                         Text("File's default track").tag("")
                         ForEach(options, id: \.0) { Text($0.1).tag($0.0) }

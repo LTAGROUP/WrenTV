@@ -17,16 +17,16 @@ struct MainView: View {
     var body: some View {
         TabView(selection: $tab) {
             Tab("Home", systemImage: "house", value: AppTab.home) {
-                TabStack { HomeView() }
+                TabStack { LayoutPageView(scope: "home", title: "Home", root: true) { HomeView() } }
             }
             if state.canStream {
                 // Everything plays, so there are no libraries to pick from:
                 // just movies and shows.
                 Tab("Movies", systemImage: "film", value: AppTab.movies) {
-                    TabStack { CatalogView(type: "movie") }
+                    TabStack { LayoutPageView(scope: "movies", title: "Movies", root: true, browseAll: CatalogRoute(type: "movie")) { CatalogView(type: "movie") } }
                 }
                 Tab("TV Shows", systemImage: "tv", value: AppTab.shows) {
-                    TabStack { CatalogView(type: "show") }
+                    TabStack { LayoutPageView(scope: "shows", title: "TV Shows", root: true, browseAll: CatalogRoute(type: "show")) { CatalogView(type: "show") } }
                 }
             } else {
                 Tab("Library", systemImage: "square.stack", value: AppTab.library) {
@@ -65,6 +65,30 @@ struct TabStack<Root: View>: View {
     }
 }
 
+/// The More tab's pages. They're pushed as values like every other page,
+/// since a stack that mixes value links with view links pops the view-linked
+/// page as soon as something is pushed from it.
+enum PageRoute: Hashable {
+    case liveTV, watchlist, downloads, collections, preferences, linkTV
+    case stats, libraries, users, serverDownloads, serverSettings
+
+    @ViewBuilder var page: some View {
+        switch self {
+        case .liveTV: LiveTVView()
+        case .watchlist: WatchlistView()
+        case .downloads: DownloadsView()
+        case .collections: CollectionsView()
+        case .preferences: PreferencesView()
+        case .linkTV: LinkTVView()
+        case .stats: StatsView()
+        case .libraries: ManageLibrariesView()
+        case .users: UsersView()
+        case .serverDownloads: ServerDownloadsView()
+        case .serverSettings: ServerSettingsView()
+        }
+    }
+}
+
 extension View {
     func wrenDestinations() -> some View {
         navigationDestination(for: Item.self) { ItemDetailView(itemId: $0.id, seed: $0) }
@@ -72,23 +96,39 @@ extension View {
             .navigationDestination(for: GenreRoute.self) { GenreItemsView(route: $0) }
             .navigationDestination(for: StreamTitleRoute.self) { StreamTitleView(route: $0) }
             .navigationDestination(for: SearchRoute.self) { _ in SearchTab() }
+            .navigationDestination(for: HubRoute.self) { HubView(route: $0) }
+            .navigationDestination(for: LayoutEditorRoute.self) { LayoutEditorView(route: $0) }
+            .navigationDestination(for: CatalogRoute.self) { CatalogView(type: $0.type) }
+            .navigationDestination(for: Library.self) { LibraryView(library: $0) }
+            .navigationDestination(for: LibraryPageRoute.self) { LibraryPage(library: $0.library) }
+            .navigationDestination(for: LayoutsRoute.self) { _ in LayoutsView() }
+            .navigationDestination(for: PageRoute.self) { $0.page }
     }
 }
 
-/// Libraries, collections and genres when the server doesn't stream.
+/// A library's own page: its layout rows, then the whole library under Browse All.
+struct LibraryPage: View {
+    let library: Library
+
+    var body: some View {
+        LayoutPageView(scope: "library:\(library.id)", title: library.name, browseAll: library) { LibraryView(library: library) }
+            .id(library.id)
+    }
+}
+
+/// Libraries and collections when the server doesn't stream.
 struct LibrariesView: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
         List {
             Section {
-                NavigationLink { WatchlistView() } label: { Label("Watchlist", systemImage: "bookmark") }
-                NavigationLink { CollectionsView() } label: { Label("Collections", systemImage: "square.stack") }
-                NavigationLink { GenresView() } label: { Label("Genres", systemImage: "tag") }
+                NavigationLink(value: PageRoute.watchlist) { Label("Watchlist", systemImage: "bookmark") }
+                NavigationLink(value: PageRoute.collections) { Label("Collections", systemImage: "square.stack") }
             }
             Section("Libraries") {
                 ForEach(state.libraries) { lib in
-                    NavigationLink { LibraryView(library: lib) } label: { Label(lib.name, systemImage: lib.symbol) }
+                    NavigationLink(value: LibraryPageRoute(library: lib)) { Label(lib.name, systemImage: lib.symbol) }
                 }
             }
         }
@@ -108,33 +148,34 @@ struct MoreView: View {
             if state.canStream || (state.hasLiveTV && sizeClass == .compact) {
                 Section {
                     if state.hasLiveTV && state.canStream && sizeClass == .compact {
-                        NavigationLink { LiveTVView() } label: { Label("Live TV", systemImage: "antenna.radiowaves.left.and.right") }
+                        NavigationLink(value: PageRoute.liveTV) { Label("Live TV", systemImage: "antenna.radiowaves.left.and.right") }
                     }
                     if state.canStream {
-                        NavigationLink { WatchlistView() } label: { Label("Watchlist", systemImage: "bookmark") }
+                        NavigationLink(value: PageRoute.watchlist) { Label("Watchlist", systemImage: "bookmark") }
                     }
                     if state.showsDownloads && (state.canStream || (state.hasLiveTV && sizeClass == .compact)) {
-                        NavigationLink { DownloadsView() } label: { Label("Downloads", systemImage: "arrow.down.circle") }
+                        NavigationLink(value: PageRoute.downloads) { Label("Downloads", systemImage: "arrow.down.circle") }
                             .badge(state.downloads.items.filter(\.active).count)
                     }
                     if state.canStream {
-                        NavigationLink { CollectionsView() } label: { Label("Collections", systemImage: "square.stack") }
+                        NavigationLink(value: PageRoute.collections) { Label("Collections", systemImage: "square.stack") }
                     }
                 }
             }
             Section {
-                NavigationLink { PreferencesView() } label: { Label("Playback Settings", systemImage: "slider.horizontal.3") }
-                NavigationLink { LinkTVView() } label: { Label("Link a TV", systemImage: "tv.badge.wifi") }
+                NavigationLink(value: PageRoute.preferences) { Label("Playback Settings", systemImage: "slider.horizontal.3") }
+                NavigationLink(value: LayoutsRoute()) { Label("Layouts", systemImage: "rectangle.3.group") }
+                NavigationLink(value: PageRoute.linkTV) { Label("Link a TV", systemImage: "tv.badge.wifi") }
             }
             if state.isAdmin {
                 Section("Server") {
-                    NavigationLink { StatsView() } label: { Label("Stats", systemImage: "chart.bar") }
-                    NavigationLink { ManageLibrariesView() } label: { Label("Libraries", systemImage: "folder") }
-                    NavigationLink { UsersView() } label: { Label("Users", systemImage: "person.2") }
+                    NavigationLink(value: PageRoute.stats) { Label("Stats", systemImage: "chart.bar") }
+                    NavigationLink(value: PageRoute.libraries) { Label("Libraries", systemImage: "folder") }
+                    NavigationLink(value: PageRoute.users) { Label("Users", systemImage: "person.2") }
                     if state.server?.streaming == true {
-                        NavigationLink { ServerDownloadsView() } label: { Label("Server Downloads", systemImage: "externaldrive.badge.plus") }
+                        NavigationLink(value: PageRoute.serverDownloads) { Label("Server Downloads", systemImage: "externaldrive.badge.plus") }
                     }
-                    NavigationLink { ServerSettingsView() } label: { Label("Settings", systemImage: "gearshape") }
+                    NavigationLink(value: PageRoute.serverSettings) { Label("Settings", systemImage: "gearshape") }
                 }
             }
             Section {

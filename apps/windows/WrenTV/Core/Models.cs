@@ -645,3 +645,72 @@ static class Languages
         ("cs", "Czech"), ("hu", "Hungarian"), ("ro", "Romanian"),
     ];
 }
+
+/// A hub as a tile: a genre, a streaming service or an admin's own.
+public sealed class HubCard
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Kind { get; set; } = "custom"; // genre | service | custom
+    public string? Tagline { get; set; }
+    public string? BackdropPath { get; set; }
+    public string? LogoPath { get; set; }
+    /// "#rrggbb" behind a service's logo.
+    public string? Color { get; set; }
+
+    public string KindLabel => Kind switch { "genre" => "Genre", "service" => "Streaming service", _ => "Hub" };
+}
+
+/// One row of a page or hub, resolved by the server.
+public sealed class LayoutRow
+{
+    public string Id { get; set; } = "";
+    /// "landscape", "items", "titles", "hubs" or "collection".
+    public string Kind { get; set; } = "items";
+    public string Title { get; set; } = "";
+    public string? Subtitle { get; set; }
+    public List<Item>? Items { get; set; }
+    public List<TitleView>? Titles { get; set; }
+    public List<HubCard>? Hubs { get; set; }
+    /// A hub row's "tiles" or "logos".
+    public string? Style { get; set; }
+    public WrenCollection? Collection { get; set; }
+    public List<TitleView>? Missing { get; set; }
+    public bool Ranked { get; set; }
+    /// Set when the row is a single hub's first shelf.
+    public string? HubId { get; set; }
+}
+
+/// A page's rows: "home", "movies", "shows" or "library:<id>".
+public sealed class LayoutResponse
+{
+    public List<LayoutRow> Rows { get; set; } = [];
+    public bool Custom { get; set; }
+}
+
+public sealed class HubResponse
+{
+    public HubCard Hub { get; set; } = new();
+    public List<LayoutRow> Rows { get; set; } = [];
+}
+
+/// A row as the layout editor sees it.
+public sealed class LayoutEntry
+{
+    public string Type { get; set; } = "";
+    public string Ref { get; set; } = "";
+    public bool Hidden { get; set; }
+    public string? Title { get; set; }
+    public string? Detail { get; set; }
+
+    public string Key => $"{Type}|{Ref}";
+}
+
+public sealed class LayoutConfig
+{
+    public List<LayoutEntry> Entries { get; set; } = [];
+    /// Whether this is a saved layout of its own rather than the inherited one.
+    public bool Custom { get; set; }
+    public bool HasDefault { get; set; }
+    public List<LayoutEntry> Options { get; set; } = [];
+}

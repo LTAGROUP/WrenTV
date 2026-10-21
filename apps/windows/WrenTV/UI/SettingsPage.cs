@@ -54,7 +54,7 @@ sealed class SettingsPage : Page
         }
         else playback.Children.Add(Ui.Secondary("Couldn't load your playback settings."));
         if (!Player.Mpv.Available)
-            playback.Children.Add(Ui.Error("The video player (libmpv-2.dll) is missing. Reinstall Wren TV."));
+            playback.Children.Add(Ui.Error(Player.Mpv.LoadError!));
 
         var about = Ui.Column(14, Section("Wren TV for Windows"));
         about.Children.Add(Line("Version", Updates.CurrentLabel));

@@ -6,6 +6,8 @@ import SwiftUI
 /// its own; cards report their backdrop when the pointer is over them.
 @Observable final class AmbientState {
     var path: String?
+    /// The hovered title's details, for pages with a hero.
+    var entry: HeroEntry?
 }
 
 extension EnvironmentValues {
@@ -14,7 +16,9 @@ extension EnvironmentValues {
 
 extension View {
     /// Makes a card's backdrop the page's while the pointer is over it.
-    func ambient(_ backdrop: String?) -> some View { modifier(AmbientSource(backdrop: backdrop)) }
+    func ambient(_ backdrop: String?, entry: (() -> HeroEntry)? = nil) -> some View {
+        modifier(AmbientSource(backdrop: backdrop, entry: entry))
+    }
 
     /// Gives a page the hovered title's artwork as its background.
     func ambientBackdrop() -> some View { modifier(AmbientPage()) }
@@ -23,10 +27,16 @@ extension View {
 private struct AmbientSource: ViewModifier {
     @Environment(\.ambient) private var ambient
     let backdrop: String?
+    let entry: (() -> HeroEntry)?
 
     func body(content: Content) -> some View {
         content.onHover { inside in
-            if inside, let backdrop, !backdrop.isEmpty { ambient?.path = backdrop }
+            guard inside else { return }
+            if let backdrop, !backdrop.isEmpty { ambient?.path = backdrop }
+            if let entry, let ambient {
+                let e = entry()
+                if ambient.entry != e { ambient.entry = e }
+            }
         }
     }
 }

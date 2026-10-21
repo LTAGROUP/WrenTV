@@ -25,6 +25,13 @@ sealed interface Route {
     data object LiveTv : Route
     data object Preferences : Route
     data object Search : Route
+    /** A library's layout page; its Browse All is [LibraryItems]. */
+    data class LibraryPage(val library: Library) : Route
+    /** Movies' or TV Shows' whole catalog. */
+    data class Catalog(val type: String) : Route
+    data class Hub(val id: String, val name: String) : Route
+    data object Layouts : Route
+    data class LayoutEditor(val scope: String, val title: String) : Route
 }
 
 enum class Tab(val label: String) { Home("Home"), Movies("Movies"), Shows("TV Shows"), Library("Library"), Live("Live TV"), Downloads("Downloads"), More("More") }

@@ -16,8 +16,8 @@ android {
         applicationId = "com.wrentv.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 5
-        versionName = "0.1.4"
+        versionCode = 6
+        versionName = "0.1.5"
     }
 
     // The same release key as the TV app (see keystore.properties).

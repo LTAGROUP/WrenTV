@@ -390,7 +390,7 @@ struct SearchView: View {
 
 /// The large backdrop at the top of Home: a few titles that take turns,
 /// edge to edge under the toolbar.
-private struct FeatureHero: View {
+struct FeatureHero: View {
     @Environment(AppState.self) private var state
     @Environment(\.metrics) private var m
     let items: [Item]

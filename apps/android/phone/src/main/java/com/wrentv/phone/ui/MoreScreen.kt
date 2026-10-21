@@ -12,6 +12,7 @@ import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Collections
+import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.LiveTv
@@ -50,6 +51,7 @@ fun MoreScreen() {
             NavRow(Icons.Rounded.Bookmark, "Watchlist") { nav.push(Route.Watchlist) }
             NavRow(Icons.Rounded.Download, "Downloads", state.downloads.items.size.takeIf { it > 0 }?.toString()) { nav.push(Route.Downloads) }
             NavRow(Icons.Rounded.Collections, "Collections") { nav.push(Route.Collections) }
+            NavRow(Icons.Rounded.Dashboard, "Layouts") { nav.push(Route.Layouts) }
             NavRow(Icons.Rounded.Tune, "Playback") { nav.push(Route.Preferences) }
             SectionHeader("Account")
             state.accountEmail?.let { NavRow(Icons.Rounded.Person, it, onClick = null) }

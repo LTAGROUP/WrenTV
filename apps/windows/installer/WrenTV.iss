@@ -27,8 +27,9 @@ DisableProgramGroupPage=yes
 DisableDirPage=auto
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+; x64 PCs, and Windows on ARM, which gets its own native build below.
+ArchitecturesAllowed=x64compatible or arm64
+ArchitecturesInstallIn64BitMode=x64compatible or arm64
 MinVersion=10.0.17763
 OutputDir={#OutputDir}
 OutputBaseFilename=WrenTV-Windows-Setup
@@ -52,7 +53,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Type: filesandordirs; Name: "{app}\*"
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; SourceDir holds the x64 and arm64 publishes side by side.
+Source: "{#SourceDir}\x64\*"; DestDir: "{app}"; Check: not IsArm64; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\arm64\*"; DestDir: "{app}"; Check: IsArm64; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\Wren TV"; Filename: "{app}\WrenTV.exe"

@@ -109,7 +109,7 @@ struct CollectionDetailView: View {
                 header
                 if let detail, let titles = detail.titles {
                     LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 26) {
-                        ForEach(sorted(titles)) { TitleCard(title: $0) }
+                        ForEach(sorted(titles.uniqued())) { TitleCard(title: $0) }
                     }
                     .padding(.horizontal, 28)
                     .padding(.vertical, 20)
@@ -118,7 +118,7 @@ struct CollectionDetailView: View {
                     }
                 } else if let detail {
                     LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 26) {
-                        ForEach(detail.items) { item in
+                        ForEach(detail.items.uniqued()) { item in
                             NavigationLink(value: item) { PosterCard(item: item) }
                                 .buttonStyle(.plain)
                                 .contextMenu {
@@ -137,7 +137,7 @@ struct CollectionDetailView: View {
                     if let missing = detail.missing, !missing.isEmpty {
                         Text("Not in your library").font(.title3.bold()).padding(.horizontal, 28).padding(.top, 10)
                         LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 26) {
-                            ForEach(missing) { TitleCard(title: $0) }
+                            ForEach(missing.uniqued()) { TitleCard(title: $0) }
                         }
                         .padding(28)
                     }
@@ -183,10 +183,10 @@ struct CollectionDetailView: View {
                     Text(collection.description).foregroundStyle(.secondary).lineLimit(3).frame(maxWidth: 680, alignment: .leading)
                 }
                 HStack(spacing: 8) {
-                    if let titles = detail?.titles {
+                    if let titles = detail?.titles?.uniqued() {
                         Text("\(titles.count) title\(titles.count == 1 ? "" : "s")")
                     } else {
-                        Text("\(detail?.items.count ?? collection.itemCount ?? 0) in your library")
+                        Text("\(detail?.items.uniqued().count ?? collection.itemCount ?? 0) in your library")
                     }
                     Text("·")
                     Text(collection.kindLabel)

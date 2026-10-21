@@ -94,7 +94,7 @@ struct DiscoverHomeView: View {
 }
 
 /// The rotating banner of this week's trending titles.
-private struct DiscoverHero: View {
+struct DiscoverHero: View {
     @Environment(AppState.self) private var state
     @Environment(\.metrics) private var m
     let titles: [TitleView]
