@@ -1,25 +1,36 @@
 import SwiftUI
 
-/// When episodes air, a shelf a day, from a week back to a month ahead: the
-/// library's shows still running and the ones being watched.
+/// When episodes air, a week at a time: a strip of the week's days on top
+/// (click one to see just that day), then a shelf a day. The library's shows
+/// still running and the ones being watched.
 struct CalendarView: View {
     @Environment(AppState.self) private var state
     @State private var calendar: CalendarResponse?
     @State private var error: String?
     @State private var watchingOnly = false
+    @State private var week = CalendarEpisode.week(of: CalendarEpisode.today)
+    @State private var picked: String?
 
     var body: some View {
         let eps = (calendar?.episodes ?? []).filter { !watchingOnly || $0.watching }
-        let next = eps.first { $0.date >= CalendarEpisode.today } ?? eps.last
+        let days = CalendarEpisode.days(eps)
+        let shown = days.filter { picked == nil || $0.date == picked }
+        let next = shown.first { $0.date >= CalendarEpisode.today }?.episodes.first ?? shown.first?.episodes.first
         ScrollViewReader { proxy in
             CinematicPage(fallback: next?.heroEntry, fallbackBackdrop: next?.show.backdropPath, label: "Calendar") {
+                WeekStrip(week: week, picked: $picked, counts: Dictionary(days.map { ($0.date, $0.episodes.count) }, uniquingKeysWith: +)) { step in
+                    picked = nil
+                    week = CalendarEpisode.week(of: CalendarEpisode.adding(7 * step, to: week[0]))
+                }
+                .frame(maxWidth: 760, alignment: .leading)
+                .padding(.horizontal, 28)
                 if calendar != nil {
-                    if eps.isEmpty {
-                        ContentUnavailableView(watchingOnly ? "Nothing coming up for your shows" : "Nothing airing", systemImage: "calendar",
-                                               description: Text("Episodes from a week back to a month ahead show here, for shows in the library that are still running."))
-                            .padding(.top, 60)
+                    if shown.isEmpty {
+                        ContentUnavailableView(emptyTitle, systemImage: "calendar",
+                                               description: Text("Episodes show here for shows in the library that are still running. Use the arrows to see other weeks."))
+                            .padding(.top, 40)
                     }
-                    ForEach(CalendarEpisode.days(eps), id: \.date) { day in
+                    ForEach(shown, id: \.date) { day in
                         Shelf(title: CalendarEpisode.dayName(day.date), subtitle: "\(day.episodes.count) episode\(day.episodes.count == 1 ? "" : "s")") {
                             ForEach(day.episodes) { e in
                                 NavigationLink(value: ItemIDRoute(id: e.itemId ?? e.show.id)) { CalendarCard(episode: e) }
@@ -34,15 +45,22 @@ struct CalendarView: View {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 80)
                 }
             }
-            // Open on what's next to air, with what just aired above it.
+            // Open this week on today, with what aired earlier in the week above it.
             .onChange(of: calendar?.from) {
-                guard let d = next?.date else { return }
+                guard picked == nil, let d = days.first(where: { $0.date >= CalendarEpisode.today })?.date, d != days.first?.date else { return }
                 Task { @MainActor in proxy.scrollTo(d, anchor: .top) }
             }
         }
         .navigationTitle("Calendar")
         .toolbar {
-            ToolbarItem {
+            ToolbarItemGroup {
+                if !week.contains(CalendarEpisode.today) {
+                    Button("This Week") {
+                        picked = nil
+                        week = CalendarEpisode.week(of: CalendarEpisode.today)
+                    }
+                    .help("Go back to this week")
+                }
                 Picker("Shows", selection: $watchingOnly) {
                     Text("All Shows").tag(false)
                     Text("Shows I'm Watching").tag(true)
@@ -51,15 +69,80 @@ struct CalendarView: View {
                 .help("Which shows to list")
             }
         }
-        .task(id: state.refreshTick) {
+        .task(id: "\(week[0])|\(state.refreshTick)") {
             do {
-                calendar = try await state.api?.calendar()
+                let c = try await state.api?.calendar(from: week.first, to: week.last)
+                if c?.from == week.first { calendar = c }
                 error = nil
             } catch is CancellationError {
             } catch {
                 if calendar == nil { self.error = error.localizedDescription }
             }
         }
+    }
+
+    private var emptyTitle: String {
+        if let picked { return "Nothing airing \(CalendarEpisode.dayName(picked) == "Today" ? "today" : "on " + CalendarEpisode.dayName(picked))" }
+        return watchingOnly ? "Nothing this week for your shows" : "Nothing airing this week"
+    }
+}
+
+/// The seven days of a week with how many episodes air each, between
+/// previous and next week buttons. Clicking a day shows just that day;
+/// clicking it again shows the whole week.
+struct WeekStrip: View {
+    let week: [String]
+    @Binding var picked: String?
+    let counts: [String: Int]
+    let step: (Int) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(range).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                arrow("chevron.left", "Previous week", -1)
+                ForEach(week, id: \.self) { d in
+                    Button { picked = picked == d ? nil : d } label: { cell(d) }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(CalendarEpisode.dayName(d)), \(counts[d] ?? 0) episodes")
+                        .accessibilityAddTraits(picked == d ? .isSelected : [])
+                }
+                arrow("chevron.right", "Next week", 1)
+            }
+        }
+    }
+
+    private var range: String {
+        let p = CalendarEpisode.parser
+        guard let a = week.first.flatMap(p.date), let b = week.last.flatMap(p.date) else { return "" }
+        return "\(a.formatted(.dateTime.month(.abbreviated).day())) – \(b.formatted(.dateTime.month(.abbreviated).day().year()))"
+    }
+
+    private func arrow(_ icon: String, _ label: String, _ n: Int) -> some View {
+        Button { step(n) } label: {
+            Image(systemName: icon).font(.body.weight(.semibold)).frame(width: 28).frame(maxHeight: .infinity)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .help(label)
+    }
+
+    private func cell(_ d: String) -> some View {
+        let date = CalendarEpisode.parser.date(from: d) ?? Date()
+        let on = picked == d, today = d == CalendarEpisode.today, n = counts[d] ?? 0
+        return VStack(spacing: 2) {
+            Text(date.formatted(.dateTime.weekday(.abbreviated)).uppercased())
+                .font(.system(size: 10, weight: .bold)).kerning(0.6)
+                .foregroundStyle(on ? .white : today ? Color.wrenEmber : .secondary)
+            Text(date.formatted(.dateTime.day())).font(.title3.weight(.bold)).opacity(n == 0 && !on ? 0.55 : 1)
+            Text(n > 0 ? "\(n)" : " ").font(.caption2).foregroundStyle(on ? .white : .secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(on ? Color.wrenEmber : .white.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(today && !on ? Color.wrenEmber : .white.opacity(0.1)))
+        .contentShape(Rectangle())
+        .hoverLift(cornerRadius: 10)
     }
 }
 

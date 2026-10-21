@@ -32,6 +32,7 @@ sealed interface Route {
     /** Movies' or TV Shows' whole catalog. */
     data class Catalog(val type: String) : Route
     data class Hub(val id: String, val name: String) : Route
+    data class Person(val id: Int, val name: String) : Route
     data object Layouts : Route
     data class LayoutEditor(val scope: String, val title: String) : Route
 }

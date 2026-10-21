@@ -50,7 +50,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Pages")
                 } footer: {
-                    Text("Choose which rows Home, Movies, TV Shows and each library show, and in what order. Poster size applies to this Apple TV.")
+                    Text("Choose which rows Home, Movies, TV Shows and each library show, and in what order. Layouts and poster size are saved to your account, so every app you sign in to uses them.")
                 }
                 Section {
                     Picker("Audio language", selection: $audioLanguage) {
@@ -108,6 +108,7 @@ struct SettingsView: View {
                 subtitleLanguage = p.subtitleLanguage ?? ""
                 watchedPercent = p.watchedPercent ?? 90
                 continueAfter = p.continueAfter ?? 30
+                if let size = p.posterSize, PosterSize(rawValue: size) != nil { posterSize = size }
             }
             // Let the pickers settle before changes count as the viewer's.
             try? await Task.sleep(for: .milliseconds(200))
@@ -117,12 +118,13 @@ struct SettingsView: View {
         .onChange(of: subtitleLanguage) { save() }
         .onChange(of: watchedPercent) { save() }
         .onChange(of: continueAfter) { save() }
+        .onChange(of: posterSize) { save() }
     }
 
     private func save() {
         guard loaded, let api = state.api else { return }
         let prefs = UserPrefs(audioLanguage: audioLanguage, subtitleLanguage: subtitleLanguage,
-                              watchedPercent: watchedPercent, continueAfter: continueAfter)
+                              watchedPercent: watchedPercent, continueAfter: continueAfter, posterSize: posterSize)
         Task {
             do {
                 _ = try await api.setPrefs(prefs)

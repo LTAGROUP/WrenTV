@@ -45,6 +45,7 @@ const routes = [
   [/^\/collections$/, () => browse.viewCollections()],
   [/^\/collection\/([^/]+)$/, browse.viewCollection],
   [/^\/calendar$/, browse.viewCalendar],
+  [/^\/person\/(\d+)$/, browse.viewPerson],
   [/^\/account$/, browse.viewAccount],
   [/^\/manage\/stats$/, viewStats, true],
   [/^\/item\/([^/]+)$/, viewItem],
@@ -134,6 +135,8 @@ async function loadMe() {
   state.user = me.user;
   state.libraryIds = me.libraryIds;
   state.limits = me.limits || {};
+  // Poster size follows the account; this browser's copy paints the first frame.
+  api('/api/me/prefs').then((p) => p.posterSize && setPosterSize(p.posterSize)).catch(() => {});
   libraries = await api('/api/libraries');
 }
 
@@ -396,7 +399,8 @@ export function progressBar(it) {
 // Images fade in once loaded instead of popping.
 export const lazyImg = (src, alt = '') => `<img loading="lazy" class="loading" onload="this.classList.remove('loading')" onerror="this.remove()" src="${src}" alt="${esc(alt)}">`;
 
-// setPosterSize scales posters and tiles on this browser: small, medium or large.
+// setPosterSize scales posters and tiles: small, medium or large. The account
+// keeps the choice; localStorage remembers it for the next page load.
 export const posterSize = () => { try { return localStorage.getItem('wren.posterSize') || 'medium'; } catch { return 'medium'; } };
 export function setPosterSize(size) {
   try { size && size !== 'medium' ? localStorage.setItem('wren.posterSize', size) : localStorage.removeItem('wren.posterSize'); } catch {}
@@ -831,8 +835,9 @@ function ratingsHtml(r) {
 
 function personCard(c) {
   const initials = c.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('');
-  return `<div class="person"><div class="face">${c.profilePath ? lazyImg(img(c.profilePath, 'w185'), c.name) : esc(initials)}</div>
-    <div class="n">${esc(c.name)}</div>${c.character ? `<div class="c">${esc(c.character)}</div>` : ''}</div>`;
+  const tag = c.id ? `a class="person" href="/person/${c.id}"` : 'div class="person"';
+  return `<${tag}><div class="face">${c.profilePath ? lazyImg(img(c.profilePath, 'w185'), c.name) : esc(initials)}</div>
+    <div class="n">${esc(c.name)}</div>${c.character ? `<div class="c">${esc(c.character)}</div>` : ''}</${c.id ? 'a' : 'div'}>`;
 }
 
 // YouTube refuses embeds that arrive without a Referer (error 153), and the

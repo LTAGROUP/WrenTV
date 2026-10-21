@@ -459,35 +459,55 @@ struct CollectionTile: View {
 
 // MARK: Calendar
 
-/// When episodes air, a shelf a day: the library's shows still running and the ones being watched.
+/// When episodes air, a week at a time: a strip of the week's days on top
+/// (select one to see just that day), then a shelf a day. The library's
+/// shows still running and the ones being watched.
 struct CalendarView: View {
     @Environment(AppState.self) private var state
     @State private var calendar: CalendarResponse?
     @State private var error: String?
     @State private var watchingOnly = false
+    @State private var week = CalendarEpisode.week(of: CalendarEpisode.today)
+    @State private var picked: String?
 
     var body: some View {
         let eps = (calendar?.episodes ?? []).filter { !watchingOnly || $0.watching }
+        let days = CalendarEpisode.days(eps)
+        let shown = days.filter { picked == nil || $0.date == picked }
         let next = eps.first { $0.date >= CalendarEpisode.today } ?? eps.last
         CinematicPage(fallback: next?.heroEntry, label: "Calendar") {
             CinematicRow(id: "filter") {
-                Picker("Shows", selection: $watchingOnly) {
-                    Text("All Shows").tag(false)
-                    Text("Shows I'm Watching").tag(true)
+                HStack(spacing: 30) {
+                    Picker("Shows", selection: $watchingOnly) {
+                        Text("All Shows").tag(false)
+                        Text("Shows I'm Watching").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 720)
+                    if !week.contains(CalendarEpisode.today) {
+                        Button("This Week") {
+                            picked = nil
+                            week = CalendarEpisode.week(of: CalendarEpisode.today)
+                        }
+                    }
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 720)
                 .padding(.horizontal, TV.gutter)
                 .padding(.vertical, 20)
                 .focusSection()
             }
+            CinematicRow(id: "week") {
+                TVWeekStrip(week: week, picked: $picked, counts: Dictionary(days.map { ($0.date, $0.episodes.count) }, uniquingKeysWith: +)) { step in
+                    picked = nil
+                    week = CalendarEpisode.week(of: CalendarEpisode.adding(7 * step, to: week[0]))
+                }
+            }
             if calendar != nil {
-                if eps.isEmpty {
-                    EmptyState(title: watchingOnly ? "Nothing coming up for your shows" : "Nothing airing",
-                               message: "Episodes from a week back to a month ahead show here, for shows in the library that are still running.",
+                if shown.isEmpty {
+                    EmptyState(title: emptyTitle,
+                               message: "Episodes show here for shows in the library that are still running. Use the arrows to see other weeks.",
                                symbol: "calendar")
                 }
-                ForEach(CalendarEpisode.days(eps), id: \.date) { day in
+                ForEach(shown, id: \.date) { day in
                     CinematicRow(id: "day:\(day.date)") {
                         Shelf(title: CalendarEpisode.dayName(day.date), subtitle: "\(day.episodes.count) episode\(day.episodes.count == 1 ? "" : "s")") {
                             ForEach(day.episodes) { CalendarCard(episode: $0) }
@@ -500,13 +520,97 @@ struct CalendarView: View {
                 ProgressView().frame(maxWidth: .infinity).padding(.top, 120)
             }
         }
-        .task(id: state.refreshTick) {
+        .task(id: "\(week[0])|\(state.refreshTick)") {
             do {
-                calendar = try await state.api?.calendar()
+                let c = try await state.api?.calendar(from: week.first, to: week.last)
+                if c?.from == week.first { calendar = c }
                 error = nil
+            } catch is CancellationError {
             } catch {
                 if calendar == nil { self.error = error.localizedDescription }
             }
+        }
+    }
+
+    private var emptyTitle: String {
+        if let picked { return "Nothing airing \(CalendarEpisode.dayName(picked) == "Today" ? "today" : "on " + CalendarEpisode.dayName(picked))" }
+        return watchingOnly ? "Nothing this week for your shows" : "Nothing airing this week"
+    }
+}
+
+/// The seven days of a week with how many episodes air each, between
+/// previous and next week buttons. Selecting a day shows just that day;
+/// selecting it again shows the whole week.
+private struct TVWeekStrip: View {
+    let week: [String]
+    @Binding var picked: String?
+    let counts: [String: Int]
+    let step: (Int) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(range).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
+            HStack(spacing: 18) {
+                Button { step(-1) } label: { Image(systemName: "chevron.left").frame(width: 60, height: 120) }
+                    .buttonStyle(WeekCellStyle(on: false, today: false))
+                    .accessibilityLabel("Previous week")
+                ForEach(week, id: \.self) { d in
+                    Button { picked = picked == d ? nil : d } label: { cell(d) }
+                        .buttonStyle(WeekCellStyle(on: picked == d, today: d == CalendarEpisode.today))
+                        .accessibilityLabel("\(CalendarEpisode.dayName(d)), \(counts[d] ?? 0) episodes")
+                }
+                Button { step(1) } label: { Image(systemName: "chevron.right").frame(width: 60, height: 120) }
+                    .buttonStyle(WeekCellStyle(on: false, today: false))
+                    .accessibilityLabel("Next week")
+            }
+        }
+        .padding(.horizontal, TV.gutter)
+        .padding(.vertical, 20)
+        .focusSection()
+    }
+
+    private var range: String {
+        let p = CalendarEpisode.parser
+        guard let a = week.first.flatMap(p.date), let b = week.last.flatMap(p.date) else { return "" }
+        return "\(a.formatted(.dateTime.month(.abbreviated).day())) – \(b.formatted(.dateTime.month(.abbreviated).day().year()))"
+    }
+
+    private func cell(_ d: String) -> some View {
+        let date = CalendarEpisode.parser.date(from: d) ?? Date()
+        let n = counts[d] ?? 0
+        return VStack(spacing: 4) {
+            Text(date.formatted(.dateTime.weekday(.abbreviated)).uppercased()).font(.caption2.bold())
+            Text(date.formatted(.dateTime.day())).font(.title2.bold()).opacity(n == 0 && picked != d ? 0.55 : 1)
+            Text(n > 0 ? "\(n)" : " ").font(.caption2)
+        }
+        .frame(width: 150, height: 120)
+    }
+}
+
+/// A day in the week strip: ember when picked, outlined when today, lifted
+/// and white when focused.
+private struct WeekCellStyle: ButtonStyle {
+    let on: Bool
+    let today: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        Cell(configuration: configuration, on: on, today: today)
+    }
+
+    private struct Cell: View {
+        let configuration: Configuration
+        let on: Bool
+        let today: Bool
+        @Environment(\.isFocused) private var focused
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(focused ? .black : .white)
+                .background(focused ? Color.white : on ? Color.wrenEmber : .white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(today && !on && !focused ? Color.wrenEmber : .clear, lineWidth: 3))
+                .scaleEffect(focused ? 1.08 : configuration.isPressed ? 0.97 : 1)
+                .shadow(color: .black.opacity(focused ? 0.4 : 0), radius: 14, y: 8)
+                .animation(.easeOut(duration: 0.15), value: focused)
         }
     }
 }
@@ -542,6 +646,91 @@ private let collectionSorts: [(String, String)] = [
     ("", "Collection order"), ("title", "Title"), ("year", "Year (newest)"), ("year_asc", "Year (oldest)"),
     ("rating", "Rating"), ("added", "Recently added"),
 ]
+
+// MARK: Person
+
+/// An actor or crew member over their best-known title's artwork: photo,
+/// details and biography up top, then rows of what they're in with the role
+/// under each title. Selecting a title opens its page.
+struct PersonView: View {
+    @Environment(AppState.self) private var state
+    let route: PersonRoute
+    @State private var person: Person?
+    @State private var error: String?
+    @State private var bioOpen = false
+
+    var body: some View {
+        let facts = (person?.facts ?? []).filter { !$0.hasPrefix("Known for") }
+        CinematicPage(fallback: HeroEntry(id: "person:\(route.id)", title: person?.name ?? route.name,
+                                          backdrop: person?.backdropPath, meta: facts.joined(separator: "  ·  "),
+                                          overview: person?.biography),
+                      label: person?.knownFor ?? "Person") {
+            CinematicRow(id: "about") {
+                HStack(alignment: .top, spacing: 40) {
+                    RemoteImage(url: state.api?.imageURL(person?.profilePath, size: "w500"))
+                        .overlay {
+                            if person != nil && person?.profilePath == nil {
+                                Text(String(route.name.prefix(1))).font(.largeTitle.bold()).foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(width: 200, height: 300)
+                        .background(.white.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                    if let bio = person?.biography, !bio.isEmpty {
+                        Button { bioOpen = true } label: {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Biography").font(.callout.bold())
+                                Text(bio).font(.callout).lineLimit(5).multilineTextAlignment(.leading)
+                                Text("Select to read more").font(.caption2).foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: 1100, alignment: .leading)
+                            .padding(24)
+                        }
+                        .buttonStyle(.card)
+                    }
+                }
+                .padding(.horizontal, TV.gutter)
+                .padding(.vertical, 24)
+                .focusSection()
+            }
+            if let p = person {
+                ForEach(p.rows, id: \.title) { r in
+                    CinematicRow(id: "row:\(r.title)") {
+                        Shelf(title: r.title, subtitle: "\(r.credits.count)") {
+                            ForEach(r.credits.uniqued()) { TitleCard(title: $0) }
+                        }
+                    }
+                }
+                if p.rows.isEmpty {
+                    EmptyState(title: "No movies or shows listed", symbol: "film")
+                }
+            } else if let error {
+                EmptyState(title: "Couldn't load", message: error, symbol: "wifi.exclamationmark")
+            } else {
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 120)
+            }
+        }
+        .sheet(isPresented: $bioOpen) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    Text(person?.name ?? route.name).font(.title2.bold())
+                    Text(person?.biography ?? "").font(.body)
+                }
+                .frame(maxWidth: 1300, alignment: .leading)
+                .padding(60)
+                .focusable()
+            }
+        }
+        .task(id: route.id) {
+            do {
+                person = try await state.api?.person(route.id)
+            } catch is CancellationError {
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+}
 
 /// A collection's titles in lines of posters, and (when streaming) the ones the server doesn't have yet.
 struct CollectionView: View {

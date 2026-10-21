@@ -404,10 +404,11 @@ private fun EpisodeRow(ep: Item, offline: OfflineItem?, onPlay: () -> Unit) {
 @Composable
 private fun CastShelf(cast: List<CastMember>) {
     val state = LocalAppState.current
+    val nav = LocalNavigator.current
     Shelf("Cast") {
         items(cast.size) { i ->
             val c = cast[i]
-            Column(Modifier.width(100.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.width(100.dp).then(if (c.id != null) Modifier.clickable { nav.push(Route.Person(c.id!!, c.name)) } else Modifier), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Box(Modifier.size(88.dp).clip(CircleShape).border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape), contentAlignment = Alignment.Center) {
                     RemoteImage(state.api?.imageUrl(c.profilePath, "w185"), Modifier.fillMaxSize())
                     if (c.profilePath == null) Text(c.name.split(" ").take(2).mapNotNull { it.firstOrNull() }.joinToString(""), fontWeight = FontWeight.Bold, color = Wren.secondary)

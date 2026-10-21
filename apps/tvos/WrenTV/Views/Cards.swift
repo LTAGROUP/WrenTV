@@ -163,7 +163,9 @@ struct TitleCard: View {
             .buttonStyle(.card)
             .ambient { title.heroEntry }
             Text(title.title).font(.caption).lineLimit(1)
-            Text(title.item != nil ? "In your library" : (title.year.map(String.init) ?? " "))
+            Text(title.role.map { r in [r, title.year.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: " · ") }
+                 ?? (title.item != nil ? "In your library" : (title.year.map(String.init) ?? " ")))
+                .lineLimit(1)
                 .font(.caption2).foregroundStyle(title.item != nil ? Color.wrenEmber : .secondary)
         }
         .frame(width: width)

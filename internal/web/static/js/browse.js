@@ -225,33 +225,121 @@ function calendarCard(e) {
     <div class="t">${esc(e.show.title)}</div><div class="s">${esc(`${code} — ${e.title || `Episode ${e.episodeNumber}`}`)}</div></a>`;
 }
 
-// viewCalendar is when episodes air, a shelf a day from a week back to a
-// month ahead: shows in the library that are still running, and the ones
-// being watched.
+// The week strip starts on the locale's first day of the week.
+const firstWeekday = (() => { try { const l = new Intl.Locale(navigator.language); return ((l.getWeekInfo?.() || l.weekInfo)?.firstDay ?? 7) % 7; } catch { return 0; } })();
+const addDays = (d, n) => { const t = day(d); t.setDate(t.getDate() + n); return isoDay(t); };
+const weekOf = (d) => addDays(d, -((day(d).getDay() - firstWeekday + 7) % 7));
+
+// viewCalendar is when episodes air, a week at a time: a strip of the
+// week's days on top (pick one to see just that day), then a shelf a day.
+// Shows in the library that are still running, and the ones being watched.
 export async function viewCalendar() {
   setTitle('Calendar');
-  const watching = qs().get('watching') === '1';
-  const cal = await api('/api/calendar');
+  const q = qs();
+  const today = isoDay(new Date());
+  const watching = q.get('watching') === '1';
+  const valid = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '') && !isNaN(day(d));
+  const week = weekOf(valid(q.get('week')) ? q.get('week') : today);
+  const picked = valid(q.get('day')) && weekOf(q.get('day')) === week ? q.get('day') : '';
+  const dates = Array.from({ length: 7 }, (_, i) => addDays(week, i));
+  const cal = await api(`/api/calendar?from=${dates[0]}&to=${dates[6]}`);
   const eps = cal.episodes.filter((e) => !watching || e.watching);
   const days = new Map();
   for (const e of eps) days.set(e.date, [...(days.get(e.date) || []), e]);
-  const today = isoDay(new Date());
+  const link = (o) => {
+    const p = new URLSearchParams();
+    const w = o.week ?? week;
+    if (w !== weekOf(today)) p.set('week', w);
+    if (o.day ?? picked) p.set('day', o.day ?? picked);
+    if (o.watching ?? watching) p.set('watching', '1');
+    return '/calendar' + (p.size ? '?' + p : '');
+  };
+  const range = `${day(dates[0]).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${day(dates[6]).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  const strip = `<nav class="weekstrip" aria-label="Week of ${esc(range)}">
+    <a class="wk-nav" href="${link({ week: addDays(week, -7), day: '' })}" aria-label="Previous week">‹</a>
+    <div class="wk-days">${dates.map((d) => {
+      const t = day(d), n = days.get(d)?.length || 0;
+      return `<a class="wk-day${d === picked ? ' on' : ''}${d === today ? ' today' : ''}${n ? '' : ' none'}" href="${link({ day: d === picked ? '' : d })}"
+        aria-pressed="${d === picked}" aria-label="${esc(t.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))}, ${n} episode${n === 1 ? '' : 's'}">
+        <span class="wd">${esc(t.toLocaleDateString(undefined, { weekday: 'short' }))}</span><span class="dn">${t.getDate()}</span><span class="cnt">${n || ''}</span></a>`;
+    }).join('')}</div>
+    <a class="wk-nav" href="${link({ week: addDays(week, 7), day: '' })}" aria-label="Next week">›</a></nav>`;
+  const shown = [...days].filter(([d]) => !picked || d === picked);
   const node = el(`<div><div class="page-head"><h1>Calendar</h1>
-    <div class="toolbar"><button class="chip${watching ? ' on' : ''}" id="watching" aria-pressed="${watching}">Shows I'm watching</button></div></div>
-    ${eps.length ? [...days].map(([d, list]) => shelf(dayName(d), list.map(calendarCard).join(''),
+    <div class="toolbar"><span class="muted small">${esc(range)}</span>${week !== weekOf(today) ? `<a class="chip" href="${link({ week: weekOf(today), day: '' })}">This week</a>` : ''}
+      <button class="chip${watching ? ' on' : ''}" id="watching" aria-pressed="${watching}">Shows I'm watching</button></div></div>
+    ${strip}
+    ${shown.length ? shown.map(([d, list]) => shelf(dayName(d), list.map(calendarCard).join(''),
       { sub: `${list.length} episode${list.length === 1 ? '' : 's'}`, id: `day-${d}` })).join('')
-      : `<div class="empty"><h2>${watching ? 'Nothing coming up for your shows' : 'Nothing airing'}</h2>
-        <p>Episodes from a week back to a month ahead show here, for shows in the library that are still running.</p></div>`}</div>`);
+      : `<div class="empty"><h2>${picked ? `Nothing airing ${dayName(picked) === 'Today' ? 'today' : 'on ' + esc(dayName(picked))}` : watching ? 'Nothing this week for your shows' : 'Nothing airing this week'}</h2>
+        <p>Episodes show here for shows in the library that are still running. Use the arrows to see other weeks.</p></div>`}</div>`);
   bindShelves(node);
-  $('#watching', node).onclick = () => go('/calendar' + (watching ? '' : '?watching=1'), true);
-  // Open on what's next to air, with what just aired above it.
-  const next = [...days.keys()].find((d) => d >= today);
+  $('#watching', node).onclick = () => go(link({ watching: !watching }), true);
+  // The week strip's links replace this page rather than stacking history.
+  for (const a of $$('.weekstrip a, .toolbar a.chip', node)) a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); go(a.getAttribute('href'), true); };
+  // Arrow keys move between days; Page Up/Down change week.
+  $('.weekstrip', node).addEventListener('keydown', (e) => {
+    const all = $$('.weekstrip a', node);
+    const at = all.indexOf(document.activeElement);
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      all[Math.max(0, Math.min(all.length - 1, at + (e.key === 'ArrowLeft' ? -1 : 1)))]?.focus();
+    }
+  });
+  // Open the current week on today, with what aired earlier in the week above it.
+  const next = !picked && [...days.keys()].find((d) => d >= today);
   if (next && next !== [...days.keys()][0]) {
     requestAnimationFrame(() => {
       const top = document.getElementById(`day-${next}`)?.getBoundingClientRect().top;
       if (top != null) window.scrollTo({ top: top + window.scrollY - ($('.topbar')?.offsetHeight || 0) - 12 });
     });
   }
+  return node;
+}
+
+// ---------------------------------------------------------------- people
+
+const fmtDate = (d) => day(d).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+function ageAt(birth, end) {
+  const b = day(birth), e = end ? day(end) : new Date();
+  return e.getFullYear() - b.getFullYear() - (e < new Date(e.getFullYear(), b.getMonth(), b.getDate()) ? 1 : 0);
+}
+
+// viewPerson is an actor or crew member: their photo, details and
+// biography, then rows of what they're in (role under each title).
+export async function viewPerson(id) {
+  const p = await api(`/api/people/${id}`);
+  setTitle(p.name);
+  ambient.base(p.backdropPath);
+  const facts = [];
+  if (p.knownFor) facts.push(`Known for ${p.knownFor.toLowerCase()}`);
+  if (p.birthday) facts.push(`Born ${fmtDate(p.birthday)}${p.deathday ? '' : ` (age ${ageAt(p.birthday)})`}`);
+  if (p.deathday) facts.push(`Died ${fmtDate(p.deathday)}${p.birthday ? ` (aged ${ageAt(p.birthday, p.deathday)})` : ''}`);
+  if (p.placeOfBirth) facts.push(p.placeOfBirth);
+  const credit = (v) => {
+    const n = el(titleCard(v));
+    const s = $('.s', n);
+    if (s) s.textContent = [v.role, v.year].filter(Boolean).join(' · ');
+    return n.outerHTML;
+  };
+  const initials = p.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('');
+  const node = el(`<div><div class="hero coll-hero person-hero">
+    <div class="content"><div class="poster">${p.profilePath ? `<img src="${img(p.profilePath, 'w500')}" alt="">` : `<div class="ph">${esc(initials)}</div>`}</div>
+    <div><h1>${esc(p.name)}</h1>
+    ${facts.length ? `<div class="meta">${facts.map(esc).join('<span class="muted">·</span>')}</div>` : ''}
+    ${p.biography ? `<p class="overview bio">${esc(p.biography)}</p><button class="btn ghost small" id="more" hidden>More</button>` : ''}
+    <div class="actions">${p.imdbId ? `<a class="btn ghost" href="https://www.imdb.com/name/${esc(p.imdbId)}/" target="_blank" rel="noopener">IMDb ↗</a>` : ''}
+      <a class="btn ghost" href="https://www.themoviedb.org/person/${p.id}" target="_blank" rel="noopener">TMDB ↗</a></div></div></div></div>
+    ${p.rows.length ? `<div class="coll-rows">${p.rows.map((r) => shelf(r.title, r.credits.map(credit).join(''), { sub: `${r.credits.length}` })).join('')}</div>`
+      : '<div class="empty"><h2>No movies or shows listed</h2></div>'}</div>`);
+  bindShelves(node);
+  const bio = $('.bio', node), more = $('#more', node);
+  if (bio) requestAnimationFrame(() => {
+    if (bio.scrollHeight > bio.clientHeight + 4) {
+      more.hidden = false;
+      more.onclick = () => { const open = bio.classList.toggle('open'); more.textContent = open ? 'Less' : 'More'; };
+    }
+  });
   return node;
 }
 
@@ -468,8 +556,8 @@ export async function viewAccount() {
     </div>
     <div class="panel" style="max-width:640px;margin-top:18px"><h2>Browsing</h2>
       <div class="field"><label for="posters">Poster size</label>
-        <select id="posters">${[['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']].map(([v, l]) => `<option value="${v}" ${v === posterSize() ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-      <p class="small muted" style="margin:0">How big posters and tiles are in rows and grids, in this browser.</p>
+        <select id="posters">${[['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']].map(([v, l]) => `<option value="${v}" ${v === (prefs.posterSize || posterSize()) ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <p class="small muted" style="margin:0">How big posters and tiles are in rows and grids. It's saved to your account, so every app you sign in to uses it.</p>
     </div>
     <div class="panel" style="max-width:640px;margin-top:18px" id="simkl"></div>
     <div class="panel" style="max-width:640px;margin-top:18px"><h2>Sign in a TV</h2>
@@ -496,7 +584,13 @@ export async function viewAccount() {
       toast('Saved.');
     } catch (err) { toast(err.message); }
   };
-  $('#posters', node).onchange = (e) => setPosterSize(e.target.value);
+  $('#posters', node).onchange = async (e) => {
+    setPosterSize(e.target.value);
+    try {
+      await api('/api/me/prefs', { method: 'PATCH', body: { posterSize: e.target.value } });
+      toast('Saved.');
+    } catch (err) { toast(err.message); }
+  };
   simklPanel($('#simkl', node));
   return node;
 }

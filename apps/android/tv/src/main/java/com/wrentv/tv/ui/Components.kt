@@ -64,6 +64,7 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.wrentv.tv.data.Item
 import com.wrentv.tv.data.TitleView
+import com.wrentv.tv.data.roleLine
 import com.wrentv.tv.data.WatchState
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.delay
@@ -342,7 +343,7 @@ fun TitleCard(title: TitleView, modifier: Modifier = Modifier, rank: Int? = null
                 if (p != null && title.item?.inProgress == true) ProgressStrip(p.fraction, Modifier.align(Alignment.BottomCenter))
             }
         }
-        CardCaption(title.title, title.year?.toString(), focused, width)
+        CardCaption(title.title, title.roleLine ?: title.year?.toString(), focused, width)
     }
 }
 

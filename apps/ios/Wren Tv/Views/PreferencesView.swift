@@ -68,7 +68,7 @@ struct PreferencesView: View {
             } header: {
                 Text("Browsing")
             } footer: {
-                Text("How big posters and tiles are on this device.").foregroundStyle(.secondary)
+                Text("How big posters and tiles are. Saved to your account, so every app you sign in to uses it.").foregroundStyle(.secondary)
             }
             SimklSection()
         }
@@ -80,6 +80,7 @@ struct PreferencesView: View {
                 subtitleLanguage = p.subtitleLanguage ?? ""
                 watchedPercent = p.watchedPercent ?? 90
                 continueAfter = p.continueAfter ?? 30
+                if let size = p.posterSize, PosterSize(rawValue: size) != nil { posterSize = size }
             }
             loaded = true
         }
@@ -95,12 +96,15 @@ struct PreferencesView: View {
         .onChange(of: continueAfter) { old, new in
             if old != new { save() }
         }
+        .onChange(of: posterSize) { old, new in
+            if old != new { save() }
+        }
     }
 
     private func save() {
         guard loaded, let api = state.api else { return }
         let prefs = UserPrefs(audioLanguage: audioLanguage, subtitleLanguage: subtitleLanguage,
-                              watchedPercent: watchedPercent, continueAfter: continueAfter)
+                              watchedPercent: watchedPercent, continueAfter: continueAfter, posterSize: posterSize)
         Task {
             do {
                 _ = try await api.setPrefs(prefs)

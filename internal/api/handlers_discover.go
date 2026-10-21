@@ -77,6 +77,8 @@ func (s *Server) linkLibrary(ctx context.Context, r *http.Request, views []title
 }
 
 type castView struct {
+	// ID is the TMDB person, for their page.
+	ID          int    `json:"id,omitempty"`
 	Name        string `json:"name"`
 	Character   string `json:"character,omitempty"`
 	ProfilePath string `json:"profilePath,omitempty"`
@@ -149,7 +151,7 @@ func (s *Server) handleExtras(w http.ResponseWriter, r *http.Request) {
 				if i >= 20 {
 					break
 				}
-				out.Cast = append(out.Cast, castView{Name: c.Name, Character: c.Character, ProfilePath: c.ProfilePath})
+				out.Cast = append(out.Cast, castView{ID: c.ID, Name: c.Name, Character: c.Character, ProfilePath: c.ProfilePath})
 			}
 			if t := ex.Trailer(); t != nil {
 				out.Trailer = &trailer{YouTubeKey: t.Key, Name: t.Name}

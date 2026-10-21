@@ -61,7 +61,7 @@ static class Cards
     public static double WideWidth => 300 * Scale;
     public static double WideHeight => WideWidth * 9 / 16;
 
-    static Button Plain(UIElement content) => new()
+    public static Button Plain(UIElement content) => new()
     {
         Content = content,
         Padding = new Thickness(0),
@@ -189,7 +189,7 @@ static class Cards
             });
             top = g;
         }
-        var stack = Ui.Column(6, top, Ui.Text(t.Title, 13, FontWeights.SemiBold), Ui.Secondary(t.Year?.ToString() ?? ""));
+        var stack = Ui.Column(6, top, Ui.Text(t.Title, 13, FontWeights.SemiBold), Ui.Secondary(t.Caption));
         stack.Width = width;
         return stack;
     }

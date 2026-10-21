@@ -251,6 +251,10 @@ sealed class DetailPage(string id) : Page
         face.HorizontalAlignment = HorizontalAlignment.Center;
         var col = Ui.Column(8, face, name, role);
         col.Width = 120;
-        return col;
+        if (c.Id is not { } id) return col;
+        var b = Cards.Plain(col);
+        ToolTipService.SetToolTip(b, $"See {c.Name}'s movies and shows");
+        b.Click += (_, _) => App.Shell?.Push(new PersonPage(id, c.Name));
+        return b;
     }
 }

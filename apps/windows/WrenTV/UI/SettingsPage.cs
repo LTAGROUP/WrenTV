@@ -72,9 +72,14 @@ sealed class SettingsPage : Page
             sizes.Items.Add(new ComboBoxItem { Content = label, Tag = tag });
         var size = Store.GetString(Cards.PosterSizeKey) ?? "medium";
         sizes.SelectedItem = sizes.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == size);
-        sizes.SelectionChanged += (_, _) => Store.Set(Cards.PosterSizeKey, Code(sizes) is "medium" or "" ? null : Code(sizes));
+        sizes.SelectionChanged += (_, _) =>
+        {
+            var v = Code(sizes) is "" ? "medium" : Code(sizes);
+            Store.Set(Cards.PosterSizeKey, v == "medium" ? null : v);
+            _ = api.SetPosterSize(v).ContinueWith(_ => { });
+        };
         browsing.Children.Add(sizes);
-        browsing.Children.Add(Ui.Secondary("How big posters and tiles are in rows and grids, on this PC.", 13, 3));
+        browsing.Children.Add(Ui.Secondary("How big posters and tiles are in rows and grids. Saved to your account, so your other devices match.", 13, 3));
 
         var about = Ui.Column(14, Section("Wren TV for Windows"));
         about.Children.Add(Line("Version", Updates.CurrentLabel));

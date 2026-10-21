@@ -489,31 +489,111 @@ sealed class CalendarPage : Page
 {
     protected override bool HasAmbient => true;
     bool watchingOnly;
+    DateTime week = WeekStart(DateTime.Today);
+    string? picked;
+
+    /// The first day of date's week, by the locale's first weekday.
+    static DateTime WeekStart(DateTime date)
+    {
+        var first = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek;
+        return date.Date.AddDays(-(((int)date.DayOfWeek - (int)first + 7) % 7));
+    }
 
     protected override async Task<UIElement> Build()
     {
-        var cal = await App.State.Api!.Calendar();
+        var from = week.ToString("yyyy-MM-dd");
+        var cal = await App.State.Api!.Calendar(from, week.AddDays(6).ToString("yyyy-MM-dd"));
         var eps = cal.Episodes.Where(e => !watchingOnly || e.Watching).ToList();
+        var days = eps.GroupBy(e => e.Date).ToList();
+        var shown = days.Where(d => picked == null || d.Key == picked).ToList();
         var today = DateTime.Today.ToString("yyyy-MM-dd");
-        var toggle = new ToggleButton { Content = "Shows I'm Watching", IsChecked = watchingOnly, Margin = new Thickness(Gutter, 0, Gutter, 0) };
+        var toggle = new ToggleButton { Content = "Shows I'm Watching", IsChecked = watchingOnly };
         toggle.Click += (_, _) => { watchingOnly = toggle.IsChecked == true; Reload(quiet: true); };
-        var sections = new List<UIElement> { toggle };
+        var bar = Ui.Row(10, toggle);
+        if (week != WeekStart(DateTime.Today)) bar.Children.Add(Ui.Button("This Week", () => { week = WeekStart(DateTime.Today); picked = null; Reload(quiet: true); }, "\uE8D1"));
+        bar.Margin = new Thickness(Gutter, 0, Gutter, 0);
+        var sections = new List<UIElement> { bar, Strip(days.ToDictionary(d => d.Key, d => d.Count())) };
         UIElement? next = null;
-        foreach (var day in eps.GroupBy(e => e.Date))
+        foreach (var day in shown)
         {
             var shelf = Cards.Shelf(DayName(day.Key), day.Select(e => (UIElement)Card(e)),
                 subtitle: day.Count() == 1 ? "1 episode" : $"{day.Count()} episodes");
             if (next == null && string.CompareOrdinal(day.Key, today) >= 0) next = shelf;
             sections.Add(shelf);
         }
-        if (eps.Count == 0)
-            sections.Add(Ui.Empty("\uE787", watchingOnly ? "Nothing coming up for your shows" : "Nothing airing",
-                "Episodes from a week back to a month ahead show here, for shows in the library that are still running."));
+        if (shown.Count == 0)
+            sections.Add(Ui.Empty("\uE787",
+                picked != null ? $"Nothing airing {(DayName(picked) == "Today" ? "today" : "on " + DayName(picked))}"
+                    : watchingOnly ? "Nothing this week for your shows" : "Nothing airing this week",
+                "Episodes show here for shows in the library that are still running. Use the arrows to see other weeks."));
         var page = Scroll("Calendar", sections.ToArray());
-        // Open on what's next to air, with what just aired above it.
-        if (next is FrameworkElement target && sections.IndexOf(target) > 1)
+        // Open this week on today, with what aired earlier in the week above it.
+        if (picked == null && next is FrameworkElement target && sections.IndexOf(target) > 2)
             page.Loaded += (_, _) => target.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 0, AnimationDesired = false });
         return page;
+    }
+
+    void Step(int weeks)
+    {
+        week = week.AddDays(7 * weeks);
+        picked = null;
+        Reload(quiet: true);
+    }
+
+    /// The seven days of the week with how many episodes air each, between
+    /// previous and next week buttons. Clicking a day shows just that day;
+    /// clicking it again shows the whole week. Left and right move between days.
+    UIElement Strip(Dictionary<string, int> counts)
+    {
+        var range = Ui.Secondary($"{week:MMM d} – {week.AddDays(6):MMM d, yyyy}", 13);
+        var row = new Grid { ColumnSpacing = 8 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        for (var i = 0; i < 7; i++) row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Button Arrow(string glyph, string label, int n, int col)
+        {
+            var b = new Button { Content = Ui.Icon(glyph, 14), VerticalAlignment = VerticalAlignment.Stretch, Padding = new Thickness(10, 0, 10, 0) };
+            ToolTipService.SetToolTip(b, label);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(b, label);
+            b.Click += (_, _) => Step(n);
+            Grid.SetColumn(b, col);
+            return b;
+        }
+        row.Children.Add(Arrow("\uE76B", "Previous week", -1, 0));
+        var today = DateTime.Today.ToString("yyyy-MM-dd");
+        for (var i = 0; i < 7; i++)
+        {
+            var d = week.AddDays(i);
+            var key = d.ToString("yyyy-MM-dd");
+            var n = counts.GetValueOrDefault(key);
+            var on = picked == key;
+            var isToday = key == today;
+            var day = Ui.Text(d.ToString("ddd").ToUpperInvariant(), 11, FontWeights.Bold, on ? null : isToday ? Theme.EmberBrush : Theme.SecondaryText);
+            var num = Ui.Text(d.Day.ToString(), 20, FontWeights.Bold);
+            num.Opacity = n == 0 && !on ? 0.55 : 1;
+            var count = Ui.Secondary(n > 0 ? n.ToString() : " ", 12);
+            foreach (var t in new[] { day, num, count }) t.HorizontalAlignment = HorizontalAlignment.Center;
+            var b = new Button
+            {
+                Content = Ui.Column(2, day, num, count),
+                HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center,
+                Padding = new Thickness(0, 8, 0, 8), CornerRadius = new CornerRadius(10),
+                BorderThickness = new Thickness(isToday && !on ? 2 : 1),
+                BorderBrush = isToday && !on ? Theme.EmberBrush : new SolidColorBrush(Windows.UI.Color.FromArgb(26, 255, 255, 255)),
+            };
+            if (on) b.Background = Theme.EmberBrush;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(b, $"{DayName(key)}, {n} episodes");
+            b.Click += (_, _) => { picked = on ? null : key; Reload(quiet: true); };
+            Grid.SetColumn(b, i + 1);
+            row.Children.Add(b);
+        }
+        row.Children.Add(Arrow("\uE76C", "Next week", 1, 8));
+        row.XYFocusKeyboardNavigation = Microsoft.UI.Xaml.Input.XYFocusKeyboardNavigationMode.Enabled;
+        var col = Ui.Column(8, range, row);
+        col.Margin = new Thickness(Gutter, 0, Gutter, 0);
+        col.MaxWidth = 900;
+        col.HorizontalAlignment = HorizontalAlignment.Left;
+        return col;
     }
 
     /// "Today", "Tomorrow", "Yesterday", or the weekday and date.

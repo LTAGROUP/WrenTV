@@ -247,6 +247,12 @@ public sealed class GenreRow
     public List<Item> Items { get; set; } = [];
 }
 
+/// The account's poster size: small, medium or large, the same on every device.
+public sealed class PosterPref
+{
+    public string? PosterSize { get; set; }
+}
+
 public sealed class UserPrefs
 {
     public string AudioLanguage { get; set; } = "";
@@ -305,6 +311,49 @@ public sealed class TitleView
     public string? BackdropPath { get; set; }
     public double? Rating { get; set; }
     public Item? Item { get; set; }
+    /// On a person's page, who they play or what they did.
+    public string? Role { get; set; }
+
+    /// "Role · 2019" on a person's page, else the year.
+    public string Caption => Role is { } r ? string.Join(" · ", new[] { r, Year?.ToString() }.Where(x => !string.IsNullOrEmpty(x))) : Year?.ToString() ?? "";
+}
+
+/// An actor or crew member, with rows of what they're in (Known for, In your library, Movies, TV Shows).
+public sealed class Person
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public string? Biography { get; set; }
+    public string? Birthday { get; set; }
+    public string? Deathday { get; set; }
+    public string? PlaceOfBirth { get; set; }
+    public string? ProfilePath { get; set; }
+    public string? KnownFor { get; set; }
+    public string? ImdbId { get; set; }
+    public string? BackdropPath { get; set; }
+    public List<CreditRow> Rows { get; set; } = [];
+
+    /// "Born March 3, 1970 (age 56)", "Died …", the place they were born.
+    public List<string> Facts
+    {
+        get
+        {
+            var out_ = new List<string>();
+            DateTime? b = DateTime.TryParse(Birthday, out var bd) ? bd : null;
+            DateTime? d = DateTime.TryParse(Deathday, out var dd) ? dd : null;
+            static int Years(DateTime from, DateTime to) => to.Year - from.Year - (to.DayOfYear < from.DayOfYear ? 1 : 0);
+            if (b is { } born) out_.Add(d == null ? $"Born {born:MMMM d, yyyy} (age {Years(born, DateTime.Today)})" : $"Born {born:MMMM d, yyyy}");
+            if (d is { } died) out_.Add(b is { } bb ? $"Died {died:MMMM d, yyyy} (aged {Years(bb, died)})" : $"Died {died:MMMM d, yyyy}");
+            if (!string.IsNullOrWhiteSpace(PlaceOfBirth)) out_.Add(PlaceOfBirth);
+            return out_;
+        }
+    }
+}
+
+public sealed class CreditRow
+{
+    public string Title { get; set; } = "";
+    public List<TitleView> Credits { get; set; } = [];
 }
 
 public sealed class CatalogResult
@@ -341,6 +390,8 @@ public sealed class CastMember
     public string Name { get; set; } = "";
     public string? Character { get; set; }
     public string? ProfilePath { get; set; }
+    /// The TMDB person, for their page.
+    public int? Id { get; set; }
 }
 
 public sealed class Trailer

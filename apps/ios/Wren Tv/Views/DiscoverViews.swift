@@ -60,7 +60,8 @@ struct TitleCard: View {
                 .opacity(title.item == nil && !state.canStream ? 0.8 : 1)
                 .hoverLift()
             Text(title.title).font(.callout).lineLimit(1)
-            if let y = title.year { Text(String(y)).font(.caption).foregroundStyle(.secondary) }
+            let sub = [title.role ?? "", title.year.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+            if !sub.isEmpty { Text(sub).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
         }
         .frame(width: fill ? nil : (width ?? m.poster))
         .frame(maxWidth: fill ? .infinity : nil, alignment: .leading)
@@ -128,6 +129,17 @@ struct CastShelf: View {
     var body: some View {
         Shelf(title: "Cast") {
             ForEach(Array(cast.enumerated()), id: \.offset) { _, c in
+                if let id = c.id {
+                    NavigationLink(value: PersonRoute(id: id, name: c.name)) { face(c) }
+                        .buttonStyle(.plain)
+                } else {
+                    face(c)
+                }
+            }
+        }
+    }
+
+    private func face(_ c: CastMember) -> some View {
                 VStack(spacing: 6) {
                     RemoteImage(url: state.api?.imageURL(c.profilePath, size: "w185"))
                         .overlay {
@@ -144,12 +156,102 @@ struct CastShelf: View {
                     }
                 }
                 .frame(width: 112)
-            }
-        }
+                .contentShape(Rectangle())
+                .hoverLift()
     }
 
     private func initials(_ name: String) -> String {
         name.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined()
+    }
+}
+
+/// An actor or crew member: photo, details and biography over their
+/// artwork, then rows of what they're in with the role under each title.
+struct PersonView: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.metrics) private var m
+    let route: PersonRoute
+    @State private var person: Person?
+    @State private var error: String?
+    @State private var bioOpen = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                if let p = person {
+                    VStack(alignment: .leading, spacing: 30) {
+                        ForEach(p.rows, id: \.title) { r in
+                            Shelf(title: r.title, subtitle: "\(r.credits.count)") {
+                                ForEach(r.credits.uniqued()) { TitleCard(title: $0) }
+                            }
+                        }
+                        if p.rows.isEmpty {
+                            ContentUnavailableView("No movies or shows listed", systemImage: "film")
+                        }
+                    }
+                    .padding(.vertical, 20)
+                } else if let error {
+                    ContentUnavailableView("Couldn't load", systemImage: "exclamationmark.triangle", description: Text(error))
+                } else {
+                    ProgressView().frame(maxWidth: .infinity).padding(.top, 60)
+                }
+            }
+        }
+        .ignoresSafeArea(edges: .top)
+        .navigationTitle(person?.name ?? route.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .task(id: route.id) {
+            do {
+                person = try await state.api?.person(route.id)
+            } catch is CancellationError {
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            hero
+            if let bio = person?.biography, !bio.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(bio).foregroundStyle(.secondary).lineLimit(bioOpen ? nil : 4).frame(maxWidth: 760, alignment: .leading)
+                    Button(bioOpen ? "Less" : "More") { withAnimation { bioOpen.toggle() } }.font(.callout.weight(.semibold))
+                }
+                .padding(.horizontal, m.gutter)
+                .padding(.top, 8)
+            }
+        }
+    }
+
+    private var hero: some View {
+        ZStack(alignment: .bottomLeading) {
+            RemoteImage(url: state.api?.imageURL(person?.backdropPath, size: "w1280"))
+                .frame(height: m.heroHeight)
+                .frame(maxWidth: .infinity)
+                .clipped()
+                .overlay(LinearGradient(stops: [.init(color: .clear, location: 0.35), .init(color: .black.opacity(0.55), location: 0.75),
+                                                .init(color: Color.black, location: 1)],
+                                        startPoint: .top, endPoint: .bottom))
+                .overlay(LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .leading, endPoint: .center))
+            HStack(alignment: .bottom, spacing: 18) {
+                RemoteImage(url: state.api?.imageURL(person?.profilePath, size: "w500"))
+                    .frame(width: m.poster, height: m.poster * 1.5)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.12)))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text((person?.knownFor ?? "").uppercased()).font(.caption.weight(.bold)).kerning(1.2).foregroundStyle(Color.wrenEmber)
+                    Text(person?.name ?? route.name).font(.system(size: m.heroTitle, weight: .bold)).lineLimit(2)
+                    ForEach((person?.facts ?? []).filter { !$0.hasPrefix("Known for") }, id: \.self) {
+                        Text($0).font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, m.gutter)
+            .padding(.bottom, 16)
+        }
     }
 }
 

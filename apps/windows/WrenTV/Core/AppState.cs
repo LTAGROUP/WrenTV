@@ -308,7 +308,19 @@ public sealed class AppState
         Api = api;
         User = user;
         _ = ReloadLibraries();
+        _ = LoadPosterSize(api);
         Listen();
+    }
+
+    /// Poster size is saved to the account; the copy here is so the first page opens at the right size.
+    async Task LoadPosterSize(WrenTVApi api)
+    {
+        try
+        {
+            var size = await api.PosterSize();
+            if (size is "small" or "medium" or "large") Store.Set("posterSize", size == "medium" ? null : size);
+        }
+        catch { }
     }
 
     void ClearCredentials()

@@ -1,5 +1,11 @@
 package com.wrentv.phone.ui
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.material.icons.rounded.ChevronLeft
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -308,42 +314,111 @@ private fun Badge(text: String, color: Color, modifier: Modifier = Modifier) {
         fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, color = Color.White)
 }
 
-/** When episodes air, a shelf a day from a week back to a month ahead: the library's shows still running and the ones being watched. */
+/**
+ * When episodes air, a week at a time: a strip of the week's days (tap one
+ * to see just that day, again for the whole week; swipe or use the arrows
+ * for other weeks), then a shelf a day. The library's shows still running
+ * and the ones being watched.
+ */
 @Composable
 fun CalendarScreen() {
     val state = LocalAppState.current
+    val today = remember { LocalDate.now() }
+    val thisWeek = remember { weekStart(today) }
+    var weekText by rememberSaveable { mutableStateOf(thisWeek.toString()) }
+    val week = LocalDate.parse(weekText)
+    var picked by rememberSaveable { mutableStateOf<String?>(null) }
     var cal by remember { mutableStateOf<CalendarResponse?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var watchingOnly by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(state.refreshTick, state.api) {
-        runCatching { state.api?.calendar() }.onSuccess { cal = it; error = null }.onFailure { if (it !is CancellationException) error = it.message }
+    LaunchedEffect(week, state.refreshTick, state.api) {
+        runCatching { state.api?.calendar(week.toString(), week.plusDays(6).toString()) }
+            .onSuccess { if (it?.from == week.toString()) cal = it; error = null }
+            .onFailure { if (it !is CancellationException && cal == null) error = it.message }
     }
+    fun step(n: Long) { picked = null; weekText = week.plusWeeks(n).toString() }
     Page("Calendar", actions = {
+        if (week != thisWeek) TextButton({ picked = null; weekText = thisWeek.toString() }) { Text("This week", color = Wren.ember) }
         IconButton({ watchingOnly = !watchingOnly }) {
             Icon(if (watchingOnly) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
                 if (watchingOnly) "Showing shows you're watching" else "Showing all shows", tint = if (watchingOnly) Wren.ember else Color.White)
         }
     }) {
         val c = cal
-        if (c == null) { if (error != null) EmptyState(Icons.Rounded.Warning, "Couldn't load", error) else Loading(); return@Page }
-        val eps = c.episodes.filter { !watchingOnly || it.watching }
-        val days = eps.groupBy { it.date }.toList()
-        val today = remember { LocalDate.now().toString() }
-        // Open on what's next to air, with what just aired above it.
-        val list = rememberLazyListState(days.indexOfFirst { it.first >= today }.coerceAtLeast(0))
+        val eps = c?.episodes.orEmpty().filter { !watchingOnly || it.watching }
+        val days = eps.groupBy { it.date }
+        val shown = days.filterKeys { picked == null || it == picked }.toList()
+        val list = rememberLazyListState()
+        // Open this week on today, with what aired earlier in the week above it.
+        LaunchedEffect(c?.from) {
+            val i = shown.indexOfFirst { it.first >= today.toString() }
+            if (picked == null && i > 0) list.scrollToItem(i + 1)
+        }
         LazyColumn(Modifier.fillMaxSize(), list, contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
-            if (watchingOnly) item("filter") {
-                Text("Shows you're watching", Modifier.padding(horizontal = metrics().gutter), color = Wren.secondary, style = MaterialTheme.typography.bodyMedium)
+            item("week") {
+                WeekStrip(week, today, picked, days.mapValues { it.value.size }, { d -> picked = if (picked == d) null else d }, ::step)
             }
-            items(days, { it.first }) { (date, dayEps) ->
-                Shelf(dayName(date), "${dayEps.size} episode${if (dayEps.size == 1) "" else "s"}") {
-                    items(dayEps, { it.id }) { CalendarCard(it) }
+            when {
+                c == null -> item { if (error != null) EmptyState(Icons.Rounded.Warning, "Couldn't load", error) else Loading(Modifier.fillMaxWidth().padding(top = 60.dp)) }
+                shown.isEmpty() -> item {
+                    EmptyState(Icons.Rounded.Tv,
+                        when {
+                            picked != null -> "Nothing airing ${dayName(picked!!).let { if (it == "Today") "today" else "on $it" }}"
+                            watchingOnly -> "Nothing this week for your shows"
+                            else -> "Nothing airing this week"
+                        },
+                        "Episodes show here for shows in the library that are still running. Use the arrows to see other weeks.",
+                        Modifier.fillMaxWidth().padding(top = 40.dp))
+                }
+                else -> items(shown, { it.first }) { (date, dayEps) ->
+                    Shelf(dayName(date), "${dayEps.size} episode${if (dayEps.size == 1) "" else "s"}") {
+                        items(dayEps, { it.id }) { CalendarCard(it) }
+                    }
                 }
             }
-            if (eps.isEmpty()) item {
-                EmptyState(Icons.Rounded.Tv, if (watchingOnly) "Nothing coming up for your shows" else "Nothing airing",
-                    "Episodes from a week back to a month ahead show here, for shows in the library that are still running.")
+        }
+    }
+}
+
+/** The first day of date's week, by the locale's first weekday. */
+private fun weekStart(date: LocalDate): LocalDate =
+    date.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.temporal.WeekFields.of(java.util.Locale.getDefault()).firstDayOfWeek))
+
+/** The seven days of a week with how many episodes air each, between previous and next week buttons. */
+@Composable
+private fun WeekStrip(week: LocalDate, today: LocalDate, picked: String?, counts: Map<String, Int>, pick: (String) -> Unit, step: (Long) -> Unit) {
+    val m = metrics()
+    var drag by remember { mutableStateOf(0f) }
+    Column(
+        Modifier.padding(horizontal = m.gutter).pointerInput(week) {
+            detectHorizontalDragGestures(onDragEnd = { if (kotlin.math.abs(drag) > 80) step(if (drag < 0) 1 else -1); drag = 0f }) { _, d -> drag += d }
+        },
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("${week.format(DateTimeFormatter.ofPattern("MMM d"))} – ${week.plusDays(6).format(DateTimeFormatter.ofPattern("MMM d, yyyy"))}",
+            color = Wren.secondary, style = MaterialTheme.typography.labelLarge)
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton({ step(-1) }, Modifier.width(32.dp)) { Icon(Icons.Rounded.ChevronLeft, "Previous week") }
+            for (i in 0L until 7L) {
+                val d = week.plusDays(i)
+                val key = d.toString()
+                val on = picked == key
+                val isToday = d == today
+                val n = counts[key] ?: 0
+                Column(
+                    Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
+                        .background(if (on) Wren.ember else Color.White.copy(alpha = 0.05f))
+                        .border(1.dp, if (isToday && !on) Wren.ember else Color.White.copy(alpha = 0.1f), RoundedCornerShape(10.dp))
+                        .clickable { pick(key) }.padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(d.format(DateTimeFormatter.ofPattern("EEE")).uppercase(), fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                        color = if (on) Color.White else if (isToday) Wren.ember else Wren.secondary)
+                    Text("${d.dayOfMonth}", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = if (n == 0 && !on) 0.55f else 1f))
+                    Text(if (n > 0) "$n" else " ", fontSize = 11.sp, color = if (on) Color.White else Wren.secondary)
+                }
             }
+            IconButton({ step(1) }, Modifier.width(32.dp)) { Icon(Icons.Rounded.ChevronRight, "Next week") }
         }
     }
 }

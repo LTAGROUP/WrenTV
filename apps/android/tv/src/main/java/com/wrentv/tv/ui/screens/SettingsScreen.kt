@@ -129,7 +129,7 @@ fun SettingsScreen() {
                     ListRow("Layouts", { nav.push(Route.Layouts) }, Modifier.rememberFocus("set:layouts"),
                         detail = if (state.isAdmin) "Rows on Home and each library, yours and everyone's" else "The rows on Home and each library")
                     ListRow("Poster Size", { panel = SettingsPanel.PosterSize }, Modifier.rememberFocus("set:posters"),
-                        detail = "How big titles are on Home and as you browse, on this TV",
+                        detail = "How big titles are on Home and as you browse, saved to your account",
                         value = posterSizes.firstOrNull { it.value == state.posterSize }?.label ?: "Medium")
                 }
                 SimklSection()

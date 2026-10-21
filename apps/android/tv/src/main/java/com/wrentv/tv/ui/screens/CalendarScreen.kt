@@ -1,6 +1,22 @@
 package com.wrentv.tv.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.rounded.ChevronLeft
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Today
+import androidx.compose.ui.draw.alpha
+import androidx.tv.material3.Border
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.Icon
+import androidx.tv.material3.Surface
+import java.time.temporal.TemporalAdjusters
+import java.time.temporal.WeekFields
+import java.util.Locale
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
@@ -50,40 +66,57 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
 /**
- * When episodes air: a week back to a month ahead, a shelf a day, from the
- * library's shows that are still running and the ones being watched.
+ * When episodes air, a week at a time: a strip of the week's days (select
+ * one to see just that day, select it again for the whole week) between
+ * previous and next week buttons, then a shelf a day, from the library's
+ * shows that are still running and the ones being watched.
  */
 @Composable
 fun CalendarScreen() {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
-    val cal = rememberLoaded<CalendarResponse>("calendar", state.refreshTick) { state.api?.calendar() }
+    val today = remember { LocalDate.now() }
+    val thisWeek = remember { weekStart(today) }
+    var weekText by rememberSaveable { mutableStateOf(thisWeek.toString()) }
+    val week = LocalDate.parse(weekText)
+    var picked by rememberSaveable { mutableStateOf<String?>(null) }
+    val cal = rememberLoaded<CalendarResponse>("calendar:$week", state.refreshTick) {
+        state.api?.calendar(week.toString(), week.plusDays(6).toString())
+    }
     var watchingOnly by rememberSaveable { mutableStateOf(false) }
     val list = rememberLazyListState()
-    val today = remember { LocalDate.now() }
     val episodes = cal.value?.episodes.orEmpty().filter { !watchingOnly || it.watching }
     val days = episodes.groupBy { it.date }
-    // The page opens on what's next to air, with what just aired above it.
+    val shown = days.filterKeys { picked == null || it == picked }
     val next = episodes.firstOrNull { it.date >= today.toString() } ?: episodes.lastOrNull()
+    fun step(n: Long) { picked = null; weekText = week.plusWeeks(n).toString() }
     CinematicBrowse(list, fallback = next?.heroEntry(today), label = "Calendar", pills = {
         Chip("Shows I'm Watching", watchingOnly, { watchingOnly = !watchingOnly }, Modifier.rememberFocus("chip:watching"), icon = Icons.Rounded.Visibility)
+        if (week != thisWeek) Chip("This Week", false, { picked = null; weekText = thisWeek.toString() }, Modifier.rememberFocus("chip:thisweek"), icon = Icons.Rounded.Today)
     }) {
+        row("week") {
+            WeekStrip(week, today, picked, days.mapValues { it.value.size }, { d -> picked = if (picked == d) null else d }, ::step)
+        }
         val c = cal.value
         when {
             c == null && cal.error != null -> extra("error") { EmptyState("Couldn't load", cal.error, icon = Icons.Rounded.WifiOff) }
             c == null -> extra("loading") { Loading() }
-            episodes.isEmpty() -> extra("none") {
+            shown.isEmpty() -> extra("none") {
                 EmptyState(
-                    if (watchingOnly) "Nothing coming up for your shows" else "Nothing airing",
-                    "Episodes from a week back to a month ahead show here, for shows in the library that are still running.",
+                    when {
+                        picked != null -> "Nothing airing ${dayName(picked!!, today).let { if (it == "Today") "today" else "on $it" }}"
+                        watchingOnly -> "Nothing this week for your shows"
+                        else -> "Nothing airing this week"
+                    },
+                    "Episodes show here for shows in the library that are still running. Use the arrows to see other weeks.",
                     icon = Icons.Rounded.CalendarMonth,
                 )
             }
-            else -> days.forEach { (date, eps) ->
+            else -> shown.forEach { (date, eps) ->
                 row("day:$date") {
                     Shelf(dayName(date, today), subtitle = "${eps.size} episode${if (eps.size == 1) "" else "s"}") {
                         items(eps, key = { it.id }) { e ->
-                            CalendarCard(e, today, Modifier.rememberFocus("cal:${e.id}", default = e == next)) {
+                            CalendarCard(e, today, Modifier.rememberFocus("cal:${e.id}")) {
                                 val id = e.itemId
                                 if (id != null) nav.push(Route.Detail(id)) else nav.push(Route.Detail(e.show.id, e.show))
                             }
@@ -92,6 +125,59 @@ fun CalendarScreen() {
                 }
             }
         }
+    }
+}
+
+/** The first day of date's week, by the locale's first weekday. */
+private fun weekStart(date: LocalDate): LocalDate =
+    date.with(TemporalAdjusters.previousOrSame(WeekFields.of(Locale.getDefault()).firstDayOfWeek))
+
+/** The seven days of a week with how many episodes air each, between previous and next week buttons. */
+@Composable
+private fun WeekStrip(week: LocalDate, today: LocalDate, picked: String?, counts: Map<String, Int>, pick: (String) -> Unit, step: (Long) -> Unit) {
+    val end = week.plusDays(6)
+    Column(Modifier.padding(horizontal = 48.dp, vertical = 8.dp)) {
+        Text("${week.format(DateTimeFormatter.ofPattern("MMM d"))} – ${end.format(DateTimeFormatter.ofPattern("MMM d, yyyy"))}",
+            style = MaterialTheme.typography.labelLarge, color = Wren.secondary)
+        Row(Modifier.padding(top = 10.dp).focusGroup(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            DayCell({ step(-1) }, false, false, Modifier.width(44.dp).rememberFocus("week:prev")) { Icon(Icons.Rounded.ChevronLeft, "Previous week") }
+            for (i in 0L until 7L) {
+                val d = week.plusDays(i)
+                val key = d.toString()
+                val n = counts[key] ?: 0
+                DayCell({ pick(key) }, picked == key, d == today, Modifier.width(92.dp).rememberFocus("week:$i", default = d == today)) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(d.format(DateTimeFormatter.ofPattern("EEE")).uppercase(), style = MaterialTheme.typography.labelSmall)
+                        Text(d.dayOfMonth.toString(), style = MaterialTheme.typography.titleLarge, modifier = Modifier.alpha(if (n == 0 && picked != key) 0.55f else 1f))
+                        Text(if (n > 0) "$n" else " ", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            DayCell({ step(1) }, false, false, Modifier.width(44.dp).rememberFocus("week:next")) { Icon(Icons.Rounded.ChevronRight, "Next week") }
+        }
+    }
+}
+
+/** A day in the week strip: ember when picked, outlined when today, white when focused. */
+@Composable
+private fun DayCell(onClick: () -> Unit, on: Boolean, today: Boolean, modifier: Modifier, content: @Composable () -> Unit) {
+    val shape = RoundedCornerShape(12.dp)
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(76.dp),
+        shape = ClickableSurfaceDefaults.shape(shape),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = if (on) Wren.ember.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.07f),
+            contentColor = if (on) Color.White else if (today) Wren.ember else Color.White,
+            focusedContainerColor = Color.White,
+            focusedContentColor = Color.Black,
+        ),
+        border = ClickableSurfaceDefaults.border(
+            border = if (today && !on) Border(BorderStroke(2.dp, Wren.ember), shape = shape) else Border.None,
+        ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { content() }
     }
 }
 

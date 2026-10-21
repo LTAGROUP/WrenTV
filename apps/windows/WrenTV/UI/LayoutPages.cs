@@ -111,6 +111,59 @@ sealed class HubPage(string id, string name) : Page
     }
 }
 
+/// An actor or crew member over their best-known title's artwork: photo,
+/// details and biography, then rows of what they're in with the role under
+/// each title. Clicking a title opens its page.
+sealed class PersonPage(int id, string name) : Page
+{
+    protected override bool HasAmbient => true;
+    bool bioOpen;
+
+    protected override async Task<UIElement> Build()
+    {
+        var p = await App.State.Api!.Person(id);
+        if (p.BackdropPath != null) Backdrop?.Show(p.BackdropPath);
+        var head = Ui.Column(8);
+        if (!string.IsNullOrEmpty(p.KnownFor))
+        {
+            var kicker = Ui.Text(p.KnownFor.ToUpperInvariant(), 12, FontWeights.Bold, Theme.EmberBrush);
+            kicker.CharacterSpacing = 80;
+            head.Children.Add(kicker);
+        }
+        head.Children.Add(Ui.Title(p.Name.Length > 0 ? p.Name : name, 40));
+        if (p.Facts.Count > 0) head.Children.Add(Ui.Secondary(string.Join("  ·  ", p.Facts), 14, 2));
+        if (!string.IsNullOrWhiteSpace(p.Biography))
+        {
+            var bio = Ui.Text(p.Biography, 14, maxLines: bioOpen ? 0 : 6, wrap: true);
+            head.Children.Add(bio);
+            var more = new HyperlinkButton { Content = bioOpen ? "Less" : "More", Padding = new Thickness(0) };
+            more.Click += (_, _) => { bioOpen = !bioOpen; bio.MaxLines = bioOpen ? 0 : 6; more.Content = bioOpen ? "Less" : "More"; };
+            var links = Ui.Row(16, more);
+            if (p.ImdbId is { } imdb) links.Children.Add(new HyperlinkButton { Content = "IMDb ↗", NavigateUri = new Uri($"https://www.imdb.com/name/{imdb}/"), Padding = new Thickness(0) });
+            links.Children.Add(new HyperlinkButton { Content = "TMDB ↗", NavigateUri = new Uri($"https://www.themoviedb.org/person/{id}"), Padding = new Thickness(0) });
+            head.Children.Add(links);
+        }
+        var photo = new Border
+        {
+            Width = 180, Height = 270, CornerRadius = new CornerRadius(12),
+            Background = new SolidColorBrush(Theme.Surface),
+            Child = p.ProfilePath != null ? Ui.Image(App.State.Api?.ImageUrl(p.ProfilePath, "w500"), 360) : Ui.Icon("\uE77B", 48, Theme.TertiaryText),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        var top = new Grid { ColumnSpacing = 28, Margin = new Thickness(Gutter, 100, Gutter, 0), MaxWidth = 1100, HorizontalAlignment = HorizontalAlignment.Left };
+        top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        top.Children.Add(photo);
+        Grid.SetColumn(head, 1);
+        top.Children.Add(head);
+        var sections = new List<UIElement> { top };
+        foreach (var r in p.Rows)
+            sections.Add(Cards.Shelf(r.Title, r.Credits.DistinctBy(t => t.MediaType + t.TmdbId).Select(t => (UIElement)Cards.Title(t)), subtitle: r.Credits.Count.ToString()));
+        if (p.Rows.Count == 0) sections.Add(Ui.Empty("\uE8B2", "No movies or shows listed", "TMDB doesn't list any titles for them yet."));
+        return Scroll(sections.ToArray());
+    }
+}
+
 /// The page's banner: its first titles with artwork.
 static class LayoutHero
 {

@@ -149,6 +149,7 @@ fun RouteScreen(r: Route) {
         is Route.LibraryPage -> LayoutPageScreen("library:${r.library.id}", r.library.name, root = false, browseAll = Route.LibraryItems(r.library)) { LibraryScreen(r.library) }
         is Route.Catalog -> CatalogScreen(r.type)
         is Route.Hub -> HubScreen(r.id, r.name)
+        is Route.Person -> PersonScreen(r.id, r.name)
         Route.Layouts -> LayoutsScreen()
         is Route.LayoutEditor -> LayoutEditorScreen(r.scope, r.title)
     }

@@ -280,9 +280,53 @@ data class TitleView(
     val backdropPath: String? = null,
     val rating: Double? = null,
     val item: Item? = null,
+    /** On a person's page, who they play or what they did. */
+    val role: String? = null,
 ) {
     val id: String get() = "$mediaType:$tmdbId"
 }
+
+/** An actor or crew member, with rows of what they're in (Known for, In your library, Movies, TV Shows). */
+@Serializable
+data class Person(
+    val id: Int,
+    val name: String = "",
+    val biography: String? = null,
+    val birthday: String? = null,
+    val deathday: String? = null,
+    val placeOfBirth: String? = null,
+    val profilePath: String? = null,
+    val knownFor: String? = null,
+    val imdbId: String? = null,
+    val backdropPath: String? = null,
+    val rows: List<CreditRow> = emptyList(),
+) {
+    /** "Born March 3, 1970 (age 56)", "Died …", "Los Angeles, California, USA". */
+    val facts: List<String>
+        get() {
+            val out = mutableListOf<String>()
+            val b = birthday?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
+            val d = deathday?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
+            val fmt = java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.LONG)
+            if (b != null) {
+                val age = java.time.Period.between(b, d ?: java.time.LocalDate.now()).years
+                out += if (d == null) "Born ${b.format(fmt)} (age $age)" else "Born ${b.format(fmt)}"
+            }
+            if (d != null) out += "Died ${d.format(fmt)}" + (if (b != null) " (aged ${java.time.Period.between(b, d).years})" else "")
+            placeOfBirth?.takeIf { it.isNotBlank() }?.let { out += it }
+            return out
+        }
+}
+
+@Serializable
+data class CreditRow(val title: String, val credits: List<TitleView> = emptyList())
+
+/** A title's line under its poster on a person's page: "Role · 2019". */
+val TitleView.roleLine: String? get() = role?.let { r -> listOfNotNull(r.ifBlank { null }, year?.toString()).joinToString(" · ") }
+
+/** Just the poster size from the account's preferences, so changing it doesn't resend the rest. */
+@Serializable
+data class PosterPref(val posterSize: String = "medium")
 
 @Serializable
 data class TrendingResponse(val enabled: Boolean = false, val items: List<TitleView> = emptyList())
@@ -298,7 +342,8 @@ data class Ratings(
 )
 
 @Serializable
-data class CastMember(val name: String, val character: String? = null, val profilePath: String? = null)
+/** [id] is the TMDB person, for their page. */
+data class CastMember(val name: String, val character: String? = null, val profilePath: String? = null, val id: Int? = null)
 
 @Serializable
 data class Trailer(val youtubeKey: String, val name: String = "")

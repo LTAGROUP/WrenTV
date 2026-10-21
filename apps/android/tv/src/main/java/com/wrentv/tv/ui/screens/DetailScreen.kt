@@ -701,12 +701,13 @@ private fun EpisodeCard(ep: Item, offline: OfflineItem?, onClick: () -> Unit, on
 @Composable
 private fun CastShelf(cast: List<CastMember>) {
     val api = LocalAppState.current.api
+    val nav = LocalNavigator.current
     Shelf("Cast") {
         items(cast.take(20), key = { it.name + it.character }) { c ->
             var focused by remember { mutableStateOf(false) }
             Column(Modifier.width(120.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                // Focusable so the row scrolls with the remote; there's nothing to open.
-                ArtCard({}, Modifier.size(110.dp).onFocusChanged { focused = it.hasFocus }.rememberFocus("cast:${c.name}"), shape = RoundedCornerShape(55.dp)) {
+                // Opens their page; without a TMDB id it's still focusable so the row scrolls with the remote.
+                ArtCard({ c.id?.let { nav.push(Route.Person(it, c.name)) } }, Modifier.size(110.dp).onFocusChanged { focused = it.hasFocus }.rememberFocus("cast:${c.name}"), shape = RoundedCornerShape(55.dp)) {
                     RemoteImage(api?.imageUrl(c.profilePath, "w185"), Modifier.fillMaxSize().clip(CircleShape))
                     if (c.profilePath == null) {
                         Text(c.name.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString(""),

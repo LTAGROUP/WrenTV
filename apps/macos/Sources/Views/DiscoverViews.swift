@@ -58,7 +58,8 @@ struct TitleCard: View {
                 .hoverLift()
                 .ambient(title.backdropPath ?? title.item?.backdropPath) { title.heroEntry }
             Text(title.title).font(.callout).lineLimit(1)
-            if let y = title.year { Text(String(y)).font(.caption).foregroundStyle(.secondary) }
+            let sub = [title.role ?? "", title.year.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+            if !sub.isEmpty { Text(sub).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
         }
         .frame(width: width)
         .contentShape(Rectangle())
@@ -125,6 +126,18 @@ struct CastShelf: View {
     var body: some View {
         Shelf(title: "Cast") {
             ForEach(Array(cast.enumerated()), id: \.offset) { _, c in
+                if let id = c.id {
+                    NavigationLink(value: PersonRoute(id: id, name: c.name)) { face(c) }
+                        .buttonStyle(.plain)
+                        .help("See \(c.name)'s movies and shows")
+                } else {
+                    face(c)
+                }
+            }
+        }
+    }
+
+    private func face(_ c: CastMember) -> some View {
                 VStack(spacing: 6) {
                     RemoteImage(url: state.api?.imageURL(c.profilePath, size: "w185"))
                         .overlay {
@@ -141,12 +154,105 @@ struct CastShelf: View {
                     }
                 }
                 .frame(width: 112)
-            }
-        }
+                .contentShape(Rectangle())
+                .hoverLift()
     }
 
     private func initials(_ name: String) -> String {
         name.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined()
+    }
+}
+
+/// An actor or crew member over their best-known title's artwork: photo,
+/// details and biography, then rows of what they're in with the role under
+/// each title.
+struct PersonView: View {
+    let route: PersonRoute
+
+    var body: some View {
+        PersonBody(route: route).ambientBackdrop()
+    }
+}
+
+private struct PersonBody: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.ambient) private var ambient
+    let route: PersonRoute
+    @State private var person: Person?
+    @State private var error: String?
+    @State private var bioOpen = false
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 30) {
+                header
+                if let p = person {
+                    ForEach(p.rows, id: \.title) { r in
+                        Shelf(title: r.title, subtitle: "\(r.credits.count)") {
+                            ForEach(r.credits.uniqued()) { TitleCard(title: $0) }
+                        }
+                    }
+                    if p.rows.isEmpty {
+                        ContentUnavailableView("No movies or shows listed", systemImage: "film")
+                    }
+                } else if let error {
+                    ContentUnavailableView("Couldn't load", systemImage: "exclamationmark.triangle", description: Text(error))
+                } else {
+                    ProgressView().frame(maxWidth: .infinity).padding(.top, 60)
+                }
+            }
+            .padding(.bottom, 28)
+        }
+        .navigationTitle(person?.name ?? route.name)
+        .task(id: route.id) {
+            do {
+                person = try await state.api?.person(route.id)
+                ambient?.path = person?.backdropPath
+            } catch is CancellationError {
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 24) {
+            RemoteImage(url: state.api?.imageURL(person?.profilePath, size: "w500"))
+                .overlay {
+                    if person != nil && person?.profilePath == nil {
+                        Text(route.name.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined())
+                            .font(.largeTitle.bold()).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 180, height: 270)
+                .background(.white.opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.12)))
+            VStack(alignment: .leading, spacing: 10) {
+                if let k = person?.knownFor, !k.isEmpty {
+                    Text(k.uppercased()).font(.caption.weight(.bold)).kerning(1.2).foregroundStyle(Color.wrenEmber)
+                }
+                Text(person?.name ?? route.name).font(.system(size: 40, weight: .bold)).lineLimit(2)
+                let facts = (person?.facts ?? []).filter { !$0.hasPrefix("Known for") }
+                if !facts.isEmpty {
+                    Text(facts.joined(separator: "  ·  ")).foregroundStyle(.secondary)
+                }
+                if let bio = person?.biography, !bio.isEmpty {
+                    Text(bio).lineLimit(bioOpen ? nil : 6).foregroundStyle(.white.opacity(0.85)).frame(maxWidth: 720, alignment: .leading)
+                        .textSelection(.enabled)
+                    Button(bioOpen ? "Less" : "More") { withAnimation { bioOpen.toggle() } }
+                        .buttonStyle(.link)
+                }
+                HStack(spacing: 10) {
+                    if let imdb = person?.imdbId, let u = URL(string: "https://www.imdb.com/name/\(imdb)/") { Link("IMDb ↗", destination: u) }
+                    if let u = URL(string: "https://www.themoviedb.org/person/\(route.id)") { Link("TMDB ↗", destination: u) }
+                }
+                .font(.callout)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 40)
     }
 }
 

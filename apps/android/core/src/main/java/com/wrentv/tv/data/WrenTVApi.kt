@@ -177,6 +177,10 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     // Preferences follow the user across devices.
     suspend fun prefs(): UserPrefs = get("/api/me/prefs")
     suspend fun setPrefs(p: UserPrefs): UserPrefs = json.decodeFromString(send("PATCH", "/api/me/prefs", body = enc(p)))
+    suspend fun posterSize(): String = get<PosterPref>("/api/me/prefs").posterSize
+    suspend fun setPosterSize(v: String) { send("PATCH", "/api/me/prefs", body = buildJsonObject { put("posterSize", v) }) }
+
+    suspend fun person(id: Int): Person = get("/api/people/$id")
 
     // Simkl: link with a code, then what's watched here goes to Simkl.
     suspend fun simkl(): SimklStatus = get("/api/me/simkl")

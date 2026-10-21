@@ -39,11 +39,16 @@ class AppState(context: Context) {
     var themeMusic: Boolean
         get() = themeMusicOn
         set(v) { themeMusicOn = v; store.setBool("themeMusic", v) }
-    /** How big posters are on browsing pages: "small", "medium" or "large", kept on this TV. */
+    /** How big posters are on browsing pages: "small", "medium" or "large". Saved to the account so every
+     *  device shows the same, and kept here too so the first page opens at the right size. */
     private var posterSizeValue by mutableStateOf(store.string("posterSize", "medium"))
     var posterSize: String
         get() = posterSizeValue
-        set(v) { posterSizeValue = v; store.setString("posterSize", v) }
+        set(v) {
+            if (v == posterSizeValue) return
+            posterSizeValue = v; store.setString("posterSize", v)
+            api?.let { a -> scope.launch { runCatching { a.setPosterSize(v) } } }
+        }
 
     var serverUrl by mutableStateOf<HttpUrl?>(null)
         private set
@@ -400,6 +405,11 @@ class AppState(context: Context) {
         this.user = user
         downloads.connect(api, limits)
         scope.launch { reloadLibraries() }
+        scope.launch {
+            runCatching { api.posterSize() }.getOrNull()?.takeIf { it in listOf("small", "medium", "large") }?.let {
+                posterSizeValue = it; store.setString("posterSize", it)
+            }
+        }
         listen()
     }
 

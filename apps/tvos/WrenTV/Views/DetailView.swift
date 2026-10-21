@@ -207,7 +207,7 @@ struct DetailView: View {
         Shelf(title: "Cast") {
             ForEach(Array(cast.prefix(20).enumerated()), id: \.offset) { _, c in
                 VStack(spacing: 12) {
-                    Button {} label: {
+                    NavigationLink(value: PersonRoute(id: c.id ?? 0, name: c.name)) {
                         RemoteImage(url: state.api?.imageURL(c.profilePath, size: "w185"))
                             .frame(width: 160, height: 160)
                             .overlay {
@@ -218,6 +218,7 @@ struct DetailView: View {
                             .clipShape(Circle())
                     }
                     .buttonStyle(.borderless)
+                    .disabled(c.id == nil)
                     Text(c.name).font(.caption2).lineLimit(1)
                     if let ch = c.character { Text(ch).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
                 }

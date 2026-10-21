@@ -252,7 +252,7 @@ fun LinkTvScreen() {
     }
 }
 
-/** How big posters and tiles are, on this phone. */
+/** How big posters and tiles are, saved to the account so every device matches. */
 @Composable
 private fun PosterSizePicker() {
     val state = LocalAppState.current

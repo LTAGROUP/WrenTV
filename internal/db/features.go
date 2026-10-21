@@ -23,6 +23,8 @@ type Prefs struct {
 	// ContinueAfter is how many seconds (10–1800) of a movie or episode
 	// must be watched before it's on Continue Watching.
 	ContinueAfter int `json:"continueAfter"`
+	// PosterSize scales posters in every app: "small", "medium" or "large".
+	PosterSize string `json:"posterSize"`
 }
 
 // DefaultWatchedPercent is the watched threshold for users who haven't set one.
@@ -33,7 +35,7 @@ const DefaultWatchedPercent = 90
 const DefaultContinueAfter = 30
 
 func DefaultPrefs() Prefs {
-	return Prefs{AudioLanguage: "en", WatchedPercent: DefaultWatchedPercent, ContinueAfter: DefaultContinueAfter}
+	return Prefs{AudioLanguage: "en", WatchedPercent: DefaultWatchedPercent, ContinueAfter: DefaultContinueAfter, PosterSize: "medium"}
 }
 
 // ContinueAfterSeconds is how far in a title must be to be on Continue Watching.

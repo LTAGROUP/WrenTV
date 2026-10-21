@@ -149,6 +149,7 @@ struct WrenTVAPI: Sendable {
     func itemCollections(_ id: String) async throws -> [String] { try await get("/api/items/\(id)/collections") }
 
     // Preferences follow the user across devices.
+    func person(_ id: Int) async throws -> Person { try await get("/api/people/\(id)") }
     func prefs() async throws -> UserPrefs { try await get("/api/me/prefs") }
     func setPrefs(_ p: UserPrefs) async throws -> UserPrefs {
         let (data, _) = try await send("PATCH", "/api/me/prefs", body: p)

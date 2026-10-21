@@ -278,9 +278,73 @@ struct CalendarEpisode: Codable, Hashable, Identifiable {
 
     /// Today's date the way the server writes it, for "what's next".
     static var today: String { parser.string(from: Date()) }
+
+    /// The seven days (YYYY-MM-DD) of the week containing date, starting on
+    /// the locale's first weekday.
+    static func week(of date: String) -> [String] {
+        let cal = Calendar.current
+        guard let d = parser.date(from: date), let start = cal.dateInterval(of: .weekOfYear, for: d)?.start else { return [date] }
+        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: start) }.map { parser.string(from: $0) }
+    }
+
+    /// date moved by n days.
+    static func adding(_ n: Int, to date: String) -> String {
+        guard let d = parser.date(from: date), let t = Calendar.current.date(byAdding: .day, value: n, to: d) else { return date }
+        return parser.string(from: t)
+    }
 }
 
-/// Poster sizes the browsing pages can use, per device.
+/// An actor or crew member, with rows of what they're in (Known for, In
+/// your library, Movies, TV Shows).
+struct Person: Codable, Hashable {
+    var id: Int
+    var name: String
+    var biography: String?
+    var birthday: String?
+    var deathday: String?
+    var placeOfBirth: String?
+    var profilePath: String?
+    /// TMDB's department for them: "Acting", "Directing"…
+    var knownFor: String?
+    var imdbId: String?
+    var backdropPath: String?
+    var rows: [CreditRow]
+
+    /// "Born February 3, 1970 (age 56)", "Died …", where they were born.
+    var facts: [String] {
+        var out: [String] = []
+        let d = CalendarEpisode.parser
+        func long(_ s: String) -> String { d.date(from: s)?.formatted(date: .long, time: .omitted) ?? s }
+        func age(_ from: String, _ to: String?) -> Int? {
+            guard let b = d.date(from: from) else { return nil }
+            let e = to.flatMap { d.date(from: $0) } ?? Date()
+            return Calendar.current.dateComponents([.year], from: b, to: e).year
+        }
+        if let k = knownFor, !k.isEmpty { out.append("Known for \(k.lowercased())") }
+        if let b = birthday, !b.isEmpty {
+            out.append("Born \(long(b))" + (deathday == nil ? age(b, nil).map { " (age \($0))" } ?? "" : ""))
+        }
+        if let x = deathday, !x.isEmpty {
+            out.append("Died \(long(x))" + (birthday.flatMap { age($0, x) }.map { " (aged \($0))" } ?? ""))
+        }
+        if let p = placeOfBirth, !p.isEmpty { out.append(p) }
+        return out
+    }
+}
+
+struct CreditRow: Codable, Hashable {
+    var title: String
+    var credits: [TitleView]
+}
+
+/// Opens a person's page from a cast list.
+struct PersonRoute: Hashable {
+    var id: Int
+    var name: String
+}
+
+/// Poster sizes the browsing pages can use. The choice is saved to the
+/// account (UserPrefs.posterSize) and cached here for the first frame.
 enum PosterSize: String, CaseIterable, Identifiable {
     case small, medium, large
     static let key = "posterSize"
@@ -334,6 +398,8 @@ struct UserPrefs: Codable, Hashable {
     var watchedPercent: Int?
     /// Seconds watched before a title is on Continue Watching.
     var continueAfter: Int?
+    /// Poster size in every app: small, medium or large.
+    var posterSize: String?
 
     static let watchedPercents = [50, 60, 70, 75, 80, 85, 90, 95, 98]
     static let continueAfters: [(Int, String)] = [(10, "10 seconds"), (30, "30 seconds"), (60, "1 minute"), (120, "2 minutes"),
@@ -387,6 +453,8 @@ struct TitleView: Codable, Hashable, Identifiable {
     var backdropPath: String?
     var rating: Double?
     var item: Item?
+    /// On a person's page: who they played, or their job.
+    var role: String?
 
     var id: String { "\(mediaType):\(tmdbId)" }
     var tmdbURL: URL { URL(string: "https://www.themoviedb.org/\(mediaType == "show" ? "tv" : "movie")/\(tmdbId)")! }
@@ -407,6 +475,8 @@ struct Ratings: Codable, Hashable {
 }
 
 struct CastMember: Codable, Hashable {
+    /// The TMDB person, for their page.
+    var id: Int?
     var name: String
     var character: String?
     var profilePath: String?

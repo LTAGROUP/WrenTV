@@ -63,6 +63,7 @@ import androidx.core.net.toUri
 import coil3.compose.AsyncImage
 import com.wrentv.tv.data.Item
 import com.wrentv.tv.data.TitleView
+import com.wrentv.tv.data.roleLine
 import com.wrentv.tv.data.WatchState
 import com.wrentv.tv.ui.playTarget
 import kotlinx.coroutines.launch
@@ -329,7 +330,7 @@ fun TitleCard(title: TitleView, modifier: Modifier = Modifier, width: Dp? = null
             if (item != null) ItemMenu(item, menu, { menu = false })
         }
         Text(title.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
-        title.year?.let { Text("$it", color = Wren.secondary, style = MaterialTheme.typography.bodySmall) }
+        (title.roleLine ?: title.year?.toString())?.let { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Wren.secondary, style = MaterialTheme.typography.bodySmall) }
     }
 }
 

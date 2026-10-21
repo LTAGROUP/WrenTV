@@ -41,6 +41,7 @@ func (s *Server) handlePatchPrefs(w http.ResponseWriter, r *http.Request) {
 		SubtitleLanguage *string `json:"subtitleLanguage"`
 		WatchedPercent   *int    `json:"watchedPercent"`
 		ContinueAfter    *int    `json:"continueAfter"`
+		PosterSize       *string `json:"posterSize"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, 400, err.Error())
@@ -65,6 +66,15 @@ func (s *Server) handlePatchPrefs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p.ContinueAfter = *req.ContinueAfter
+	}
+	if req.PosterSize != nil {
+		switch *req.PosterSize {
+		case "small", "medium", "large":
+			p.PosterSize = *req.PosterSize
+		default:
+			writeErr(w, 400, "posterSize must be small, medium or large")
+			return
+		}
 	}
 	if err := s.DB.SetPrefs(r.Context(), uid, p); err != nil {
 		writeErr(w, 500, err.Error())

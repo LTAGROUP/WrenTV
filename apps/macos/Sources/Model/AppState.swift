@@ -273,6 +273,12 @@ final class AppState {
         self.user = user
         downloads.connect(api: api, limits: limits)
         Task { await reloadLibraries() }
+        // Poster size follows the account to every device.
+        Task {
+            if let size = try? await api.prefs().posterSize, PosterSize(rawValue: size) != nil {
+                UserDefaults.standard.set(size, forKey: PosterSize.key)
+            }
+        }
         listen()
     }
 

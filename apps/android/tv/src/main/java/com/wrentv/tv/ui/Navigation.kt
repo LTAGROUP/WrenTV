@@ -39,6 +39,7 @@ sealed interface Route {
     data class Collection(val collection: WrenCollection) : Route { override val key = "collection:${collection.id}" }
     data class GenreItems(val genre: String, val libraryId: String? = null) : Route { override val key = "genre:$genre:$libraryId" }
     data class Hub(val id: String, val name: String) : Route { override val key = "hub:$id" }
+    data class Person(val id: Int, val name: String) : Route { override val key = "person:$id" }
     /** Every movie or show TMDB has, as a grid, opened from the Movies and TV Shows pages. */
     data class StreamTitle(val tmdbId: Int, val mediaType: String, val title: String) : Route { override val key = "stream:$mediaType:$tmdbId" }
     data class Trailer(val youtubeKey: String, val title: String) : Route { override val key = "trailer:$youtubeKey" }

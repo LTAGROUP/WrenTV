@@ -135,7 +135,10 @@ public sealed class WrenTVApi
     public Task<List<WrenCollection>> Collections(string? library = null) =>
         Get<List<WrenCollection>>("/api/collections", library == null ? null : [("libraryId", library)]);
 
-    public Task<CalendarResponse> Calendar() => Get<CalendarResponse>("/api/calendar");
+    /// from and to are YYYY-MM-DD; a week at a time.
+    public Task<CalendarResponse> Calendar(string from, string to) => Get<CalendarResponse>("/api/calendar", [("from", from), ("to", to)]);
+
+    public Task<Person> Person(int id) => Get<Person>($"/api/people/{id}");
 
     /// Collections whose names match, a franchise's among them.
     public Task<List<WrenCollection>> SearchCollections(string q) => Get<List<WrenCollection>>("/api/collections", [("q", q)]);
@@ -146,6 +149,9 @@ public sealed class WrenTVApi
 
     public Task<UserPrefs> Prefs() => Get<UserPrefs>("/api/me/prefs");
     public async Task<UserPrefs> SetPrefs(UserPrefs p) => Json.Parse<UserPrefs>((await Send(HttpMethod.Patch, "/api/me/prefs", body: p)).Body);
+    /// Just the poster size, so changing it doesn't resend the rest.
+    public async Task SetPosterSize(string size) => await Send(HttpMethod.Patch, "/api/me/prefs", body: new PosterPref { PosterSize = size });
+    public async Task<string?> PosterSize() => (await Get<PosterPref>("/api/me/prefs")).PosterSize;
 
     // Simkl: what's watched here is sent there, and its history imported.
     public Task<SimklStatus> Simkl() => Get<SimklStatus>("/api/me/simkl");
