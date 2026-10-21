@@ -521,3 +521,26 @@ textarea { min-height: 80px; font-family: ui-monospace, Menlo, monospace; font-s
 #ambient .amb.on { opacity: 1; }
 @media (max-width: 820px) { #ambient { left: 0; } }
 @media (prefers-reduced-motion: reduce) { #ambient, #ambient .amb { transition: none; } }
+
+/* Layout pages, hubs and the layout editor */
+.page-actions { display: flex; justify-content: flex-end; gap: 8px; margin: -12px 0 18px; }
+.page-actions svg { width: 16px; height: 16px; }
+.more-card .poster { display: grid; place-items: center; border: 1px solid var(--line); }
+.more-card .poster span { display: grid; justify-items: center; gap: 10px; padding: 12px; text-align: center; color: var(--muted); font-size: 13px; }
+.more-card .poster svg { width: 26px; height: 26px; color: var(--accent); }
+.more-card:hover .poster span { color: var(--cream); }
+.hub .thumb .shade { position: absolute; inset: 0; background: linear-gradient(to bottom, transparent 40%, color-mix(in srgb, var(--tint) 85%, transparent)); }
+.hub .thumb b { position: absolute; left: 14px; right: 14px; bottom: 12px; font-size: 17px; line-height: 1.2; text-shadow: 0 1px 8px #000a; }
+.hub.logo .thumb { display: grid; place-items: center; }
+.hub.logo .thumb img { width: 62%; height: 52%; object-fit: contain; }
+.hub-head { min-height: 44vh; }
+.layouts { max-width: 760px; }
+.layout-links { display: grid; gap: 8px; margin-top: 16px; }
+.layout-link { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
+.layout-link:hover { border-color: var(--accent); }
+.layout-link svg { width: 18px; height: 18px; color: var(--accent); }
+.layout-rows { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 8px; }
+.layout-rows li { display: flex; align-items: center; gap: 4px; padding: 10px 8px 10px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
+.layout-rows li > div { flex: 1; min-width: 0; }
+.layout-rows li.hidden b { color: var(--muted); font-weight: 500; }
+.layout-add { margin-bottom: 12px; max-width: 420px; }

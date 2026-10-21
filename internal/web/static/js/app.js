@@ -4,6 +4,7 @@ import { openPlayer } from './player.js';
 import * as manage from './manage.js';
 import * as browse from './browse.js';
 import * as ambient from './ambient.js';
+import * as layouts from './layouts.js';
 import { viewStats } from './stats.js';
 
 const app = $('#app');
@@ -25,11 +26,18 @@ document.addEventListener('click', (e) => {
 });
 
 const routes = [
-  [/^\/$/, viewHome],
+  [/^\/$/, () => layouts.viewLayoutPage('home', 'Home', viewHome)],
   [/^\/watchlist$/, viewWatchlist],
-  [/^\/movies$/, () => viewCatalog('movie')],
-  [/^\/shows$/, () => viewCatalog('show')],
-  [/^\/library\/([^/]+)$/, viewLibrary],
+  [/^\/movies$/, () => layouts.viewLayoutPage('movies', 'Movies', () => viewCatalog('movie'), '/movies/all')],
+  [/^\/shows$/, () => layouts.viewLayoutPage('shows', 'TV Shows', () => viewCatalog('show'), '/shows/all')],
+  [/^\/movies\/all$/, () => viewCatalog('movie')],
+  [/^\/shows\/all$/, () => viewCatalog('show')],
+  [/^\/library\/([^/]+)$/, (id) => location.search ? viewLibrary(id)
+    : layouts.viewLayoutPage(`library:${id}`, libraries.find((l) => l.id === id)?.name || 'Library', () => viewLibrary(id), `/library/${id}/all`)],
+  [/^\/library\/([^/]+)\/all$/, viewLibrary],
+  [/^\/hub\/([^/]+)$/, (id) => layouts.viewHub(decodeURIComponent(id))],
+  [/^\/layouts$/, layouts.viewLayouts],
+  [/^\/layouts\/([^/]+)$/, layouts.viewLayoutEditor],
   [/^\/library\/([^/]+)\/genres$/, browse.viewGenres],
   [/^\/library\/([^/]+)\/collections$/, browse.viewCollections],
   [/^\/genres$/, () => browse.viewGenres()],
@@ -327,7 +335,6 @@ async function shell(view, seq) {
           <a class="nav" href="/shows" data-path="/shows">${icons.shows}<span>TV Shows</span></a>
           <a class="nav" href="/collections" data-path="/collections">${icons.stack}<span>Collections</span></a>`
         : `<a class="nav" href="/collections" data-path="/collections">${icons.stack}<span>Collections</span></a>
-          <a class="nav" href="/genres" data-path="/genres">${icons.tag}<span>Genres</span></a>
           <div class="nav-title">Libraries</div>
           <div id="lib-nav">${libNav()}</div>`}
         ${admin ? `<div class="nav-title">Manage</div>
@@ -338,6 +345,7 @@ async function shell(view, seq) {
           ${state.server.streaming ? `<a class="nav" href="/manage/downloads" data-path="/manage/downloads">${icons.download}<span>Downloads</span></a>` : ''}
           <a class="nav" href="/manage/settings" data-path="/manage/settings">${icons.settings}<span>Settings</span></a>` : ''}
         <div class="spacer"></div>
+        <a class="nav" href="/layouts" data-path="/layouts">${icons.stack}<span>Layouts</span></a>
         <div class="account"><div class="avatar">${esc((name[0] || '?').toUpperCase())}</div>
           <div style="min-width:0;flex:1"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</div>
           <div class="small muted">${esc(u?.role || '')}</div></div>
@@ -435,7 +443,7 @@ export function timeLeft(p) {
   return p && p.duration > 0 && left > 60 && !p.watched ? `${fmtRuntime(Math.max(1, Math.round(left / 60)))} left` : '';
 }
 
-function wideCard(it) {
+export function wideCard(it) {
   const pic = it.stillPath || it.backdropPath;
   const title = it.kind === 'episode' ? it.showTitle || it.title : it.title;
   const sub = [it.kind === 'episode' ? `S${it.seasonNumber} · E${it.episodeNumber} — ${it.title}` : it.year, timeLeft(it.progress)].filter(Boolean).join(' · ');
@@ -467,7 +475,7 @@ export function bindShelves(root) {
 
 // ---------------------------------------------------------------- views
 
-function featureHero(it) {
+export function featureHero(it) {
   const playable = it.kind === 'movie';
   const meta = [it.year, it.kind === 'show' ? 'Series' : fmtRuntime(it.runtimeMin), it.contentRating && `<span class="pill">${esc(it.contentRating)}</span>`,
     it.rating && `★ ${it.rating.toFixed(1)}`].filter(Boolean);
@@ -619,7 +627,7 @@ async function viewCatalog(type) {
 }
 
 // The rotating banner of this week's trending titles, like the apps.
-function discoverHero(titles) {
+export function discoverHero(titles) {
   return `<section class="feature carousel">${titles.map((v, i) => `<div class="bg${i ? '' : ' on'}" data-bg="${img(v.backdropPath, 'w1280')}"></div>`).join('')}
     <div class="content">${heroContent(titles, 0)}</div></section>`;
 }
@@ -648,7 +656,7 @@ function heroContent(titles, i) {
 
 // bindHero plays from the banner and, with several titles, moves to the next
 // one every 8 seconds unless the pointer is over it.
-function bindHero(node, titles) {
+export function bindHero(node, titles) {
   const sec = $('.feature', node);
   if (!sec) return;
   sec.addEventListener('click', (e) => {
@@ -707,7 +715,8 @@ const sorts = [['title', 'Title'], ['added', 'Recently added'], ['year', 'Year']
 
 // libraryTabs switches between a library's titles, collections and genres.
 export function libraryTabs(id, active) {
-  return `<nav class="tabs"><a href="/library/${id}" class="${active === 'all' ? 'active' : ''}">Library</a>
+  return `<nav class="tabs"><a href="/library/${id}" class="${active === 'home' ? 'active' : ''}">Overview</a>
+    <a href="/library/${id}/all" class="${active === 'all' ? 'active' : ''}">All titles</a>
     <a href="/library/${id}/collections" class="${active === 'collections' ? 'active' : ''}">Collections</a>
     <a href="/library/${id}/genres" class="${active === 'genres' ? 'active' : ''}">Genres</a></nav>`;
 }
@@ -744,7 +753,7 @@ async function viewLibrary(id) {
   const nav = (patch) => {
     const n = new URLSearchParams(location.search);
     for (const [k, v] of Object.entries(patch)) v ? n.set(k, v) : n.delete(k);
-    go(`/library/${id}${n.toString() ? '?' + n : ''}`, true);
+    go(`/library/${id}/all${n.toString() ? '?' + n : ''}`, true);
   };
   $('#sort', node).onchange = (e) => nav({ sort: e.target.value === 'title' ? '' : e.target.value });
   $('#genre', node).onchange = (e) => nav({ genre: e.target.value });
