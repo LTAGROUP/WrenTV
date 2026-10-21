@@ -16,9 +16,11 @@ const titleKey = (v) => v.mediaType + v.tmdbId;
 // Servers from before layouts answer 404 and get fallback instead.
 export async function viewLayoutPage(scope, title, fallback, browseAll) {
   setTitle(title);
+  // The page loads a few rows at a time, the rest as it's scrolled to.
+  const page = (offset) => api(`/api/layouts/${scope}?limit=${pageRows}&offset=${offset}`);
   let layout;
   try {
-    layout = await api(`/api/layouts/${scope}`);
+    layout = await page(0);
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) return fallback();
     throw e;
@@ -30,8 +32,10 @@ export async function viewLayoutPage(scope, title, fallback, browseAll) {
   let html = titles.length ? discoverHero(titles) : feature ? featureHero(feature) : `<div class="page-head"><h1>${esc(title)}</h1></div>`;
   html += `<div class="page-actions">${browseAll ? `<a class="btn" href="${browseAll}">Browse all</a>` : ''}
     <a class="btn ghost" href="/layouts/${encodeURIComponent(scope)}?title=${encodeURIComponent(title)}">${icons.settings}<span>Customize</span></a></div>`;
-  html += layoutRows(rows);
-  if (!rows.length) {
+  const seen = new Set(rows.map((r) => r.id));
+  html += `<div class="layout-rows-live">${layoutRows(rows)}</div>`;
+  if (layout.nextOffset != null) html += '<div class="layout-more"><div class="spinner"></div></div>';
+  if (!rows.length && layout.nextOffset == null) {
     html += `<div class="empty"><h2>Nothing here yet</h2><p>${isAdmin() ? 'Add a library, or choose rows with Customize.' : 'The server owner hasn\'t shared anything here yet.'}</p></div>`;
   }
   const node = el(`<div class="discover">${html}</div>`);
@@ -39,8 +43,33 @@ export async function viewLayoutPage(scope, title, fallback, browseAll) {
   bindShelves(node);
   if (titles.length) bindHero(node, titles);
   $('[data-feature-play]', node)?.addEventListener('click', (e) => openPlayer(e.currentTarget.dataset.featurePlay, { resume: true, onClose: () => render() }));
+  const more = $('.layout-more', node);
+  if (more) {
+    let next = layout.nextOffset, busy = false;
+    const live = $('.layout-rows-live', node);
+    const io = new IntersectionObserver(async (ents) => {
+      if (busy || !ents.some((e) => e.isIntersecting)) return;
+      busy = true;
+      try {
+        while (next != null && more.isConnected && more.getBoundingClientRect().top < innerHeight + 900) {
+          const l = await page(next);
+          next = l.nextOffset;
+          const fresh = (l.rows || []).filter((r) => !seen.has(r.id) && seen.add(r.id));
+          const part = el(`<div>${layoutRows(fresh)}</div>`);
+          bindPlayLinks(part);
+          bindShelves(part);
+          live.append(...part.children);
+        }
+      } catch { next = null; }
+      busy = false;
+      if (next == null) { io.disconnect(); more.remove(); }
+    }, { rootMargin: '900px 0px' });
+    io.observe(more);
+  }
   return node;
 }
+
+const pageRows = 6;
 
 // layoutRows draws each row the way its kind asks. A collection's or hub's
 // row ends in a card that opens the rest of it.
@@ -55,14 +84,17 @@ function layoutRows(rows) {
     }
     if (!cards.length) return '';
     let see;
+    let seeLabel;
     if (row.collection) {
+      // A shelf with all of a collection still opens it, but has no View all card.
       see = `/collection/${row.collection.id}`;
-      cards.push(moreCard('View all', see));
+      if (row.more) cards.push(moreCard('View all', see));
+      else seeLabel = 'Open collection';
     } else if (row.hubId) {
       see = `/hub/${encodeURIComponent(row.hubId)}`;
       cards.push(moreCard(`Open ${row.title}`, see));
     }
-    return shelf(row.title, cards.join(''), { see, sub: row.subtitle || '' });
+    return shelf(row.title, cards.join(''), { see, seeLabel, sub: row.subtitle || '' });
   }).join('');
 }
 

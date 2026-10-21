@@ -19,11 +19,18 @@ sealed class RowsPage(string scope, string title, Func<Page> fallback, Func<Page
 {
     protected override bool HasAmbient => true;
 
+    /// Rows per request; the rest load as the page scrolls.
+    const int PageRows = 6;
+    /// How many rows were showing, so a refresh keeps them and the page doesn't jump.
+    int shown;
+
     protected override async Task<UIElement> Build()
     {
+        var api = App.State.Api!;
         LayoutResponse layout;
-        try { layout = await App.State.Api!.Layout(scope); }
+        try { layout = await api.Layout(scope, limit: Math.Max(PageRows, shown)); }
         catch (WrenTVException e) when (e.Status == 404) { return fallback(); }
+        shown = layout.Rows.Count;
 
         var sections = new List<UIElement>();
         var hero = LayoutHero.Make(layout.Rows);
@@ -31,18 +38,46 @@ sealed class RowsPage(string scope, string title, Func<Page> fallback, Func<Page
         else sections.Add(PageTitle(title));
         sections.AddRange(LayoutRows.Make(layout.Rows));
         if (layout.Rows.Count == 0)
-            sections.Add(Ui.Empty("", "Nothing here yet",
+            sections.Add(Ui.Empty("", "Nothing here yet",
                 App.State.IsAdmin ? "Add a library on the Server page, and it'll show up here." : "Ask the server owner to share a library."));
         var scroll = Scroll(sections.ToArray());
-        if (hero != null) ((StackPanel)scroll.Content).Padding = new Thickness(0, 0, 0, 48);
+        var col = (StackPanel)scroll.Content;
+        if (hero != null) col.Padding = new Thickness(0, 0, 0, 48);
+
+        // The next rows load as the last ones scroll into view.
+        var next = layout.NextOffset;
+        var have = layout.Rows.Select(r => r.Id).ToHashSet();
+        var spinner = new ProgressRing { IsActive = true, Width = 28, Height = 28, HorizontalAlignment = HorizontalAlignment.Center };
+        if (next != null) col.Children.Add(spinner);
+        var loading = false;
+        async void More()
+        {
+            if (loading || next is not { } offset || scroll.VerticalOffset < scroll.ScrollableHeight - 800) return;
+            loading = true;
+            try
+            {
+                var more = await api.Layout(scope, offset, PageRows);
+                var fresh = more.Rows.Where(r => have.Add(r.Id)).ToList();
+                var at = col.Children.IndexOf(spinner);
+                foreach (var e in LayoutRows.Make(fresh)) col.Children.Insert(at++, e);
+                shown += fresh.Count;
+                next = more.NextOffset;
+                if (next == null) col.Children.Remove(spinner);
+            }
+            catch { next = null; col.Children.Remove(spinner); }
+            finally { loading = false; }
+            More();
+        }
+        scroll.ViewChanged += (_, _) => More();
+        scroll.Loaded += (_, _) => More();
 
         // Browse All and Customize, top right over the banner.
         var tools = Ui.Row(8);
         tools.HorizontalAlignment = HorizontalAlignment.Right;
         tools.VerticalAlignment = VerticalAlignment.Top;
         tools.Margin = new Thickness(0, 16, Gutter, 0);
-        if (browseAll != null) tools.Children.Add(Ui.Button("Browse All", () => App.Shell?.Push(browseAll()), ""));
-        tools.Children.Add(Ui.Button("Customize", () => App.Shell?.Push(new LayoutEditorPage(scope, title)), ""));
+        if (browseAll != null) tools.Children.Add(Ui.Button("Browse All", () => App.Shell?.Push(browseAll()), ""));
+        tools.Children.Add(Ui.Button("Customize", () => App.Shell?.Push(new LayoutEditorPage(scope, title)), ""));
         var g = new Grid();
         g.Children.Add(scroll);
         g.Children.Add(tools);
@@ -129,8 +164,9 @@ static class LayoutRows
             Action? all = null;
             if (row.Collection is { } c)
             {
+                // The header's "See All" opens it; the card only when the shelf doesn't show everything.
                 all = () => App.Shell?.Push(new CollectionPage(c.Id, c.Name));
-                cards.Add(MoreCard("View All", all));
+                if (row.More) cards.Add(MoreCard("View All", all));
             }
             else if (row.HubId is { } hub)
             {

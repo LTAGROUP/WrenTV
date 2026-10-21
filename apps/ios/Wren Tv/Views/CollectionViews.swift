@@ -152,6 +152,7 @@ struct CollectionDetailView: View {
     let seed: WrenCollection
     @State private var detail: CollectionDetail?
     @State private var sort = ""
+    @State private var rowed = false
     @State private var error: String?
 
     private var collection: WrenCollection { detail?.collection ?? seed }
@@ -160,7 +161,12 @@ struct CollectionDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 header
-                if let detail, let titles = detail.titles {
+                if let detail, let rows = detail.rows, !rows.isEmpty, sort.isEmpty {
+                    VStack(alignment: .leading, spacing: 30) {
+                        ForEach(Array(rows.enumerated()), id: \.offset) { _, r in shelf(r, detail) }
+                    }
+                    .padding(.vertical, 20)
+                } else if let detail, let titles = detail.titles {
                     LazyVGrid(columns: m.columns, alignment: .leading, spacing: m.rowSpacing) {
                         ForEach(sorted(titles.uniqued())) { TitleCard(title: $0, fill: true) }
                     }
@@ -174,12 +180,7 @@ struct CollectionDetailView: View {
                         ForEach(detail.items.uniqued()) { item in
                             NavigationLink(value: item) { PosterCard(item: item, fill: true) }
                                 .buttonStyle(.plain)
-                                .contextMenu {
-                                    ItemContextMenu(item: item)
-                                    if state.isAdmin && collection.kind == "manual" {
-                                        Button("Remove from Collection") { remove(item) }
-                                    }
-                                }
+                                .contextMenu { menu(item) }
                         }
                     }
                     .padding(.horizontal, m.gutter)
@@ -204,10 +205,16 @@ struct CollectionDetailView: View {
         .ignoresSafeArea(edges: .top)
         .navigationTitle(collection.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             Menu {
                 Picker("Order", selection: $sort) {
-                    Text("Collection order").tag("")
+                    if hasRows {
+                        Text("Rows").tag("")
+                        Text("Collection order").tag("order")
+                    } else {
+                        Text("Collection order").tag("")
+                    }
                     Text("Title").tag("title")
                     Text("Year (newest)").tag("year")
                     Text("Year (oldest)").tag("year_asc")
@@ -223,16 +230,48 @@ struct CollectionDetailView: View {
         .task(id: "\(seed.id)|\(sort)|\(state.refreshTick)") { await load() }
     }
 
+    /// Big collections come as shelves; "order" is their own order as a grid.
+    /// Sorted answers come without rows, so whether there are any is remembered.
+    private var hasRows: Bool { rowed || !(detail?.rows ?? []).isEmpty }
+
+    private func shelf(_ r: CollectionRow, _ d: CollectionDetail) -> some View {
+        Shelf(title: r.title) {
+            if let titles = d.titles {
+                let ts = r.index.compactMap { titles.indices.contains($0) ? titles[$0] : nil }.uniqued()
+                ForEach(Array(ts.enumerated()), id: \.element.id) { i, t in
+                    TitleCard(title: t, rank: r.title == "Top 20" && i < 10 ? i + 1 : nil)
+                }
+            } else {
+                ForEach(r.index.compactMap { d.items.indices.contains($0) ? d.items[$0] : nil }.uniqued()) { item in
+                    NavigationLink(value: item) { PosterCard(item: item) }
+                        .buttonStyle(.plain)
+                        .contextMenu { menu(item) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func menu(_ item: Item) -> some View {
+        ItemContextMenu(item: item)
+        if state.isAdmin && collection.kind == "manual" {
+            Button("Remove from Collection") { remove(item) }
+        }
+    }
+
     private var header: some View {
         ZStack(alignment: .bottomLeading) {
             RemoteImage(url: state.api?.imageURL(collection.backdropPath, size: "w1280"))
-                .frame(height: 300)
+                .frame(height: m.heroHeight)
                 .frame(maxWidth: .infinity)
                 .clipped()
-                .overlay(LinearGradient(colors: [.clear, .black.opacity(0.5), Color.black], startPoint: .top, endPoint: .bottom))
+                .overlay(LinearGradient(stops: [.init(color: .clear, location: 0.35), .init(color: .black.opacity(0.55), location: 0.75),
+                                                .init(color: Color.black, location: 1)],
+                                        startPoint: .top, endPoint: .bottom))
+                .overlay(LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .leading, endPoint: .center))
             VStack(alignment: .leading, spacing: 8) {
                 Text("COLLECTION").font(.caption.weight(.bold)).kerning(1.2).foregroundStyle(Color.wrenEmber)
-                Text(collection.name).font(.system(size: 36, weight: .bold))
+                Text(collection.name).font(.system(size: m.heroTitle, weight: .bold))
                 if !collection.description.isEmpty {
                     Text(collection.description).foregroundStyle(.secondary).lineLimit(3).frame(maxWidth: 680, alignment: .leading)
                 }
@@ -271,7 +310,11 @@ struct CollectionDetailView: View {
     }
 
     private func load() async {
-        do { detail = try await state.api?.collection(seed.id, sort: sort.isEmpty ? nil : sort) } catch { self.error = error.localizedDescription }
+        let server = sort.isEmpty || sort == "order" ? nil : sort
+        do {
+            detail = try await state.api?.collection(seed.id, sort: server)
+            if !(detail?.rows ?? []).isEmpty { rowed = true }
+        } catch { self.error = error.localizedDescription }
     }
 
     private func remove(_ item: Item) {

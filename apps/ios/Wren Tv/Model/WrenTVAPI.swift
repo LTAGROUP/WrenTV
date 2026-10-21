@@ -117,6 +117,11 @@ struct WrenTVAPI: Sendable {
         return try await get("/api/genres/items", query: q)
     }
 
+    /// Collections whose names match, a franchise's among them.
+    func searchCollections(_ q: String) async throws -> [WrenCollection] {
+        try await get("/api/collections", query: [.init(name: "q", value: q)])
+    }
+
     func collections(library: String? = nil) async throws -> [WrenCollection] {
         try await get("/api/collections", query: library.map { [.init(name: "libraryId", value: $0)] } ?? [])
     }
@@ -149,6 +154,14 @@ struct WrenTVAPI: Sendable {
         let (data, _) = try await send("PATCH", "/api/me/prefs", body: p)
         return try Self.decoder.decode(UserPrefs.self, from: data)
     }
+
+    // Simkl: what's watched here is sent there, and its history imported.
+    func simkl() async throws -> SimklStatus { try await get("/api/me/simkl") }
+    func simklLink() async throws { try await send("POST", "/api/me/simkl/link") }
+    func simklCancelLink() async throws { try await send("DELETE", "/api/me/simkl/link") }
+    func simklUnlink() async throws { try await send("DELETE", "/api/me/simkl") }
+    func simklImport() async throws { try await send("POST", "/api/me/simkl/import") }
+    func simklScrobble(_ on: Bool) async throws { try await send("PATCH", "/api/me/simkl", body: ["scrobble": on]) }
 
     func stats(days: Int) async throws -> StatsResponse {
         let tz = TimeZone.current.secondsFromGMT()

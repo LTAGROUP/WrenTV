@@ -328,6 +328,40 @@ class AppState(context: Context) {
         return true
     }
 
+    /** A sign-in code a TV shows, looked up before it's approved. [account]: the TV doesn't know a server yet. */
+    data class TvCode(val code: String, val device: String, val account: Boolean)
+
+    /** Finds the TV behind a code: an account code first, then this server's own. */
+    suspend fun lookUpTvCode(raw: String): TvCode {
+        val code = normalizeTvCode(raw)
+        if (code.length != 8) throw WrenTVException("Codes are 8 letters and numbers, like ABCD-EFGH")
+        val api = api ?: throw WrenTVException("Not connected")
+        var accountError: Exception? = null
+        val auth = api.auth
+        if (auth?.accountSession != null) {
+            try {
+                val d = AccountClient(server?.supabase ?: WrenAccounts).linkDevice(code, true, auth.token())
+                return TvCode(code, d.deviceName.ifEmpty { "TV" }, true)
+            } catch (e: Exception) {
+                accountError = e
+            }
+        }
+        val info = try { api.pairInfo(code) } catch (e: Exception) { throw accountError ?: e }
+        if (info.approved) throw WrenTVException("This code was already used. Get a new one on the TV.")
+        return TvCode(code, info.device, false)
+    }
+
+    /** Signs the TV in: to this account, or to this server as this user. */
+    suspend fun approveTvCode(c: TvCode) {
+        val api = api ?: throw WrenTVException("Not connected")
+        if (c.account) {
+            val auth = api.auth ?: throw WrenTVException("Not signed in")
+            AccountClient(server?.supabase ?: WrenAccounts).linkDevice(c.code, false, auth.token())
+        } else {
+            api.approvePair(c.code)
+        }
+    }
+
     /** Re-checks access after the owner shares the server. */
     suspend fun retryAccess() {
         val url = serverUrl ?: return
@@ -503,4 +537,10 @@ class AppState(context: Context) {
     }
 
     private fun key(url: HttpUrl) = AddressPicker.key(url)
+}
+
+/** Codes are 8 characters; TVs show them as ABCD-EFGH. A scanned /link?code= link gives just its code. */
+fun normalizeTvCode(s: String): String {
+    val raw = Regex("""[?&]code=([^&#]+)""").find(s)?.groupValues?.get(1) ?: s
+    return raw.uppercase().filter { it in "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" }
 }

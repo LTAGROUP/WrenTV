@@ -34,6 +34,8 @@ type layoutRow struct {
 	Collection *db.Collection `json:"collection,omitempty"`
 	Missing    []titleView    `json:"missing,omitempty"`
 	Ranked     bool           `json:"ranked,omitempty"`
+	// More: a collection row has more than it shows.
+	More bool `json:"more,omitempty"`
 	// HubID is set on a single hub's row, which opens the hub.
 	HubID string `json:"hubId,omitempty"`
 }
@@ -353,15 +355,15 @@ func (s *Server) resolveEntry(ctx context.Context, r *http.Request, sc *pageScop
 }
 
 func (s *Server) collectionRow(ctx context.Context, r *http.Request, c *db.Collection) *layoutRow {
-	items, missing, err := s.collectionItems(ctx, r, c, 30)
+	const shown = 30
+	items, missing, err := s.collectionItems(ctx, r, c, shown+1)
 	if err != nil || len(items)+len(missing) == 0 {
 		return nil
 	}
+	more := len(items) > shown || len(missing) > shown
+	items, missing = items[:min(shown, len(items))], missing[:min(shown, len(missing))]
 	c.ItemCount, c.Active = len(items), true
-	if len(missing) > 30 {
-		missing = missing[:30]
-	}
-	return &layoutRow{ID: "collection:" + c.ID, Kind: "collection", Title: c.Name, Collection: c, Items: items, Missing: missing}
+	return &layoutRow{ID: "collection:" + c.ID, Kind: "collection", Title: c.Name, Collection: c, Items: items, Missing: missing, More: more}
 }
 
 func (s *Server) builtinRows(ctx context.Context, r *http.Request, sc *pageScope, ref string) []layoutRow {

@@ -461,12 +461,15 @@ sealed class CollectionsPage : Page
         var cols = await App.State.Api!.Collections();
         if (cols.Count == 0) return Titled("Collections", "", Ui.Empty("\uE8F1", "No collections", "Collections from TMDB and ones you make show up here."));
         // The server's order already puts the groups in theirs.
-        var shelves = cols.GroupBy(c => c.Group ?? "Collections").Select(g => Cards.Shelf(g.Key,
-            g.Select(c => (UIElement)Cards.Tile(c.Name, c.ItemCount is { } n ? $"{n} titles" : "", c.BackdropPath ?? c.PosterPath,
-                () => App.Shell?.Push(new CollectionPage(c.Id, c.Name)), margin: 0)),
+        var shelves = cols.GroupBy(c => c.Group ?? "Collections").Select(g => Cards.Shelf(g.Key, g.Select(Tile),
             subtitle: g.Count() == 1 ? "1 collection" : $"{g.Count()} collections"));
         return Scroll("Collections", shelves.ToArray());
     }
+
+    /// A collection's wide tile: its artwork with the name over it.
+    internal static UIElement Tile(WrenCollection c) =>
+        Cards.Tile(c.Name, c.ItemCount is { } n ? $"{n} titles" : "", c.BackdropPath ?? c.PosterPath,
+            () => App.Shell?.Push(new CollectionPage(c.Id, c.Name)), margin: 0);
 
     internal static UIElement Titled(string title, string subtitle, UIElement content)
     {
@@ -561,8 +564,16 @@ sealed class SearchPage(string query) : Page
         var api = App.State.Api!;
         var local = api.Search(query);
         Task<DiscoverSearch>? remote = App.State.CanStream ? api.DiscoverSearch(query) : null;
+        var colls = api.SearchCollections(query);
         var items = await local;
         var sections = new List<UIElement>();
+        // Collections whose names match, a franchise's among them.
+        try
+        {
+            var cs = await colls;
+            if (cs.Count > 0) sections.Add(Cards.Shelf("Collections", cs.Select(CollectionsPage.Tile)));
+        }
+        catch { }
         var movies = items.Where(i => i.Kind == "movie").ToList();
         var shows = items.Where(i => i.Kind == "show").ToList();
         var episodes = items.Where(i => i.Kind == "episode").ToList();
@@ -587,31 +598,64 @@ sealed class SearchPage(string query) : Page
 
 sealed class CollectionPage(string id, string name) : Page
 {
+    protected override bool HasAmbient => true;
+
+    /// A big collection shows as rows, like Home; this shows it as one grid instead.
+    bool asGrid;
+
     protected override async Task<UIElement> Build()
     {
         var c = await App.State.Api!.Collection(id);
         // Lists can name a title twice; it's shown once.
         c.Items = c.Items.DistinctBy(i => i.Id).ToList();
-        var g = new Grid { RowSpacing = 20, Padding = new Thickness(0, 24, 0, 0) };
-        g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        g.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        g.Children.Add(PageTitle(c.Collection.Name.Length > 0 ? c.Collection.Name : name,
-            string.IsNullOrEmpty(c.Collection.Description) ? $"{c.Items.Count} titles" : c.Collection.Description));
-        UIElement list;
+        if (c.Collection.BackdropPath != null) Backdrop?.Show(c.Collection.BackdropPath);
+        var rows = asGrid ? null : c.Rows is { Count: > 0 } r ? r : null;
+
+        var head = Ui.Column(6);
+        var kicker = Ui.Text("COLLECTION", 12, FontWeights.Bold, Theme.EmberBrush);
+        kicker.CharacterSpacing = 80;
+        head.Children.Add(kicker);
+        head.Children.Add(Ui.Title(c.Collection.Name.Length > 0 ? c.Collection.Name : name, 40));
+        if (!string.IsNullOrEmpty(c.Collection.Description)) head.Children.Add(Ui.Secondary(c.Collection.Description, 15, 3));
+        var count = c.Titles is { } ts ? $"{ts.DistinctBy(t => t.MediaType + t.TmdbId).Count()} titles" : $"{c.Items.Count} in your library";
+        head.Children.Add(Ui.Secondary(count, 14));
+        if (c.Rows is { Count: > 0 })
+        {
+            var toggle = Ui.Button(asGrid ? "Show as Rows" : "Show All in Order", () => { asGrid = !asGrid; Reload(quiet: true); }, asGrid ? "" : "");
+            toggle.HorizontalAlignment = HorizontalAlignment.Left;
+            toggle.Margin = new Thickness(0, 8, 0, 0);
+            head.Children.Add(toggle);
+        }
+        head.MaxWidth = 640;
+        head.HorizontalAlignment = HorizontalAlignment.Left;
+        head.Margin = new Thickness(Gutter, 120, Gutter, 0);
+
+        if (rows != null)
+        {
+            var sections = new List<UIElement> { head };
+            foreach (var row in rows)
+            {
+                var cards = c.Titles is { } titles
+                    ? row.Index.Where(i => i >= 0 && i < titles.Count).Select(i => titles[i]).DistinctBy(t => t.MediaType + t.TmdbId)
+                        .Select((t, k) => (UIElement)Cards.Title(t, rank: row.Title == "Top 20" && k < 10 ? k + 1 : null)).ToList()
+                    : row.Index.Where(i => i >= 0 && i < c.Items.Count).Select(i => c.Items[i]).DistinctBy(i => i.Id)
+                        .Select(i => (UIElement)Cards.Poster(i)).ToList();
+                if (cards.Count > 0) sections.Add(Cards.Shelf(row.Title, cards));
+            }
+            return Scroll(sections.ToArray());
+        }
+
         var missing = (c.Missing ?? c.Titles?.Where(t => t.Item == null).ToList() ?? []).DistinctBy(t => t.MediaType + t.TmdbId).ToList();
         if (missing.Count > 0)
-        {
-            var sections = new List<UIElement>
-            {
+            return Scroll(head,
                 Cards.Shelf("In Your Library", c.Items.Select(i => (UIElement)Cards.Poster(i))),
-                Cards.Shelf(App.State.CanStream ? "Stream the Rest" : "Not in Your Library", missing.Select(t => (UIElement)Cards.Title(t))),
-            };
-            var col = new StackPanel { Spacing = 36, Padding = new Thickness(0, 0, 0, 48) };
-            foreach (var s in sections) col.Children.Add(s);
-            list = new ScrollViewer { Content = col };
-        }
-        else list = Cards.PosterGrid(c.Items);
-        Grid.SetRow((FrameworkElement)list, 1);
+                Cards.Shelf(App.State.CanStream ? "Stream the Rest" : "Not in Your Library", missing.Select(t => (UIElement)Cards.Title(t))));
+        var g = new Grid { RowSpacing = 20 };
+        g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        g.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        g.Children.Add(head);
+        var list = Cards.PosterGrid(c.Items);
+        Grid.SetRow(list, 1);
         g.Children.Add(list);
         return g;
     }

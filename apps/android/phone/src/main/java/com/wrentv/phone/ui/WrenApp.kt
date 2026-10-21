@@ -144,6 +144,7 @@ fun RouteScreen(r: Route) {
         Route.Downloads -> DownloadsScreen()
         Route.LiveTv -> LiveTvScreen()
         Route.Preferences -> PreferencesScreen()
+        Route.LinkTv -> LinkTvScreen()
         Route.Search -> SearchScreen()
         is Route.LibraryPage -> LayoutPageScreen("library:${r.library.id}", r.library.name, root = false, browseAll = Route.LibraryItems(r.library)) { LibraryScreen(r.library) }
         is Route.Catalog -> CatalogScreen(r.type)

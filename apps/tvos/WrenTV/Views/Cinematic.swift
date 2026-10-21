@@ -203,6 +203,8 @@ struct LayoutPageView<Fallback: View>: View {
     @State private var page: LayoutPage?
     @State private var error: String?
     @State private var unsupported = false
+    /// Rows per request; the rest load as the page scrolls.
+    private let pageRows = 6
 
     var body: some View {
         Group {
@@ -212,6 +214,10 @@ struct LayoutPageView<Fallback: View>: View {
                 CinematicPage(fallback: first, label: label) {
                     if let p = page {
                         LayoutRows(rows: p.rows)
+                        if p.nextOffset != nil {
+                            ProgressView().frame(maxWidth: .infinity).padding(.vertical, 30)
+                                .task(id: p.nextOffset) { await loadMore() }
+                        }
                         if p.rows.isEmpty {
                             EmptyState(title: "Nothing here yet",
                                        message: state.isAdmin ? "Add a library from the Wren TV app on a computer or in a web browser." : "Ask the server owner to share a library.")
@@ -237,13 +243,24 @@ struct LayoutPageView<Fallback: View>: View {
     private func load() async {
         guard let api = state.api else { return }
         do {
-            page = try await api.layout(scope)
+            // A refresh keeps as many rows as were showing, so the page doesn't jump.
+            page = try await api.layout(scope, limit: max(pageRows, page?.rows.count ?? 0))
             error = nil
         } catch let e as WrenTVError where e.status == 404 {
             unsupported = true
         } catch {
             if page == nil { self.error = error.localizedDescription }
         }
+    }
+
+    /// The next rows, once the last ones scroll into view.
+    private func loadMore() async {
+        guard let api = state.api, let next = page?.nextOffset else { return }
+        guard let more = try? await api.layout(scope, offset: next, limit: pageRows), var cur = page, cur.nextOffset == next else { return }
+        let have = Set(cur.rows.map(\.id))
+        cur.rows += more.rows.filter { !have.contains($0.id) }
+        cur.nextOffset = more.nextOffset
+        page = cur
     }
 }
 
@@ -300,7 +317,8 @@ struct LayoutRows: View {
                     }
                     // A collection's or hub's row leads to the rest of it.
                     if let c = row.collection {
-                        MoreCard(label: "View All", value: c)
+                        // When the shelf already shows everything the card still opens the page, without "View All".
+                        MoreCard(label: row.more == true ? "View All" : "Open Collection", value: c)
                     } else if let hub = row.hubId {
                         MoreCard(label: "Open \(row.title)", value: HubRoute(id: hub, name: row.title))
                     }
@@ -410,7 +428,7 @@ struct CollectionsView: View {
 }
 
 /// A collection's wide tile: its artwork with the name over it.
-private struct CollectionTile: View {
+struct CollectionTile: View {
     @Environment(AppState.self) private var state
     let collection: WrenCollection
 
@@ -531,6 +549,13 @@ struct CollectionView: View {
     let collection: WrenCollection
     @State private var detail: CollectionDetail?
     @State private var sort = ""
+    /// Sorted answers come without rows, so whether there are any is remembered.
+    @State private var rowed = false
+
+    /// A big collection shows as rows, like Home; "order" is its own order as lines of posters.
+    private var sorts: [(String, String)] {
+        rowed ? [("", "Rows"), ("order", "Collection order")] + collectionSorts.dropFirst() : collectionSorts
+    }
 
     var body: some View {
         let c = detail?.collection ?? collection
@@ -539,10 +564,10 @@ struct CollectionView: View {
                 HStack {
                     Menu {
                         Picker("Order", selection: $sort) {
-                            ForEach(collectionSorts, id: \.0) { Text($0.1).tag($0.0) }
+                            ForEach(sorts, id: \.0) { Text($0.1).tag($0.0) }
                         }
                     } label: {
-                        Label(collectionSorts.first { $0.0 == sort }?.1 ?? "Collection order", systemImage: "arrow.up.arrow.down")
+                        Label(sorts.first { $0.0 == sort }?.1 ?? "Collection order", systemImage: "arrow.up.arrow.down")
                     }
                 }
                 .padding(.horizontal, TV.gutter)
@@ -550,7 +575,24 @@ struct CollectionView: View {
                 .focusSection()
             }
             if let d = detail {
-                if let titles = d.titles {
+                if let rows = d.rows, !rows.isEmpty, sort.isEmpty {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { n, r in
+                        CinematicRow(id: "row:\(n):\(r.title)") {
+                            Shelf(title: r.title) {
+                                if let titles = d.titles {
+                                    let ts = r.index.compactMap { titles.indices.contains($0) ? titles[$0] : nil }.uniqued()
+                                    ForEach(Array(ts.enumerated()), id: \.element.id) { i, t in
+                                        TitleCard(title: t, rank: r.title == "Top 20" && i < 10 ? i + 1 : nil, width: Cinematic.poster)
+                                    }
+                                } else {
+                                    ForEach(r.index.compactMap { d.items.indices.contains($0) ? d.items[$0] : nil }.uniqued()) {
+                                        PosterCard(item: $0, width: Cinematic.poster)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let titles = d.titles {
                     let list = titles.uniqued()
                     PosterLines(id: "titles", title: "All Titles", subtitle: "\(list.count { $0.item != nil }) in your library", entries: list) {
                         TitleCard(title: $0, width: Cinematic.poster)
@@ -570,7 +612,11 @@ struct CollectionView: View {
             }
         }
         .task(id: "\(collection.id)|\(sort)|\(state.refreshTick)") {
-            if let d = try? await state.api?.collection(collection.id, sort: sort.isEmpty ? nil : sort) { detail = d }
+            let server = sort.isEmpty || sort == "order" ? nil : sort
+            if let d = try? await state.api?.collection(collection.id, sort: server) {
+                detail = d
+                if !(d.rows ?? []).isEmpty { rowed = true }
+            }
         }
     }
 

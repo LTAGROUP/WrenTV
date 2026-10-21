@@ -347,6 +347,8 @@ struct SearchView: View {
     @State private var results: [Item] = []
     /// Titles from TMDB the server doesn't have (playable when streaming is on).
     @State private var more: [TitleView] = []
+    /// Collections whose names match, a franchise's among them.
+    @State private var collections: [WrenCollection] = []
     @State private var searched = ""
 
     private var columns: [GridItem] { PosterSize.columns }
@@ -354,6 +356,21 @@ struct SearchView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                if !collections.isEmpty {
+                    Text("Collections").font(.title3.bold())
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(alignment: .top, spacing: 16) {
+                            ForEach(collections) { c in
+                                NavigationLink(value: c) { CollectionTile(collection: c) }.buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 28)
+                        .padding(.vertical, 8)
+                    }
+                    .padding(.horizontal, -28)
+                    .padding(.vertical, -8)
+                    if !results.isEmpty || !more.isEmpty { Text("Titles").font(.title3.bold()).padding(.top, 10) }
+                }
                 if !results.isEmpty {
                     if !more.isEmpty && !state.canStream { Text("On This Server").font(.title3.bold()) }
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 26) {
@@ -377,20 +394,23 @@ struct SearchView: View {
                 }
             }
             .padding(28)
-            if !query.isEmpty && searched == query && results.isEmpty && more.isEmpty {
+            if !query.isEmpty && searched == query && results.isEmpty && more.isEmpty && collections.isEmpty {
                 ContentUnavailableView.search(text: query)
             }
         }
         .navigationTitle("Search")
         .task(id: query) {
-            guard query.count >= 2 else { results = []; more = []; return }
+            guard query.count >= 2 else { results = []; more = []; collections = []; return }
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled, let api = state.api else { return }
             async let lib = api.search(query)
             async let tmdb = api.discoverSearch(query)
+            async let colls = api.searchCollections(query)
             let found = (try? await lib) ?? []
             let titles = (try? await tmdb)?.items ?? []
+            let cs = (try? await colls) ?? []
             guard !Task.isCancelled else { return }
+            collections = cs
             // Library matches TMDB didn't return (episodes, local-only files) stay first.
             let ids = Set(found.map(\.id))
             results = found + titles.compactMap(\.item).filter { !ids.contains($0.id) }

@@ -112,6 +112,9 @@ type CollectionTitle struct {
 	Title      string `json:"title"`
 	Year       int    `json:"year,omitempty"`
 	PosterPath string `json:"posterPath,omitempty"`
+	// BackdropPath and GenreIDs come from TMDB lists and charts.
+	BackdropPath string `json:"backdropPath,omitempty"`
+	GenreIDs     []int  `json:"genreIds,omitempty"`
 }
 
 type Collection struct {

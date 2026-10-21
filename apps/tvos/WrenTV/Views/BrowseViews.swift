@@ -225,11 +225,16 @@ struct SearchView: View {
     @State private var query = ""
     @State private var items: [Item] = []
     @State private var titles: [TitleView] = []
+    /// Collections whose names match, a franchise's among them.
+    @State private var collections: [WrenCollection] = []
     @State private var searching = false
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
+                if !collections.isEmpty {
+                    Shelf(title: "Collections") { ForEach(collections) { CollectionTile(collection: $0) } }
+                }
                 if !items.isEmpty {
                     Shelf(title: "In Your Library") { ForEach(items) { PosterCard(item: $0) } }
                 }
@@ -237,7 +242,7 @@ struct SearchView: View {
                 if !more.isEmpty {
                     Shelf(title: "Stream") { ForEach(more) { TitleCard(title: $0) } }
                 }
-                if !query.isEmpty && !searching && items.isEmpty && more.isEmpty {
+                if !query.isEmpty && !searching && items.isEmpty && more.isEmpty && collections.isEmpty {
                     EmptyState(title: "No results for “\(query)”", symbol: "magnifyingglass")
                 }
             }
@@ -246,13 +251,14 @@ struct SearchView: View {
         .searchable(text: $query, prompt: "Movies, shows and episodes")
         .task(id: query) {
             let q = query.trimmingCharacters(in: .whitespaces)
-            guard !q.isEmpty else { items = []; titles = []; return }
+            guard !q.isEmpty else { items = []; titles = []; collections = []; return }
             try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled, let api = state.api else { return }
             searching = true
             defer { searching = false }
             items = (try? await api.search(q)) ?? []
             titles = state.canStream ? ((try? await api.discoverSearch(q))?.items ?? []) : []
+            collections = q.count >= 2 ? ((try? await api.searchCollections(q)) ?? []) : []
         }
     }
 }

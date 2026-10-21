@@ -37,12 +37,16 @@ struct LayoutRow: Codable, Hashable, Identifiable {
     var ranked: Bool?
     /// Set when the row is a single hub's first shelf.
     var hubId: String?
+    /// Whether there's more than the row shows, so a "View all" is worth having.
+    var more: Bool?
 }
 
 /// A page's rows: "home", "movies", "shows" or "library:<id>".
 struct LayoutPage: Codable {
     var rows: [LayoutRow]
     var custom: Bool?
+    /// Where the next page of rows starts, while more remain.
+    var nextOffset: Int?
 }
 
 struct HubPage: Codable {
@@ -92,7 +96,12 @@ struct LayoutEditorRoute: Hashable {
 
 extension WrenTVAPI {
     /// A page's rows; servers from before layouts answer 404.
-    func layout(_ scope: String) async throws -> LayoutPage { try await get("/api/layouts/\(scope)") }
+    func layout(_ scope: String, offset: Int = 0, limit: Int? = nil) async throws -> LayoutPage {
+        var q: [URLQueryItem] = []
+        if offset > 0 { q.append(.init(name: "offset", value: String(offset))) }
+        if let limit { q.append(.init(name: "limit", value: String(limit))) }
+        return try await get("/api/layouts/\(scope)", query: q)
+    }
 
     func hub(_ id: String) async throws -> HubPage {
         try await get("/api/hubs/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(["/"])) ?? id)")

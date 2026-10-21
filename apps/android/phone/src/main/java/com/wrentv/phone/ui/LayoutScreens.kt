@@ -1,5 +1,8 @@
 package com.wrentv.phone.ui
 
+import androidx.compose.foundation.lazy.rememberLazyListState
+import kotlinx.coroutines.flow.first
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -78,6 +81,9 @@ import kotlinx.coroutines.launch
  * page's first titles.
  */
 
+/** How many of a page's rows load at a time. */
+private const val PageRows = 6
+
 /**
  * A page made of the server's layout rows. A tab's root page floats the
  * search bar over the hero; a pushed one gets a back button. Servers from
@@ -89,9 +95,11 @@ fun LayoutPageScreen(scope: String, title: String, root: Boolean, browseAll: Rou
     var page by remember(scope) { mutableStateOf<LayoutPage?>(null) }
     var error by remember(scope) { mutableStateOf<String?>(null) }
     var unsupported by remember(scope) { mutableStateOf(false) }
+    val list = rememberLazyListState()
     LaunchedEffect(scope, state.refreshTick, state.api) {
         try {
-            page = state.api?.layout(scope)
+            // Rows come a few at a time as the page scrolls; a reload keeps as many as were showing.
+            page = state.api?.layout(scope, 0, maxOf(PageRows, page?.rows?.size ?: 0))
             error = null
         } catch (e: CancellationException) {
             throw e
@@ -101,14 +109,25 @@ fun LayoutPageScreen(scope: String, title: String, root: Boolean, browseAll: Rou
             if (page == null) error = e.message
         }
     }
+    // Near the last row loaded, the next few.
+    LaunchedEffect(scope, page?.nextOffset) {
+        val next = page?.nextOffset ?: return@LaunchedEffect
+        snapshotFlow { list.layoutInfo.let { it.totalItemsCount > 0 && (it.visibleItemsInfo.lastOrNull()?.index ?: 0) >= it.totalItemsCount - 3 } }
+            .first { it }
+        val more = runCatching { state.api?.layout(scope, next, PageRows) }.getOrNull() ?: return@LaunchedEffect
+        val cur = page ?: return@LaunchedEffect
+        val have = cur.rows.map { it.id }.toHashSet()
+        page = cur.copy(rows = cur.rows + more.rows.filter { it.id !in have }, nextOffset = more.nextOffset)
+    }
     if (unsupported) return fallback()
     val p = page
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(28.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), state = list, verticalArrangement = Arrangement.spacedBy(28.dp)) {
             when {
                 p != null -> {
                     item("hero") { LayoutHero(p.rows) }
                     layoutRows(p.rows)
+                    if (p.nextOffset != null) item("more") { Loading(Modifier.fillMaxWidth().padding(vertical = 24.dp)) }
                     if (p.rows.isEmpty()) item {
                         EmptyState(Icons.Rounded.Movie, "Nothing here yet",
                             if (state.isAdmin) "Add a library in the server's web dashboard." else "Ask the server owner to share a library.")
@@ -125,7 +144,7 @@ fun LayoutPageScreen(scope: String, title: String, root: Boolean, browseAll: Rou
 
 /** The back arrow over a pushed page's hero. */
 @Composable
-private fun FloatingBack() {
+fun FloatingBack() {
     val nav = LocalNavigator.current
     IconButton({ nav.back() }, Modifier.statusBarsPadding().padding(8.dp).clip(CircleShape).background(Color(0x991C1A21))) {
         Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White)
@@ -179,7 +198,9 @@ fun LazyListScope.layoutRows(rows: List<LayoutRow>) {
     rows.forEach { row ->
         item("row:" + row.id) {
             val m = metrics()
-            Shelf(row.title, row.subtitle) {
+            val nav = LocalNavigator.current
+            val c = row.collection
+            Shelf(row.title, row.subtitle, onOpen = c?.let { { nav.push(Route.Collection(it.id, it.name)) } }) {
                 when (row.kind) {
                     "landscape" -> items(row.items.orEmpty().distinctBy { it.id }, { it.id }) { LandscapeCard(it, width = m.landscape) }
                     "hubs" -> items(row.hubs.orEmpty().distinctBy { it.id }, { it.id }) { HubTile(it, row.style == "logos") }
@@ -191,9 +212,10 @@ fun LazyListScope.layoutRows(rows: List<LayoutRow>) {
                         items(row.missing.orEmpty().distinctBy { it.id }, { "m" + it.id }) { TitleCard(it, width = m.poster) }
                     }
                 }
-                // A collection's or hub's row leads to the rest of it.
-                row.collection?.let { c -> item("more") { MoreCard("View All", Route.Collection(c.id, c.name)) } }
-                    ?: row.hubId?.let { h -> item("more") { MoreCard("Open ${row.title}", Route.Hub(h, row.title)) } }
+                // A collection's or hub's row leads to the rest of it; a
+                // collection's only when the row is cut short (its title opens it too).
+                if (c != null) { if (row.more) item("more") { MoreCard("View All", Route.Collection(c.id, c.name)) } }
+                else row.hubId?.let { h -> item("more") { MoreCard("Open ${row.title}", Route.Hub(h, row.title)) } }
             }
         }
     }

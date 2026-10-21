@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -229,5 +230,34 @@ func TestDistinctArt(t *testing.T) {
 	got := distinctArt([][]string{{"a", "b"}, {"a", "c"}, {"a"}, nil})
 	if want := []string{"a", "c", "a", ""}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestLayoutPaging(t *testing.T) {
+	f := newLayoutFixture(t)
+	scope := "/api/layouts/library:" + f.lib.ID
+	// The watchlist is empty, so it drops out: a page still has a row while more remain.
+	body := `{"entries":[{"type":"shelf","ref":"watchlist"},{"type":"shelf","ref":"recentlyAdded"},{"type":"shelf","ref":"continue"},{"type":"shelf","ref":"unwatched"}]}`
+	if code := f.do(t, f.user, "PUT", scope, body, nil); code != 204 {
+		t.Fatalf("set layout: %d", code)
+	}
+	var page struct {
+		Rows       []layoutRow `json:"rows"`
+		NextOffset *int        `json:"nextOffset"`
+	}
+	f.do(t, f.user, "GET", scope+"?limit=1", "", &page)
+	if ids := rowIDs(page.Rows); len(ids) != 1 || ids[0] != "recentlyAdded:"+f.lib.ID || page.NextOffset == nil || *page.NextOffset != 2 {
+		t.Fatalf("first page: %v next=%v", ids, page.NextOffset)
+	}
+	next := *page.NextOffset
+	page.NextOffset = nil
+	f.do(t, f.user, "GET", fmt.Sprintf("%s?limit=1&offset=%d", scope, next), "", &page)
+	if ids := rowIDs(page.Rows); len(ids) != 1 || ids[0] != "unwatched" || page.NextOffset != nil {
+		t.Fatalf("last page: %v next=%v", ids, page.NextOffset)
+	}
+	// Without a limit it's every row at once.
+	f.do(t, f.user, "GET", scope, "", &page)
+	if len(page.Rows) != 2 {
+		t.Fatalf("whole page: %v", rowIDs(page.Rows))
 	}
 }

@@ -1,5 +1,7 @@
 package com.wrentv.phone.ui
 
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.foundation.clickable
 import android.content.Intent
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -201,12 +203,17 @@ fun Page(title: String, subtitle: String? = null, actions: @Composable RowScope.
 
 /** A titled row of cards that scrolls sideways. */
 @Composable
-fun Shelf(title: String, subtitle: String? = null, content: LazyListScope.() -> Unit) {
+fun Shelf(title: String, subtitle: String? = null, onOpen: (() -> Unit)? = null, content: LazyListScope.() -> Unit) {
     val m = metrics()
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(Modifier.padding(horizontal = m.gutter), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            (if (onOpen != null) Modifier.clickable(onClick = onOpen) else Modifier).padding(horizontal = m.gutter),
+            verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             if (subtitle != null) Text(subtitle, color = Wren.secondary, style = MaterialTheme.typography.bodyMedium)
+            // The title opens the rest of it.
+            if (onOpen != null) Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Wren.secondary)
         }
         LazyRow(contentPadding = PaddingValues(horizontal = m.gutter), horizontalArrangement = Arrangement.spacedBy(m.cardSpacing), content = content)
     }

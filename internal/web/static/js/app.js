@@ -450,9 +450,9 @@ export function wideCard(it) {
 
 export const arrows = '<div class="arrows"><button type="button" data-dir="-1" aria-label="Scroll left">‹</button><button type="button" data-dir="1" aria-label="Scroll right">›</button></div>';
 
-export function shelf(title, cards, { see, sub, id } = {}) {
+export function shelf(title, cards, { see, seeLabel = 'See all', sub, id } = {}) {
   return `<section class="shelf"${id ? ` id="${id}"` : ''}><div class="shelf-head"><h2>${esc(title)}${sub ? ` <span class="sub">${esc(sub)}</span>` : ''}</h2>
-    ${see ? `<a class="see" href="${see}">See all</a>` : ''}${arrows}</div><div class="row">${cards}</div></section>`;
+    ${see ? `<a class="see" href="${see}">${esc(seeLabel)}</a>` : ''}${arrows}</div><div class="row">${cards}</div></section>`;
 }
 
 function skeletonShelf(title, n = 8, id) {
@@ -766,10 +766,13 @@ async function viewSearch() {
   const input = $('#search-form input');
   if (input) input.value = q;
   if (!q) return '<div class="empty"><h2>Search for a movie or show</h2></div>';
-  const [items, more] = await Promise.all([
+  const [items, more, colls] = await Promise.all([
     api('/api/search?q=' + encodeURIComponent(q)),
     api('/api/discover/search?q=' + encodeURIComponent(q)).catch(() => ({ items: [] })),
+    api('/api/collections?q=' + encodeURIComponent(q)).catch(() => []),
   ]);
+  // Collections named like the search, such as a franchise, come first.
+  const collShelf = colls.length ? shelf('Collections', colls.map(browse.collectionTile).join(''), { sub: `${colls.length}` }) : '';
   // Library results first; TMDB adds whatever the server doesn't have.
   const have = new Set(items.map((it) => it.id));
   const extra = (more.items || []).filter((v) => !v.item || !have.has(v.item.id));
@@ -778,18 +781,20 @@ async function viewSearch() {
   if (canStream()) {
     // Everything plays, so there's one list: what the server has, then the rest.
     const all = [...inLib.map((it) => posterCard(it)), ...rest.map((v) => titleCard(v))];
-    const node = el(`<div><div class="page-head"><h1>Results for “${esc(q)}”</h1></div>
-      ${all.length ? `<div class="grid">${all.join('')}</div>` : '<div class="empty"><h2>No matches</h2></div>'}</div>`);
+    const node = el(`<div><div class="page-head"><h1>Results for “${esc(q)}”</h1></div>${collShelf}
+      ${all.length ? `${collShelf ? '<h2 class="grid-title">Titles</h2>' : ''}<div class="grid">${all.join('')}</div>` : collShelf ? '' : '<div class="empty"><h2>No matches</h2></div>'}</div>`);
     bindPlayLinks(node);
+    bindShelves(node);
     return node;
   }
   const restTitle = 'Not on this server';
-  const node = el(`<div><div class="page-head"><h1>Results for “${esc(q)}”</h1></div>
+  const node = el(`<div><div class="page-head"><h1>Results for “${esc(q)}”</h1></div>${collShelf}
     ${inLib.length ? `<h2 class="grid-title">On this server</h2><div class="grid">${inLib.map((it) => posterCard(it)).join('')}</div>` : ''}
     ${rest.length ? `<h2 class="grid-title">${restTitle}</h2>
       <div class="grid">${rest.map((v) => titleCard(v)).join('')}</div>` : ''}
-    ${!inLib.length && !rest.length ? '<div class="empty"><h2>No matches</h2></div>' : ''}</div>`);
+    ${!inLib.length && !rest.length && !collShelf ? '<div class="empty"><h2>No matches</h2></div>' : ''}</div>`);
   bindPlayLinks(node);
+  bindShelves(node);
   return node;
 }
 

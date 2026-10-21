@@ -59,6 +59,15 @@ import com.wrentv.tv.ui.ambient
 import com.wrentv.tv.ui.playTarget
 import com.wrentv.tv.ui.rememberFocus
 import com.wrentv.tv.ui.rememberLoaded
+import androidx.compose.foundation.layout.fillMaxWidth
+import com.wrentv.tv.ui.Spinner
+import androidx.compose.runtime.LaunchedEffect
+import com.wrentv.tv.ui.PageCache
+import kotlinx.coroutines.flow.first
+import androidx.compose.runtime.snapshotFlow
+
+/** How many of a page's rows load at a time. */
+private const val PageRows = 6
 
 /**
  * A page made of the server's layout rows: Home, Movies, TV Shows or a
@@ -72,9 +81,12 @@ fun LayoutPageScreen(scope: String, label: String? = null, fallback: @Composable
         fallback()
         return
     }
-    val page = rememberLoaded<LayoutPage>("layout:$scope", state.refreshTick) {
+    val key = "layout:$scope"
+    val page = rememberLoaded<LayoutPage>(key, state.refreshTick) {
         try {
-            state.api?.layout(scope)
+            // Rows come a few at a time as the page scrolls; a reload keeps as many as were showing.
+            val showing = (PageCache.values[key] as? LayoutPage)?.rows?.size ?: 0
+            state.api?.layout(scope, 0, maxOf(PageRows, showing))
         } catch (e: WrenTVException) {
             if (e.status == 404) unsupported = true
             throw e
@@ -83,6 +95,18 @@ fun LayoutPageScreen(scope: String, label: String? = null, fallback: @Composable
     val menu = rememberItemMenu()
     val list = rememberLazyListState()
     val p = page.value
+    // Near the last row loaded, the next few.
+    LaunchedEffect(key, p?.nextOffset) {
+        val next = p?.nextOffset ?: return@LaunchedEffect
+        snapshotFlow { list.layoutInfo.let { it.totalItemsCount > 0 && (it.visibleItemsInfo.lastOrNull()?.index ?: 0) >= it.totalItemsCount - 3 } }
+            .first { it }
+        val more = runCatching { state.api?.layout(scope, next, PageRows) }.getOrNull() ?: return@LaunchedEffect
+        val cur = page.value ?: return@LaunchedEffect
+        val have = cur.rows.map { it.id }.toHashSet()
+        val merged = cur.copy(rows = cur.rows + more.rows.filter { it.id !in have }, nextOffset = more.nextOffset)
+        page.value = merged
+        PageCache.values[key] = merged
+    }
     // Until a title takes focus (the page opens with the top bar focused), the hero shows the first.
     val first = p?.rows?.firstNotNullOfOrNull { r ->
         r.items?.firstOrNull()?.heroEntry() ?: r.titles?.firstOrNull()?.heroEntry() ?: r.hubs?.firstOrNull()?.heroEntry()
@@ -91,6 +115,9 @@ fun LayoutPageScreen(scope: String, label: String? = null, fallback: @Composable
         when {
             p != null -> {
                 layoutRows(scope, p.rows, menu)
+                if (p.nextOffset != null) extra("more") {
+                    Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) { Spinner() }
+                }
                 if (p.rows.isEmpty()) extra("empty") {
                     EmptyState("Nothing here yet",
                         if (state.isAdmin) "Add a library from Settings → Libraries." else "Ask the server owner to share a library.",
@@ -167,10 +194,13 @@ fun CinematicScope.layoutRows(page: String, rows: List<LayoutRow>, menu: ItemMen
                         items(row.missing.orEmpty(), key = { "m:${it.id}" }) { t -> TitleCard(t, Modifier.rememberFocus("$key:m:${t.id}"), width = CinematicPoster) }
                     }
                 }
-                // A collection's or hub's row leads to the rest of it.
+                // A collection's or hub's row leads to the rest of it: all of
+                // it when the row is cut short, otherwise the collection's page.
                 val c = row.collection
                 val hub = row.hubId
-                if (c != null) item("more") { MoreCard("View all", Modifier.rememberFocus("$key:more")) { nav.push(Route.Collection(c)) } }
+                if (c != null) item("more") {
+                    MoreCard(if (row.more) "View all" else "Open collection", Modifier.rememberFocus("$key:more")) { nav.push(Route.Collection(c)) }
+                }
                 else if (hub != null) item("more") { MoreCard("Open ${row.title}", Modifier.rememberFocus("$key:more")) { nav.push(Route.Hub(hub, row.title)) } }
             }
         }

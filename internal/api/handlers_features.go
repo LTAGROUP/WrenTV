@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 
@@ -189,7 +190,7 @@ func (s *Server) collectionTitles(ctx context.Context, r *http.Request, c *db.Co
 			continue
 		}
 		seen[k] = true
-		views = append(views, titleView{TMDBID: t.TMDBID, MediaType: t.MediaType, Title: t.Title, Year: t.Year, PosterPath: t.PosterPath})
+		views = append(views, titleView{TMDBID: t.TMDBID, MediaType: t.MediaType, Title: t.Title, Year: t.Year, PosterPath: t.PosterPath, BackdropPath: t.BackdropPath})
 	}
 	return nonNil(s.linkLibrary(ctx, r, views, false))
 }
@@ -270,9 +271,14 @@ func (s *Server) handleCollections(w http.ResponseWriter, r *http.Request) {
 	}
 	s.syncStaleCollections()
 	lib := r.URL.Query().Get("libraryId")
+	// ?q= finds collections by name, as search does.
+	q := searchKey(r.URL.Query().Get("q"))
 	out := []*db.Collection{}
 	for _, c := range cs {
 		if !visibleCollection(r, c) || (lib != "" && c.LibraryID != "" && c.LibraryID != lib) {
+			continue
+		}
+		if q != "" && !strings.Contains(searchKey(c.Name), q) {
 			continue
 		}
 		items, _, err := s.collectionItems(ctx, r, c, 0)
@@ -349,6 +355,27 @@ func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
 		}
 		resp["titles"] = titles
 		c.ItemCount = len(titles)
+		if r.URL.Query().Get("sort") == "" {
+			resp["rows"] = s.titleShelves(r.Context(), c, titles)
+		}
+		for _, t := range titles {
+			if c.BackdropPath == "" && t.BackdropPath != "" {
+				c.BackdropPath = t.BackdropPath
+			}
+		}
+	} else if r.URL.Query().Get("sort") == "" {
+		genres := make([][]string, len(items))
+		for i, it := range items {
+			genres[i] = it.Genres
+		}
+		first, label := recentFirst(items), "Recently added"
+		if c.Kind == "tmdb" {
+			first, label = first[:0], "Top 20"
+			for i := range items {
+				first = append(first, i)
+			}
+		}
+		resp["rows"] = collectionShelves(len(items), genres, first, label)
 	}
 	c.Active = c.ActiveOn(time.Now())
 	if c.BackdropPath == "" {
@@ -360,6 +387,110 @@ func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, resp)
+}
+
+// shelvesFrom is how big a collection is before it shows as rows, like a
+// home page, rather than one grid. Franchises are smaller.
+const shelvesFrom = 25
+
+// collectionShelf is one row of a big collection: indexes into its titles
+// (or items, when it has no titles).
+type collectionShelf struct {
+	Title string `json:"title"`
+	Index []int  `json:"index"`
+}
+
+// collectionShelves splits n entries into rows: the first 20 in the given
+// order, then a row per genre with four or more, the biggest first. Small
+// collections have none and show as a grid.
+func collectionShelves(n int, genres [][]string, first []int, firstTitle string) []collectionShelf {
+	out := []collectionShelf{}
+	if n < shelvesFrom {
+		return out
+	}
+	out = append(out, collectionShelf{Title: firstTitle, Index: first[:min(20, len(first))]})
+	byGenre := map[string][]int{}
+	var names []string
+	for i, gs := range genres {
+		for _, g := range gs {
+			if byGenre[g] == nil {
+				names = append(names, g)
+			}
+			byGenre[g] = append(byGenre[g], i)
+		}
+	}
+	sort.SliceStable(names, func(i, j int) bool { return len(byGenre[names[i]]) > len(byGenre[names[j]]) })
+	for _, g := range names {
+		if len(byGenre[g]) >= 4 && len(byGenre[g]) < n {
+			out = append(out, collectionShelf{Title: g, Index: byGenre[g]})
+		}
+	}
+	return out
+}
+
+// titleShelves is collectionShelves for a TMDB collection's titles, with
+// a row of what's in the library when that's only some of them.
+func (s *Server) titleShelves(ctx context.Context, c *db.Collection, titles []titleView) []collectionShelf {
+	names := map[int]string{}
+	for _, mt := range []string{"tv", "movie"} {
+		if gs, err := s.TMDB.Genres(ctx, mt); err == nil {
+			for _, g := range gs {
+				names[g.ID] = g.Name
+			}
+		}
+	}
+	ids := map[string][]int{}
+	for _, t := range c.Titles {
+		ids[t.MediaType+strconv.Itoa(t.TMDBID)] = t.GenreIDs
+	}
+	genres := make([][]string, len(titles))
+	order := make([]int, len(titles))
+	var have []int
+	for i, v := range titles {
+		order[i] = i
+		for _, id := range ids[v.MediaType+strconv.Itoa(v.TMDBID)] {
+			if names[id] != "" {
+				genres[i] = append(genres[i], names[id])
+			}
+		}
+		if v.Item != nil {
+			have = append(have, i)
+			if len(genres[i]) == 0 {
+				genres[i] = v.Item.Genres
+			}
+		}
+	}
+	first := "Top 20"
+	if c.Rules.Source == "collection" {
+		first = "In order"
+	}
+	out := collectionShelves(len(titles), genres, order, first)
+	if len(out) > 0 && len(have) >= 4 && len(have) < len(titles) {
+		out = append(out[:1], append([]collectionShelf{{Title: "In your library", Index: have}}, out[1:]...)...)
+	}
+	return out
+}
+
+// recentFirst is the indexes of items, most recently added first.
+func recentFirst(items []*db.Item) []int {
+	order := make([]int, len(items))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool { return items[order[i]].AddedAt > items[order[j]].AddedAt })
+	return order
+}
+
+// searchKey is a name lowercased with only its letters and digits, so
+// "spiderman" finds "Spider-Man".
+func searchKey(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 type collectionReq struct {
@@ -693,7 +824,8 @@ func (s *Server) syncCollection(ctx context.Context, c *db.Collection) error {
 			continue
 		}
 		v := viewOf(t, "")
-		c.Titles = append(c.Titles, db.CollectionTitle{TMDBID: v.TMDBID, MediaType: v.MediaType, Title: v.Title, Year: v.Year, PosterPath: v.PosterPath})
+		c.Titles = append(c.Titles, db.CollectionTitle{TMDBID: v.TMDBID, MediaType: v.MediaType, Title: v.Title, Year: v.Year,
+			PosterPath: v.PosterPath, BackdropPath: v.BackdropPath, GenreIDs: t.GenreIDs})
 	}
 	c.SyncedAt = db.Now()
 	c.SyncError = ""

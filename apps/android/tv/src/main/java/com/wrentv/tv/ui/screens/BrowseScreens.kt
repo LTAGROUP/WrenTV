@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -439,11 +440,20 @@ fun CollectionDetailScreen(seed: WrenCollection) {
     var sort by rememberSaveable { mutableStateOf("") }
     var picker by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<Item?>(null) }
-    val detail = rememberLoaded<CollectionDetail>("collection:${seed.id}:$sort", state.refreshTick) {
-        state.api?.collection(seed.id, sort.ifEmpty { null })
+    // "order" is the collection's own order as a grid, for one shown as rows.
+    val serverSort = sort.takeIf { it.isNotEmpty() && it != "order" }
+    val detail = rememberLoaded<CollectionDetail>("collection:${seed.id}:$serverSort", state.refreshTick) {
+        state.api?.collection(seed.id, serverSort)
     }
     val c = detail.value?.collection ?: seed
     val d = detail.value
+    // A big collection shows as rows, like Home; picking an order shows a grid.
+    // Sorted answers come without rows, so whether there are any is remembered.
+    var rowed by rememberSaveable { mutableStateOf(false) }
+    if (!d?.rows.isNullOrEmpty()) rowed = true
+    val hasRows = rowed
+    val rows = if (sort.isEmpty()) d?.rows?.takeIf { it.isNotEmpty() } else null
+    val sorts = if (hasRows) listOf(Choice("", "Rows"), Choice("order", "Collection order")) + collectionSorts.drop(1) else collectionSorts
     val count = d?.titles?.let { "${it.size} title${if (it.size == 1) "" else "s"}" } ?: "${d?.items?.size ?: c.itemCount ?: 0} in your library"
     val hero = HeroEntry(
         id = "collection:${c.id}", title = c.name, backdrop = c.backdropPath, logo = null,
@@ -454,12 +464,31 @@ fun CollectionDetailScreen(seed: WrenCollection) {
     )
     val list = rememberLazyListState()
     CinematicBrowse(list, fallback = hero, label = "Collection", pills = {
-        Chip(collectionSorts.firstOrNull { it.value == sort }?.label ?: "Collection order", false, { picker = true },
+        Chip(sorts.firstOrNull { it.value == sort }?.label ?: "Collection order", false, { picker = true },
             Modifier.rememberFocus("chip:sort"), icon = Icons.AutoMirrored.Rounded.Sort)
     }) {
         when {
             d == null && detail.error != null -> extra("error") { EmptyState("Couldn't load", detail.error, icon = Icons.Rounded.WifiOff) }
             d == null -> extra("loading") { Loading() }
+            rows != null -> rows.forEachIndexed { n, r ->
+                val titles = d.titles
+                row("row:$n:${r.title}") {
+                    Shelf(r.title) {
+                        if (titles != null) {
+                            items(r.index.mapNotNull { titles.getOrNull(it) }.distinctBy { it.id }, key = { it.id }) { t ->
+                                TitleCard(t, Modifier.rememberFocus("r$n:${t.id}", default = n == 0 && r.index.firstOrNull()?.let(titles::getOrNull) == t),
+                                    width = CinematicPoster)
+                            }
+                        } else {
+                            items(r.index.mapNotNull { d.items.getOrNull(it) }.distinctBy { it.id }, key = { it.id }) { item ->
+                                PosterCard(item, { nav.push(Route.Detail(item.id, item)) },
+                                    Modifier.rememberFocus("r$n:${item.id}", default = n == 0 && r.index.firstOrNull()?.let(d.items::getOrNull) == item),
+                                    width = CinematicPoster, onLongClick = if (state.isAdmin && c.kind == "manual") ({ removing = item }) else null)
+                            }
+                        }
+                    }
+                }
+            }
             d.titles != null -> {
                 // A list can name a title twice; it's shown once.
                 val titles = sortedTitles(d.titles.orEmpty(), sort).distinctBy { it.id }
@@ -482,7 +511,7 @@ fun CollectionDetailScreen(seed: WrenCollection) {
             }
         }
     }
-    if (picker) ChoicePanel("Order", collectionSorts, sort, { picker = false }) { sort = it }
+    if (picker) ChoicePanel("Order", sorts, sort, { picker = false }) { sort = it }
     removing?.let { item ->
         com.wrentv.tv.ui.ConfirmPanel("Remove from collection?", "${item.displayTitle} is removed from ${c.name}. The title stays in your library.", "Remove",
             { removing = null }, destructive = true) {
@@ -551,6 +580,7 @@ fun SearchScreen() {
     var query by rememberSaveable { mutableStateOf(state.searchSeed?.also { state.searchSeed = null } ?: "") }
     var results by remember { mutableStateOf<List<Item>>(emptyList()) }
     var more by remember { mutableStateOf<List<TitleView>>(emptyList()) }
+    var collections by remember { mutableStateOf<List<WrenCollection>>(emptyList()) }
     var searched by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     val field = remember { FocusRequester() }
@@ -568,12 +598,13 @@ fun SearchScreen() {
     }
     LaunchedEffect(query) {
         val q = query.trim()
-        if (q.length < 2) { results = emptyList(); more = emptyList(); searched = ""; return@LaunchedEffect }
+        if (q.length < 2) { results = emptyList(); more = emptyList(); collections = emptyList(); searched = ""; return@LaunchedEffect }
         delay(350)
         val api = state.api ?: return@LaunchedEffect
         busy = true
         val found = runCatching { api.search(q) }.getOrDefault(emptyList())
         val titles = runCatching { api.discoverSearch(q).items }.getOrDefault(emptyList())
+        collections = runCatching { api.searchCollections(q) }.getOrDefault(emptyList())
         // Library matches TMDB didn't return (episodes, local-only files) stay first.
         val ids = found.map { it.id }.toHashSet()
         results = found + titles.mapNotNull { it.item }.filter { it.id !in ids }
@@ -612,6 +643,19 @@ fun SearchScreen() {
         }
         val episodes = results.filter { it.kind == "episode" }
         val titles = results.filter { it.kind != "episode" }
+        if (collections.isNotEmpty() && query.isNotBlank()) {
+            fullWidth("colls") {
+                Column {
+                    SectionTitle("Collections")
+                    LazyRow(Modifier.padding(top = 4.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                        items(collections, key = { "c:${it.id}" }) { c ->
+                            CollectionTile(c, Modifier.rememberFocus("sc:${c.id}")) { open { nav.push(Route.Collection(c)) } }
+                        }
+                    }
+                }
+            }
+            if (titles.isNotEmpty()) fullWidth("titles") { SectionTitle("Titles") }
+        }
         if (titles.isNotEmpty()) {
             if (more.isNotEmpty() && !state.canStream) fullWidth("on") { SectionTitle("On This Server") }
             items(titles, key = { it.id }) { item ->

@@ -25,6 +25,8 @@ struct LayoutPageView<Fallback: View>: View {
     @State private var page: LayoutPage?
     @State private var error: String?
     @State private var unsupported = false
+    /// Rows per request; the rest load as the page scrolls.
+    private let pageRows = 6
 
     var body: some View {
         if unsupported {
@@ -36,10 +38,14 @@ struct LayoutPageView<Fallback: View>: View {
 
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
+            LazyVStack(alignment: .leading, spacing: 30) {
                 if let p = page {
                     LayoutHero(rows: p.rows)
                     LayoutRows(rows: p.rows)
+                    if p.nextOffset != nil {
+                        ProgressView().frame(maxWidth: .infinity).padding(.vertical, 20)
+                            .task(id: p.nextOffset) { await loadMore() }
+                    }
                     if p.rows.isEmpty {
                         ContentUnavailableView("Nothing here yet", systemImage: "film.stack",
                                                description: Text(state.isAdmin ? "Add a library under More → Libraries." : "Ask the server owner to share a library."))
@@ -65,7 +71,8 @@ struct LayoutPageView<Fallback: View>: View {
     private func load() async {
         guard let api = state.api else { return }
         do {
-            page = try await api.layout(scope)
+            // A refresh keeps as many rows as were showing, so the page doesn't jump.
+            page = try await api.layout(scope, limit: max(pageRows, page?.rows.count ?? 0))
             error = nil
         } catch let e as WrenTVError where e.status == 404 {
             unsupported = true
@@ -73,6 +80,16 @@ struct LayoutPageView<Fallback: View>: View {
         } catch {
             if page == nil { self.error = error.localizedDescription }
         }
+    }
+
+    /// The next rows, once the last ones scroll into view.
+    private func loadMore() async {
+        guard let api = state.api, let next = page?.nextOffset else { return }
+        guard let more = try? await api.layout(scope, offset: next, limit: pageRows), var cur = page, cur.nextOffset == next else { return }
+        let have = Set(cur.rows.map(\.id))
+        cur.rows += more.rows.filter { !have.contains($0.id) }
+        cur.nextOffset = more.nextOffset
+        page = cur
     }
 }
 
@@ -219,7 +236,8 @@ struct LayoutRows: View {
 
     var body: some View {
         ForEach(rows) { row in
-            Shelf(title: row.title, subtitle: row.subtitle) {
+            // A collection's title opens it, so the shelf needs no "View All" when it shows everything.
+            Shelf(title: row.title, subtitle: row.subtitle, link: row.collection) {
                 switch row.kind {
                 case "landscape":
                     ForEach((row.items ?? []).uniqued()) { item in
@@ -242,7 +260,7 @@ struct LayoutRows: View {
                     ForEach((row.missing ?? []).uniqued()) { TitleCard(title: $0) }
                 }
                 // A collection's or hub's row leads to the rest of it.
-                if let c = row.collection {
+                if let c = row.collection, row.more == true {
                     MoreCard(label: "View All", value: c)
                 } else if let hub = row.hubId {
                     MoreCard(label: "Open \(row.title)", value: HubRoute(id: hub, name: row.title))

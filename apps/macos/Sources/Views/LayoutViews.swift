@@ -32,6 +32,8 @@ struct LayoutPageView<Fallback: View>: View {
     @State private var page: LayoutPage?
     @State private var error: String?
     @State private var unsupported = false
+    /// Rows per request; the rest load as the page scrolls.
+    private let pageRows = 6
 
     var body: some View {
         if unsupported {
@@ -40,6 +42,10 @@ struct LayoutPageView<Fallback: View>: View {
             CinematicPage(fallback: first, fallbackBackdrop: firstBackdrop, label: label) {
                 if let p = page {
                     LayoutRows(rows: p.rows)
+                    if p.nextOffset != nil {
+                        ProgressView().frame(maxWidth: .infinity).padding(.vertical, 20)
+                            .task(id: p.nextOffset) { await loadMore() }
+                    }
                     if p.rows.isEmpty {
                         ContentUnavailableView("Nothing here yet", systemImage: "film.stack",
                                                description: Text(state.isAdmin ? "Add a library under Server → Libraries." : "Ask the server owner to share a library."))
@@ -82,7 +88,8 @@ struct LayoutPageView<Fallback: View>: View {
     private func load() async {
         guard let api = state.api else { return }
         do {
-            page = try await api.layout(scope)
+            // A refresh keeps as many rows as were showing, so the page doesn't jump.
+            page = try await api.layout(scope, limit: max(pageRows, page?.rows.count ?? 0))
             error = nil
         } catch let e as WrenTVError where e.status == 404 {
             unsupported = true
@@ -90,6 +97,16 @@ struct LayoutPageView<Fallback: View>: View {
         } catch {
             if page == nil { self.error = error.localizedDescription }
         }
+    }
+
+    /// The next rows, once the last ones scroll into view.
+    private func loadMore() async {
+        guard let api = state.api, let next = page?.nextOffset else { return }
+        guard let more = try? await api.layout(scope, offset: next, limit: pageRows), var cur = page, cur.nextOffset == next else { return }
+        let have = Set(cur.rows.map(\.id))
+        cur.rows += more.rows.filter { !have.contains($0.id) }
+        cur.nextOffset = more.nextOffset
+        page = cur
     }
 }
 
@@ -199,7 +216,8 @@ struct LayoutRows: View {
 
     var body: some View {
         ForEach(rows) { row in
-            Shelf(title: row.title, subtitle: row.subtitle) {
+            // A collection's title opens it, so the shelf needs no "View All" when it shows everything.
+            Shelf(title: row.title, subtitle: row.subtitle, link: row.collection) {
                 switch row.kind {
                 case "landscape":
                     ForEach((row.items ?? []).uniqued()) { item in
@@ -222,7 +240,7 @@ struct LayoutRows: View {
                     ForEach((row.missing ?? []).uniqued()) { TitleCard(title: $0) }
                 }
                 // A collection's or hub's row leads to the rest of it.
-                if let c = row.collection {
+                if let c = row.collection, row.more == true {
                     MoreCard(label: "View All", value: c)
                 } else if let hub = row.hubId {
                     MoreCard(label: "Open \(row.title)", value: HubRoute(id: hub, name: row.title))
@@ -330,33 +348,45 @@ extension Color {
 
 // MARK: Layout editor
 
-/// The pages whose rows can be chosen.
+/// The pages whose rows can be chosen, laid out like the other settings.
 struct LayoutsView: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
-        List {
-            Section("Pages") {
-                NavigationLink(value: LayoutEditorRoute(scope: "home", title: "Home")) { Label("Home", systemImage: "house") }
+        PageScroll(maxWidth: 780) {
+            CardSection("Pages", footer: state.isAdmin ? "Choose the rows each page shows, and their order. You can change your own layout or the default for everyone."
+                                                       : "Choose the rows each page shows, and their order. Saved to your account, so it applies on every device.") {
+                page("Home", "house", "home")
                 if state.canStream {
-                    NavigationLink(value: LayoutEditorRoute(scope: "movies", title: "Movies")) { Label("Movies", systemImage: "film") }
-                    NavigationLink(value: LayoutEditorRoute(scope: "shows", title: "TV Shows")) { Label("TV Shows", systemImage: "tv") }
+                    page("Movies", "film", "movies")
+                    page("TV Shows", "tv", "shows")
                 }
             }
             if !state.libraries.isEmpty {
-                Section("Libraries") {
-                    ForEach(state.libraries) { lib in
-                        NavigationLink(value: LayoutEditorRoute(scope: "library:\(lib.id)", title: lib.name)) { Label(lib.name, systemImage: lib.symbol) }
-                    }
+                CardSection("Libraries") {
+                    ForEach(state.libraries) { lib in page(lib.name, lib.symbol, "library:\(lib.id)") }
                 }
             }
         }
         .navigationTitle("Layouts")
     }
+
+    private func page(_ title: String, _ symbol: String, _ scope: String) -> some View {
+        NavigationLink(value: LayoutEditorRoute(scope: scope, title: title)) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol).foregroundStyle(Color.wrenEmber).frame(width: 22)
+                Text(title)
+                Spacer(minLength: 12)
+                Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 }
 
-/// One page's rows: drag to reorder, hide, remove, add more. Admins also
-/// choose whether they're editing their own layout or everyone's default.
+/// One page's rows: reorder, hide, remove, add more. Admins also choose
+/// whether they're editing their own layout or everyone's default.
 struct LayoutEditorView: View {
     @Environment(AppState.self) private var state
     let route: LayoutEditorRoute
@@ -365,75 +395,69 @@ struct LayoutEditorView: View {
     @State private var error: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                if state.isAdmin {
-                    Picker("", selection: $everyone) {
-                        Text("My layout").tag(false)
-                        Text("Default for everyone").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                }
-                Spacer()
-                if let options = available, !options.isEmpty {
-                    Menu {
-                        ForEach(options) { o in
-                            Button { add(o) } label: { Text([o.title ?? o.ref, o.detail].compactMap { $0 }.joined(separator: " — ")) }
-                        }
-                    } label: {
-                        Label("Add a Row…", systemImage: "plus")
-                    }
-                    .fixedSize()
-                }
-                if config?.custom == true {
-                    Button(!everyone && config?.hasDefault == true ? "Use the Default Layout" : "Back to the Built-in Layout") { reset() }
+        PageScroll(maxWidth: 780) {
+            if state.isAdmin {
+                HStack(spacing: 8) {
+                    Chip("My layout", selected: !everyone) { everyone = false }
+                    Chip("Default for everyone", selected: everyone) { everyone = true }
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
             if let c = config {
-                if c.custom != true {
-                    Text(!everyone && c.hasDefault == true ? "Showing the server's default. Changing anything makes it your own."
-                                                           : "Showing Wren TV's built-in layout.")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .padding(.horizontal, 20).padding(.bottom, 8)
-                }
-                List {
+                CardSection("Rows", subtitle: "\(c.entries.count)", footer: footer(c)) {
+                    if c.entries.isEmpty {
+                        Text("No rows. Add one to fill the page.").foregroundStyle(.secondary)
+                    }
                     ForEach(Array(c.entries.enumerated()), id: \.element.id) { i, e in
-                        HStack(spacing: 12) {
-                            Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(e.title ?? e.ref).foregroundStyle(e.isHidden ? .secondary : .primary)
-                                if let d = e.detail { Text(d).font(.caption).foregroundStyle(.secondary) }
-                            }
-                            Spacer()
-                            if i > 0 {
-                                Button { move(i, to: 0) } label: { Image(systemName: "arrow.up.to.line") }
-                                    .buttonStyle(.borderless).help("Move to Top")
-                            }
-                            Button { toggle(i) } label: { Image(systemName: e.isHidden ? "eye.slash" : "eye") }
-                                .buttonStyle(.borderless).help(e.isHidden ? "Show" : "Hide")
-                            Button { remove(i) } label: { Image(systemName: "minus.circle") }
-                                .buttonStyle(.borderless).help("Remove")
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    .onMove { from, to in
-                        guard var e = config?.entries else { return }
-                        e.move(fromOffsets: from, toOffset: to)
-                        save(e)
+                        row(i, e, last: i == c.entries.count - 1)
                     }
                 }
+                if let error { Text(error).font(.caption).foregroundStyle(.red) }
             } else if let error {
                 ContentUnavailableView("Couldn't load", systemImage: "exclamationmark.triangle", description: Text(error))
             } else {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 120)
             }
         }
         .navigationTitle("\(route.title) Layout")
+        .toolbar {
+            if config?.custom == true {
+                Button(!everyone && config?.hasDefault == true ? "Use the Default Layout" : "Back to the Built-in Layout") { reset() }
+            }
+            if let options = available, !options.isEmpty {
+                Menu {
+                    ForEach(options) { o in
+                        Button { add(o) } label: { Text([o.title ?? o.ref, o.detail].compactMap { $0 }.joined(separator: " — ")) }
+                    }
+                } label: {
+                    Label("Add a Row", systemImage: "plus")
+                }
+                .help("Add a Row")
+            }
+        }
         .task(id: "\(route.scope)|\(everyone)") { await load() }
+    }
+
+    private func footer(_ c: LayoutConfig) -> String {
+        if c.custom == true { return everyone ? "The default for everyone without their own layout." : "Your own layout, on every device." }
+        return !everyone && c.hasDefault == true ? "Showing the server's default. Changing anything makes it your own."
+                                                 : "Showing Wren TV's built-in layout. Changing anything makes it your own."
+    }
+
+    private func row(_ i: Int, _ e: LayoutEntry, last: Bool) -> some View {
+        SettingRow(e.title ?? e.ref, detail: e.detail) {
+            HStack(spacing: 14) {
+                Button { move(i, to: i - 1) } label: { Image(systemName: "chevron.up") }
+                    .disabled(i == 0).help("Move Up")
+                Button { move(i, to: i + 1) } label: { Image(systemName: "chevron.down") }
+                    .disabled(last).help("Move Down")
+                Button { toggle(i) } label: { Image(systemName: e.isHidden ? "eye.slash" : "eye") }
+                    .help(e.isHidden ? "Show" : "Hide")
+                Button { remove(i) } label: { Image(systemName: "minus.circle") }
+                    .help("Remove")
+            }
+            .buttonStyle(.borderless)
+        }
+        .opacity(e.isHidden ? 0.55 : 1)
     }
 
     /// Options not already on the page.

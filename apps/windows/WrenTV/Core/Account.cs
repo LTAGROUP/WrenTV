@@ -135,6 +135,13 @@ public sealed class AccountClient(SupabaseInfo info)
     }
 
     /// The servers this account owns or has been shared, most recently seen first.
+    /// Signs in a TV showing an account code; with check, only looks it up.
+    public async Task<string> LinkDevice(string code, bool check, string accessToken)
+    {
+        var text = await Request("/functions/v1/link-device", new { code, check }, accessToken);
+        try { return JsonDocument.Parse(text).RootElement.GetProperty("deviceName").GetString() ?? ""; } catch { return ""; }
+    }
+
     public async Task<List<AccountServer>> Servers(AccountSession s) =>
         JsonSerializer.Deserialize<List<AccountServer>>(await Rest(
             "/rest/v1/servers?select=id,name,owner_id,local_urls,public_url,remote_url,last_seen_at&order=last_seen_at.desc.nullslast", s)) ?? [];

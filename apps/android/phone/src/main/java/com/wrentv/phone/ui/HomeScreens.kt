@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
@@ -61,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import com.wrentv.tv.data.DiscoverHome
 import com.wrentv.tv.data.HomeResponse
 import com.wrentv.tv.data.Item
+import com.wrentv.tv.data.WrenCollection
 import com.wrentv.tv.data.TitleView
 import com.wrentv.tv.data.TrendingResponse
 import com.wrentv.tv.data.WrenTVException
@@ -323,12 +325,13 @@ fun SearchScreen() {
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<Item>>(emptyList()) }
     var more by remember { mutableStateOf<List<TitleView>>(emptyList()) }
+    var collections by remember { mutableStateOf<List<WrenCollection>>(emptyList()) }
     var searched by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     LaunchedEffect(query) {
         val q = query.trim()
-        if (q.length < 2) { results = emptyList(); more = emptyList(); return@LaunchedEffect }
+        if (q.length < 2) { results = emptyList(); more = emptyList(); collections = emptyList(); return@LaunchedEffect }
         delay(300)
         val api = state.api ?: return@LaunchedEffect
         val found = runCatching { api.search(q) }.getOrNull().orEmpty()
@@ -336,6 +339,7 @@ fun SearchScreen() {
         val ids = found.map { it.id }.toSet()
         results = found + titles.mapNotNull { it.item }.filter { it.id !in ids }
         more = titles.filter { it.item == null }
+        collections = runCatching { api.searchCollections(q) }.getOrNull().orEmpty()
         searched = q
         state.rememberSearch(q)
     }
@@ -375,11 +379,20 @@ fun SearchScreen() {
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
                 val full = { s: androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope -> androidx.compose.foundation.lazy.grid.GridItemSpan(s.maxLineSpan) }
+                if (collections.isNotEmpty()) {
+                    item("colls", span = full) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Collections", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(collections, { it.id }) { CollectionTile(it) } }
+                        }
+                    }
+                    if (results.isNotEmpty() || more.isNotEmpty()) item(span = full) { Text("Titles", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                }
                 if (results.isNotEmpty() && more.isNotEmpty() && !state.canStream) item(span = full) { Text("On This Server", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
                 results.forEach { item -> item(item.id) { PosterCard(item) } }
                 if (more.isNotEmpty() && !state.canStream) item(span = full) { Text("Not on This Server", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
                 more.forEach { t -> item(t.id) { TitleCard(t) } }
-                if (searched == q && results.isEmpty() && more.isEmpty()) item(span = full) { EmptyState(Icons.Rounded.Search, "No results for “$q”", "Check the spelling or try a new search.") }
+                if (searched == q && results.isEmpty() && more.isEmpty() && collections.isEmpty()) item(span = full) { EmptyState(Icons.Rounded.Search, "No results for “$q”", "Check the spelling or try a new search.") }
             }
         }
     }

@@ -55,7 +55,41 @@ func (s *Server) handleLayout(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	entries, custom := s.effectiveLayout(ctx, r, sc)
-	writeJSON(w, 200, map[string]any{"rows": s.resolveLayout(ctx, r, sc, entries), "custom": custom})
+	resp := map[string]any{"custom": custom}
+	// ?limit= resolves the page a few rows at a time, from ?offset=;
+	// nextOffset is where the next request starts, until there's no more.
+	limit := queryInt(r, "limit", 0)
+	if limit <= 0 {
+		resp["rows"] = s.resolveLayout(ctx, r, sc, entries)
+		writeJSON(w, 200, resp)
+		return
+	}
+	shown := entries[:0:0]
+	for _, e := range entries {
+		if !e.Hidden {
+			shown = append(shown, e)
+		}
+	}
+	// Entries with nothing in them drop out, so keep going until there are
+	// limit rows: a page is never short (or empty) while more remain.
+	to := min(max(queryInt(r, "offset", 0), 0), len(shown))
+	rows := []layoutRow{}
+	seen := map[string]bool{}
+	for len(rows) < limit && to < len(shown) && ctx.Err() == nil {
+		next := min(to+limit-len(rows), len(shown))
+		for _, row := range s.resolveLayout(ctx, r, sc, shown[to:next]) {
+			if !seen[row.ID] {
+				seen[row.ID] = true
+				rows = append(rows, row)
+			}
+		}
+		to = next
+	}
+	if to < len(shown) {
+		resp["nextOffset"] = to
+	}
+	resp["rows"] = rows
+	writeJSON(w, 200, resp)
 }
 
 // layoutOption is a row the editor can add, or one already on the page.

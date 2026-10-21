@@ -25,6 +25,7 @@ sealed interface Route {
     data object Downloads : Route
     data object LiveTv : Route
     data object Preferences : Route
+    data object LinkTv : Route
     data object Search : Route
     /** A library's layout page; its Browse All is [LibraryItems]. */
     data class LibraryPage(val library: Library) : Route

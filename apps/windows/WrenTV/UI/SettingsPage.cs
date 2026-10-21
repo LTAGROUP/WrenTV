@@ -36,11 +36,17 @@ sealed class SettingsPage : Page
             var audio = LanguageBox("Audio language", prefs.AudioLanguage, allowOff: false);
             var subs = LanguageBox("Subtitles", prefs.SubtitleLanguage ?? "", allowOff: true);
             var saved = Ui.Secondary("");
+            var watched = NumberBox("Counts as watched at", UserPrefs.WatchedPercents.Select(n => (n, $"{n}%")), prefs.WatchedPercent ?? 90);
+            var after = NumberBox("Add to Continue Watching after", UserPrefs.ContinueAfters, prefs.ContinueAfter ?? 30);
             async void Save()
             {
                 try
                 {
-                    var p = new UserPrefs { AudioLanguage = Code(audio), SubtitleLanguage = Code(subs) };
+                    var p = new UserPrefs
+                    {
+                        AudioLanguage = Code(audio), SubtitleLanguage = Code(subs),
+                        WatchedPercent = Number(watched), ContinueAfter = Number(after),
+                    };
                     await api.SetPrefs(p);
                     saved.Text = "Saved";
                 }
@@ -48,9 +54,13 @@ sealed class SettingsPage : Page
             }
             audio.SelectionChanged += (_, _) => Save();
             subs.SelectionChanged += (_, _) => Save();
+            watched.SelectionChanged += (_, _) => Save();
+            after.SelectionChanged += (_, _) => Save();
             playback.Children.Add(Ui.Row(16, audio, subs));
-            playback.Children.Add(saved);
             playback.Children.Add(Ui.Secondary("The player picks these when a title has them. You can still switch tracks while watching.", 13, 3));
+            playback.Children.Add(Ui.Row(16, watched, after));
+            playback.Children.Add(Ui.Secondary("How far in a movie or episode counts as watched, and how long you watch before it's on Continue Watching. Saved to your account, so it applies on every device.", 13, 3));
+            playback.Children.Add(saved);
         }
         else playback.Children.Add(Ui.Secondary("Couldn't load your playback settings."));
         if (!Player.Mpv.Available)
@@ -81,7 +91,12 @@ sealed class SettingsPage : Page
         if (Updates.Available is { } avail)
             about.Children.Add(Ui.Button($"Download {avail.Version}", () => Ui.Open(avail.Download), "", accent: true));
 
-        var col = Ui.Column(20, Ui.Card(account), Ui.Card(playback), Ui.Card(browsing), Ui.Card(about));
+        var simkl = Ui.Column(14, Section("Simkl"));
+        var linkTv = LinkTv();
+        var col = Ui.Column(20, Ui.Card(account), Ui.Card(playback), Ui.Card(browsing), Ui.Card(simkl), Ui.Card(linkTv), Ui.Card(about));
+        var simklCard = col.Children[3];
+        simklCard.Visibility = Visibility.Collapsed;
+        _ = ShowSimkl(simkl, simklCard);
         col.MaxWidth = 720;
         col.HorizontalAlignment = HorizontalAlignment.Left;
         return Scroll("Settings", Padded(col));
@@ -100,6 +115,140 @@ sealed class SettingsPage : Page
         Grid.SetColumn(v, 1);
         g.Children.Add(v);
         return g;
+    }
+
+    /// Linking Simkl: what's watched here is sent there, and its history
+    /// imported. Hidden when the server has no Simkl app.
+    async Task ShowSimkl(StackPanel panel, UIElement card)
+    {
+        var api = App.State.Api!;
+        SimklStatus? st;
+        try { st = await api.Simkl(); } catch { st = null; }
+        if (st == null || (!st.Available && !st.Linked)) { card.Visibility = Visibility.Collapsed; return; }
+        card.Visibility = Visibility.Visible;
+        while (panel.Children.Count > 1) panel.Children.RemoveAt(1);
+        async void Do(Func<Task> f)
+        {
+            try { await f(); } catch (Exception e) { panel.Children.Add(Ui.Error(e.Message)); return; }
+            await ShowSimkl(panel, card);
+        }
+        if (st.Linked && st.Account is { } a)
+        {
+            panel.Children.Add(Line("Linked to", a.Username ?? "Simkl"));
+            var scrobble = new ToggleSwitch { Header = "Send what I watch to Simkl", IsOn = a.Scrobble };
+            scrobble.Toggled += (_, _) => Do(() => api.SimklScrobble(scrobble.IsOn));
+            panel.Children.Add(scrobble);
+            var importing = st.Importing || a.ImportStatus == "running";
+            var import = Ui.Button("Import History Again", () => Do(api.SimklImport), "");
+            import.IsEnabled = !importing;
+            panel.Children.Add(Ui.Row(10, import, Ui.Button("Disconnect", () => Do(api.SimklUnlink), "")));
+            var note = importing ? "Importing your history…"
+                : a.ImportStatus == "done" ? $"Last import: {a.ImportMovies} movies and {a.ImportEpisodes} episodes marked watched."
+                : !string.IsNullOrEmpty(a.ImportStatus) ? $"Import failed: {a.ImportStatus}" : null;
+            if (note != null) panel.Children.Add(Ui.Secondary(note, 13, 3));
+        }
+        else if (st.Pending is { } p && string.IsNullOrEmpty(p.Error))
+        {
+            var code = Ui.Text(p.UserCode, 26, FontWeights.Bold);
+            code.IsTextSelectionEnabled = true;
+            panel.Children.Add(Ui.Secondary($"Open {p.Url.Replace("https://", "")} and enter", 14));
+            panel.Children.Add(code);
+            panel.Children.Add(Ui.Row(10, Ui.Button("Open Simkl", () => Ui.Open(new Uri(p.UrlComplete ?? p.Url)), "", accent: true),
+                Ui.Button("Cancel", () => Do(api.SimklCancelLink), "")));
+            panel.Children.Add(Ui.Secondary("Waiting for you to approve it on Simkl…"));
+        }
+        else
+        {
+            panel.Children.Add(Ui.Secondary(st.Pending?.Error ?? "Link your Simkl account to import what you've already watched and keep Simkl up to date as you watch here.", 13, 3));
+            panel.Children.Add(Ui.Button("Connect Simkl", () => Do(async () =>
+            {
+                await api.SimklLink();
+                if ((await api.Simkl()).Pending is { } np) Ui.Open(new Uri(np.UrlComplete ?? np.Url));
+            }), "", accent: true));
+        }
+        // Waiting on approval or an import: check again shortly, while this page is open.
+        if (st.Busy)
+        {
+            await Task.Delay(3000);
+            if (panel.XamlRoot != null) await ShowSimkl(panel, card);
+        }
+    }
+
+    /// Signs in a TV showing a code: to this account, or to this server as you.
+    StackPanel LinkTv()
+    {
+        var state = App.State;
+        var panel = Ui.Column(14, Section("Sign in a TV"));
+        var box = new TextBox { PlaceholderText = "ABCD-EFGH", Width = 220, CharacterCasing = CharacterCasing.Upper, FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas") };
+        var note = Ui.Secondary("On the TV, choose Sign in with your phone, then type the code it shows.", 13, 3);
+        Button go = null!;
+        go = Ui.Button("Continue", async () =>
+        {
+            var code = NormalizeTvCode(box.Text);
+            if (code.Length != 8) { note.Text = "Codes are 8 letters and numbers."; return; }
+            go.IsEnabled = false;
+            try
+            {
+                var api = state.Api!;
+                string? token = api.Auth?.AccountSession != null ? await api.Auth.Token() : null;
+                var client = new AccountClient(state.Server?.Supabase ?? SupabaseInfo.WrenTV);
+                string? device = null;
+                var account = false;
+                Exception? accountError = null;
+                if (token != null)
+                {
+                    try { device = await client.LinkDevice(code, true, token); account = true; }
+                    catch (Exception e) { accountError = e; }
+                }
+                if (!account)
+                {
+                    try
+                    {
+                        var info = await api.PairInfo(code);
+                        if (info.Approved) { note.Text = "This code was already used. Get a new one on the TV."; return; }
+                        device = info.Device;
+                    }
+                    catch (Exception e) { note.Text = (accountError ?? e).Message; return; }
+                }
+                var name = string.IsNullOrEmpty(device) ? "TV" : device;
+                var who = state.User?.DisplayName is { Length: > 0 } d ? d : state.User?.Username ?? "you";
+                var message = account
+                    ? $"{name} will be signed in to your Wren TV account ({state.AccountEmail ?? "this account"}) and open your servers."
+                    : $"{name} will be signed in to {state.Server?.Name ?? "this server"} as {who}.";
+                if (!await Ui.Confirm(XamlRoot, "Sign in this TV?", message, "Sign In")) return;
+                if (account) await client.LinkDevice(code, false, token!);
+                else await api.ApprovePair(code);
+                note.Text = $"{name} is signed in as {who}.";
+                box.Text = "";
+            }
+            catch (Exception e) { note.Text = e.Message; }
+            finally { go.IsEnabled = true; }
+        }, "");
+        panel.Children.Add(Ui.Row(10, box, go));
+        panel.Children.Add(note);
+        return panel;
+    }
+
+    /// Codes are 8 characters; the TV shows them as ABCD-EFGH. A pasted link's
+    /// code is used, never its address.
+    static string NormalizeTvCode(string s)
+    {
+        var i = s.IndexOf("code=", StringComparison.OrdinalIgnoreCase);
+        if (i >= 0) s = s[(i + 5)..].Split('&')[0];
+        const string alpha = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        return new string(s.ToUpperInvariant().Where(alpha.Contains).ToArray());
+    }
+
+    static int? Number(ComboBox box) => (box.SelectedItem as ComboBoxItem)?.Tag as int?;
+
+    static ComboBox NumberBox(string header, IEnumerable<(int, string)> choices, int selected)
+    {
+        var box = new ComboBox { Header = header, Width = 220 };
+        foreach (var (n, label) in choices) box.Items.Add(new ComboBoxItem { Content = label, Tag = n });
+        if (!box.Items.OfType<ComboBoxItem>().Any(i => (int)i.Tag == selected))
+            box.Items.Add(new ComboBoxItem { Content = $"{selected} seconds", Tag = selected });
+        box.SelectedItem = box.Items.OfType<ComboBoxItem>().First(i => (int)i.Tag == selected);
+        return box;
     }
 
     static string Code(ComboBox box) => (box.SelectedItem as ComboBoxItem)?.Tag as string ?? "";

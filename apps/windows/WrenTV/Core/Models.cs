@@ -222,6 +222,14 @@ public sealed class CollectionDetail
     public List<Item> Items { get; set; } = [];
     public List<TitleView>? Missing { get; set; }
     public List<TitleView>? Titles { get; set; }
+    /// A big collection's shelves: indexes into Titles when there are any, else Items.
+    public List<CollectionRow>? Rows { get; set; }
+}
+
+public sealed class CollectionRow
+{
+    public string Title { get; set; } = "";
+    public List<int> Index { get; set; } = [];
 }
 
 public sealed class GenreCount
@@ -244,6 +252,45 @@ public sealed class UserPrefs
     public string AudioLanguage { get; set; } = "";
     /// Subtitles turn on in this language when a file has them; empty is off.
     public string? SubtitleLanguage { get; set; }
+    /// How far in (percent) a title counts as watched.
+    public int? WatchedPercent { get; set; }
+    /// Seconds watched before a title is on Continue Watching.
+    public int? ContinueAfter { get; set; }
+
+    public static readonly int[] WatchedPercents = [50, 60, 70, 75, 80, 85, 90, 95, 98];
+    public static readonly (int Seconds, string Label)[] ContinueAfters =
+        [(10, "10 seconds"), (30, "30 seconds"), (60, "1 minute"), (120, "2 minutes"), (300, "5 minutes"), (600, "10 minutes")];
+}
+
+/// The caller's Simkl link, from /api/me/simkl.
+public sealed class SimklStatus
+{
+    public bool Available { get; set; }
+    public bool Linked { get; set; }
+    public SimklAccount? Account { get; set; }
+    public SimklPending? Pending { get; set; }
+    public bool Importing { get; set; }
+
+    /// Worth checking again soon: waiting on approval or an import.
+    public bool Busy => (Pending != null && string.IsNullOrEmpty(Pending.Error)) || Importing || Account?.ImportStatus == "running";
+}
+
+public sealed class SimklAccount
+{
+    public string? Username { get; set; }
+    public bool Scrobble { get; set; }
+    public string? ImportStatus { get; set; }
+    public long? ImportAt { get; set; }
+    public int ImportMovies { get; set; }
+    public int ImportEpisodes { get; set; }
+}
+
+public sealed class SimklPending
+{
+    public string UserCode { get; set; } = "";
+    public string Url { get; set; } = "";
+    public string? UrlComplete { get; set; }
+    public string? Error { get; set; }
 }
 
 /// A TMDB title (trending, more like this), linked to the library item when the server has it.
@@ -633,6 +680,13 @@ public sealed class LivePlayResponse
 
 // Sign-in codes
 
+/// A TV waiting to be signed in with a code.
+public sealed class PairInfo
+{
+    public string Device { get; set; } = "TV";
+    public bool Approved { get; set; }
+}
+
 public sealed class PairStart
 {
     public string Code { get; set; } = "";
@@ -709,6 +763,8 @@ public sealed class LayoutRow
     public bool Ranked { get; set; }
     /// Set when the row is a single hub's first shelf.
     public string? HubId { get; set; }
+    /// Whether there's more than the row shows, so a "View all" is worth having.
+    public bool More { get; set; }
 }
 
 /// A page's rows: "home", "movies", "shows" or "library:<id>".
@@ -716,6 +772,8 @@ public sealed class LayoutResponse
 {
     public List<LayoutRow> Rows { get; set; } = [];
     public bool Custom { get; set; }
+    /// Where the next page of rows starts, while more remain.
+    public int? NextOffset { get; set; }
 }
 
 public sealed class HubResponse

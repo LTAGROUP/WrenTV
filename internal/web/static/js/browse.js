@@ -1,5 +1,6 @@
 // Browsing beyond libraries: genres, collections, and the viewer's own settings.
 import { api, img } from './api.js';
+import * as ambient from './ambient.js';
 import { esc, $, $$, el, toast, modal, confirmDialog, icons } from './ui.js';
 import { go, render, setTitle, isAdmin, getLibraries, posterCard, titleCard, lazyImg, libraryTabs, bd, shelf, bindShelves, posterSize, setPosterSize } from './app.js';
 
@@ -47,6 +48,7 @@ export async function viewGenre() {
     for (const [k, v] of Object.entries(patch)) v ? n.set(k, v) : n.delete(k);
     go('/genre?' + n, true);
   };
+  bindShelves(node);
   $('#sort', node).onchange = (e) => nav({ sort: e.target.value });
   $('#lib', node)?.addEventListener('change', (e) => nav({ lib: e.target.value, kind: '' }));
   $('#kind', node)?.addEventListener('change', (e) => nav({ kind: e.target.value }));
@@ -88,7 +90,7 @@ function groupShelves(cs) {
 }
 
 // collectionTile is a collection's wide tile: its artwork with the name over it.
-function collectionTile(c) {
+export function collectionTile(c) {
   const tags = [];
   if (!c.active) tags.push(`Hidden until ${fmtMD(c.visibleFrom)}`);
   else if (c.showOnHome && isAdmin()) tags.push('On Home');
@@ -137,28 +139,40 @@ function sortTitles(list, sort) {
 }
 
 export async function viewCollection(id) {
+  // "order" is the default order as a grid, for a collection that's rows.
   const sort = qs().get('sort') || '';
-  const d = await api(`/api/collections/${id}` + (sort ? `?sort=${sort}` : ''));
+  const srv = sort === 'order' ? '' : sort;
+  const d = await api(`/api/collections/${id}` + (srv ? `?sort=${srv}` : ''));
   const c = d.collection;
   setTitle(c.name);
+  ambient.base(c.backdropPath);
   const admin = isAdmin();
   // When streaming, a TMDB collection is everything in it, not just what the server has.
-  const titles = d.titles ? sortTitles(d.titles, sort) : null;
+  const titles = d.titles ? sortTitles(d.titles, srv) : null;
+  // A big collection shows as rows, like Home; picking a sort shows a grid.
+  const rows = !sort && d.rows?.length ? d.rows : null;
+  const sorts = rows ? [['', 'Rows'], ['order', 'Default order'], ...collSorts.slice(1)] : collSorts;
   const meta = [titles ? `${titles.length} title${titles.length === 1 ? '' : 's'}` : `${d.items.length} in your library`, kindLabel(c)];
   if (c.visibleFrom) meta.push(`Visible ${fmtMD(c.visibleFrom)} – ${fmtMD(c.visibleUntil)}`);
   if (admin && c.showOnHome) meta.push('Shown on Home');
   const removable = admin && c.kind === 'manual';
   const card = (it) => removable ? posterCard(it, `<button class="rm" data-rm="${it.id}" title="Remove from collection" aria-label="Remove ${esc(it.title)} from collection">×</button>`) : posterCard(it);
-  const node = el(`<div><div class="hero coll-hero"><div class="bg" ${c.backdropPath ? `style="background-image:url('${img(c.backdropPath, 'w1280')}')"` : ''}></div>
+  const list = titles || d.items;
+  const shelves = rows && rows.map((r) => shelf(r.title, r.index.map((n, i) => {
+    const v = list[n];
+    if (!v) return '';
+    return titles ? titleCard(v, r.title === 'Top 20' && i < 10 ? i + 1 : 0) : card(v);
+  }).join(''), { sub: `${r.index.length}` })).join('');
+  const node = el(`<div><div class="hero coll-hero">
     <div class="content">${c.posterPath ? `<div class="poster"><img src="${img(c.posterPath, 'w500')}" alt=""></div>` : ''}
     <div><div class="small" style="margin-bottom:6px"><a href="/collections">Collections</a></div><h1>${esc(c.name)}</h1>
     <div class="meta">${meta.map(esc).join('<span class="muted">·</span>')}</div>
     ${c.syncError && admin ? `<p class="error small">Last sync failed: ${esc(c.syncError)}</p>` : ''}
     ${c.description ? `<p class="overview">${esc(c.description)}</p>` : ''}
-    <div class="actions"><select id="sort" data-caption="Sort">${collSorts.map(([k, v]) => `<option value="${k}" ${k === sort ? 'selected' : ''}>${v}</option>`).join('')}</select>
+    <div class="actions"><select id="sort" data-caption="Sort">${sorts.map(([k, v]) => `<option value="${k}" ${k === sort ? 'selected' : ''}>${v}</option>`).join('')}</select>
     ${admin ? `<button class="btn" data-act="edit">Edit</button>${c.kind === 'tmdb' ? '<button class="btn ghost" data-act="sync">Sync now</button>' : ''}
       <button class="btn ghost danger" data-act="delete">Delete</button>` : ''}</div></div></div></div>
-    ${titles ? (titles.length ? `<div class="grid">${titles.map((v) => titleCard(v)).join('')}</div>` : '<div class="empty"><h2>This collection is empty</h2></div>')
+    ${shelves ? `<div class="coll-rows">${shelves}</div>` : titles ? (titles.length ? `<div class="grid">${titles.map((v) => titleCard(v)).join('')}</div>` : '<div class="empty"><h2>This collection is empty</h2></div>')
       : d.items.length ? `<div class="grid">${d.items.map(card).join('')}</div>`
       : `<div class="empty"><h2>Nothing from your library yet</h2><p>${c.kind === 'manual' ? 'Add titles from their detail page with “+ Collection”.' : 'Titles appear as soon as the library has them.'}</p></div>`}
     ${!titles && d.missing?.length ? `<h2 class="section-title">Not in your library <span class="muted small">${d.missing.length}</span></h2>

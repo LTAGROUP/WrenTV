@@ -182,61 +182,62 @@ struct CollectionDetailView: View {
     let seed: WrenCollection
     @State private var detail: CollectionDetail?
     @State private var sort = ""
+    /// Sorted answers come without rows, so whether there are any is remembered.
+    @State private var rowed = false
     @State private var error: String?
 
     private var collection: WrenCollection { detail?.collection ?? seed }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                if let detail, let titles = detail.titles {
-                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 26) {
-                        ForEach(sorted(titles.uniqued())) { TitleCard(title: $0) }
-                    }
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 20)
-                    if titles.isEmpty {
-                        ContentUnavailableView("Nothing in this collection yet", systemImage: "square.stack")
-                    }
-                } else if let detail {
-                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 26) {
-                        ForEach(detail.items.uniqued()) { item in
-                            NavigationLink(value: item) { PosterCard(item: item) }
-                                .buttonStyle(.plain)
-                                .contextMenu {
-                                    ItemContextMenu(item: item)
-                                    if state.isAdmin && collection.kind == "manual" {
-                                        Button("Remove from Collection") { remove(item) }
-                                    }
-                                }
-                        }
-                    }
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 20)
-                    if detail.items.isEmpty {
-                        ContentUnavailableView("Nothing in this collection yet", systemImage: "square.stack")
-                    }
-                    if let missing = detail.missing, !missing.isEmpty {
-                        Text("Not in your library").font(.title3.bold()).padding(.horizontal, 28).padding(.top, 10)
-                        LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 26) {
-                            ForEach(missing.uniqued()) { TitleCard(title: $0) }
-                        }
-                        .padding(28)
-                    }
-                } else if let error {
-                    ContentUnavailableView("Couldn't load", systemImage: "exclamationmark.triangle", description: Text(error))
-                } else {
-                    ProgressView().frame(maxWidth: .infinity).padding(.top, 60)
+        CinematicPage(fallback: hero, fallbackBackdrop: collection.backdropPath, label: "Collection") {
+            if let e = collection.syncError, !e.isEmpty, state.isAdmin {
+                Label(e, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(Color.wrenEmber).padding(.horizontal, 28)
+            }
+            if let detail, let rows = detail.rows, !rows.isEmpty, sort.isEmpty {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, r in shelf(r, detail) }
+            } else if let detail, let titles = detail.titles {
+                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 26) {
+                    ForEach(sorted(titles.uniqued())) { TitleCard(title: $0) }
                 }
+                .padding(.horizontal, 28)
+                if titles.isEmpty {
+                    ContentUnavailableView("Nothing in this collection yet", systemImage: "square.stack")
+                }
+            } else if let detail {
+                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 26) {
+                    ForEach(detail.items.uniqued()) { item in
+                        NavigationLink(value: item) { PosterCard(item: item) }
+                            .buttonStyle(.plain)
+                            .contextMenu { menu(item) }
+                    }
+                }
+                .padding(.horizontal, 28)
+                if detail.items.isEmpty {
+                    ContentUnavailableView("Nothing in this collection yet", systemImage: "square.stack")
+                }
+                if let missing = detail.missing, !missing.isEmpty {
+                    Text("Not in your library").font(.title3.bold()).padding(.horizontal, 28).padding(.top, 10)
+                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 26) {
+                        ForEach(missing.uniqued()) { TitleCard(title: $0) }
+                    }
+                    .padding(.horizontal, 28)
+                }
+            } else if let error {
+                ContentUnavailableView("Couldn't load", systemImage: "exclamationmark.triangle", description: Text(error))
+            } else {
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 60)
             }
         }
-        .ignoresSafeArea(edges: .top)
         .navigationTitle(collection.name)
         .toolbar {
             Menu {
                 Picker("Order", selection: $sort) {
-                    Text("Collection order").tag("")
+                    if hasRows {
+                        Text("Rows").tag("")
+                        Text("Collection order").tag("order")
+                    } else {
+                        Text("Collection order").tag("")
+                    }
                     Text("Title").tag("title")
                     Text("Year (newest)").tag("year")
                     Text("Year (oldest)").tag("year_asc")
@@ -252,39 +253,45 @@ struct CollectionDetailView: View {
         .task(id: "\(seed.id)|\(sort)|\(state.refreshTick)") { await load() }
     }
 
-    private var header: some View {
-        ZStack(alignment: .bottomLeading) {
-            RemoteImage(url: state.api?.imageURL(collection.backdropPath, size: "w1280"))
-                .frame(height: 300)
-                .frame(maxWidth: .infinity)
-                .clipped()
-                .overlay(LinearGradient(colors: [.clear, .black.opacity(0.5), Color(nsColor: .windowBackgroundColor)], startPoint: .top, endPoint: .bottom))
-            VStack(alignment: .leading, spacing: 8) {
-                Text("COLLECTION").font(.caption.weight(.bold)).kerning(1.2).foregroundStyle(Color.wrenEmber)
-                Text(collection.name).font(.system(size: 36, weight: .bold))
-                if !collection.description.isEmpty {
-                    Text(collection.description).foregroundStyle(.secondary).lineLimit(3).frame(maxWidth: 680, alignment: .leading)
+    /// Big collections come as shelves; "order" is their own order as a grid.
+    private var hasRows: Bool { rowed || !(detail?.rows ?? []).isEmpty }
+
+    /// Until something is hovered, the hero shows the collection itself.
+    private var hero: HeroEntry {
+        var meta: [String] = []
+        if let titles = detail?.titles?.uniqued() {
+            meta.append("\(titles.count) title\(titles.count == 1 ? "" : "s")")
+        } else {
+            meta.append("\(detail?.items.uniqued().count ?? collection.itemCount ?? 0) in your library")
+        }
+        meta.append(collection.kindLabel)
+        if !collection.visibleFrom.isEmpty { meta.append("Visible \(collection.visibleFrom) – \(collection.visibleUntil)") }
+        return HeroEntry(id: "collection:\(collection.id)", title: collection.name, meta: meta.joined(separator: "  ·  "),
+                         overview: collection.description.isEmpty ? nil : collection.description)
+    }
+
+    private func shelf(_ r: CollectionRow, _ d: CollectionDetail) -> some View {
+        Shelf(title: r.title) {
+            if let titles = d.titles {
+                let ts = r.index.compactMap { titles.indices.contains($0) ? titles[$0] : nil }.uniqued()
+                ForEach(Array(ts.enumerated()), id: \.element.id) { i, t in
+                    TitleCard(title: t, rank: r.title == "Top 20" && i < 10 ? i + 1 : nil)
                 }
-                HStack(spacing: 8) {
-                    if let titles = detail?.titles?.uniqued() {
-                        Text("\(titles.count) title\(titles.count == 1 ? "" : "s")")
-                    } else {
-                        Text("\(detail?.items.uniqued().count ?? collection.itemCount ?? 0) in your library")
-                    }
-                    Text("·")
-                    Text(collection.kindLabel)
-                    if !collection.visibleFrom.isEmpty {
-                        Text("·")
-                        Text("Visible \(collection.visibleFrom) – \(collection.visibleUntil)")
-                    }
-                }
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                if let e = collection.syncError, !e.isEmpty, state.isAdmin {
-                    Label(e, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(Color.wrenEmber)
+            } else {
+                ForEach(r.index.compactMap { d.items.indices.contains($0) ? d.items[$0] : nil }.uniqued()) { item in
+                    NavigationLink(value: item) { PosterCard(item: item) }
+                        .buttonStyle(.plain)
+                        .contextMenu { menu(item) }
                 }
             }
-            .padding(.horizontal, 28)
+        }
+    }
+
+    @ViewBuilder
+    private func menu(_ item: Item) -> some View {
+        ItemContextMenu(item: item)
+        if state.isAdmin && collection.kind == "manual" {
+            Button("Remove from Collection") { remove(item) }
         }
     }
 
@@ -300,7 +307,11 @@ struct CollectionDetailView: View {
     }
 
     private func load() async {
-        do { detail = try await state.api?.collection(seed.id, sort: sort.isEmpty ? nil : sort) } catch { self.error = error.localizedDescription }
+        let server = sort.isEmpty || sort == "order" ? nil : sort
+        do {
+            detail = try await state.api?.collection(seed.id, sort: server)
+            if !(detail?.rows ?? []).isEmpty { rowed = true }
+        } catch { self.error = error.localizedDescription }
     }
 
     private func remove(_ item: Item) {

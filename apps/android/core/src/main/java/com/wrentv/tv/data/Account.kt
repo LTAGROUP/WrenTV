@@ -221,6 +221,15 @@ class AccountClient(info: SupabaseInfo) {
         return s
     }
 
+    @Serializable
+    data class LinkedDevice(val deviceName: String = "")
+
+    /** Looks up ([check]) or approves a sign-in code a TV shows before it knows any server; approving signs the TV in to this account. */
+    suspend fun linkDevice(code: String, check: Boolean, accessToken: String): LinkedDevice {
+        val text = request("/functions/v1/link-device", buildJsonObject { put("code", code); put("check", check) }, accessToken)
+        return json.decodeFromString(text)
+    }
+
     /** Turns pending share invites for this email into access. */
     suspend fun acceptInvites(s: AccountSession) {
         runCatching { request("/rest/v1/rpc/accept_invites", buildJsonObject {}, s.accessToken) }

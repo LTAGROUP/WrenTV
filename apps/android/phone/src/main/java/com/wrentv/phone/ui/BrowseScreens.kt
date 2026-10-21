@@ -1,5 +1,8 @@
 package com.wrentv.phone.ui
 
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -283,7 +286,7 @@ fun CollectionsScreen() {
 
 /** A collection's wide tile: its artwork with the name over it. */
 @Composable
-private fun CollectionTile(c: WrenCollection) {
+fun CollectionTile(c: WrenCollection) {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
     val m = metrics()
@@ -374,22 +377,106 @@ private fun CalendarCard(e: CalendarEpisode) {
     }
 }
 
+/**
+ * A collection under its artwork, like the other pages. A big one shows as
+ * rows, like Home (the server picks them); choosing an order shows a grid.
+ */
 @Composable
 fun CollectionScreen(id: String, name: String) {
     val state = LocalAppState.current
+    val m = metrics()
+    var sort by rememberSaveable { mutableStateOf("") }
     var detail by remember { mutableStateOf<CollectionDetail?>(null) }
-    LaunchedEffect(id, state.refreshTick) { detail = runCatching { state.api?.collection(id) }.getOrNull() }
-    Page(name, detail?.collection?.description?.takeIf { it.isNotEmpty() }) {
-        val d = detail
-        if (d == null) Loading()
-        else CardGrid {
-            val titles = d.titles
-            if (titles != null && state.canStream) items(titles.distinctBy { it.id }, { it.id }) { TitleCard(it) }
-            else {
-                items(d.items.distinctBy { it.id }, { it.id }) { PosterCard(it) }
-                d.missing?.let { missing -> items(missing.distinctBy { it.id }, { "m" + it.id }) { TitleCard(it) } }
+    var error by remember { mutableStateOf<String?>(null) }
+    var hasRows by rememberSaveable { mutableStateOf(false) }
+    // "order" is the collection's own order as a grid, for one shown as rows.
+    val serverSort = sort.takeIf { it.isNotEmpty() && it != "order" }
+    LaunchedEffect(id, serverSort, state.refreshTick) {
+        runCatching { state.api?.collection(id, serverSort) }
+            .onSuccess { detail = it; error = null; if (!it?.rows.isNullOrEmpty()) hasRows = true }
+            .onFailure { if (detail == null) error = it.message }
+    }
+    val d = detail
+    val c = d?.collection
+    val sorts = if (hasRows) listOf("" to "Rows", "order" to "Collection order") + CollectionSorts.drop(1) else CollectionSorts
+    val rows = if (sort.isEmpty()) d?.rows?.takeIf { it.isNotEmpty() } else null
+    val titles = d?.titles?.takeIf { state.canStream }
+    Box(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val cols = ((maxWidth - m.gutter * 2 + 12.dp) / (m.gridMin + 12.dp)).toInt().coerceAtLeast(2)
+            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(bottom = 32.dp)) {
+                item("hero") {
+                    val count = titles?.let { "${it.size} titles" } ?: d?.let { "${it.items.size} in your library" }
+                    val meta = listOfNotNull(count, c?.kindLabel).joinToString(" · ")
+                    val about = c?.syncError?.takeIf { it.isNotEmpty() && state.isAdmin } ?: c?.description?.ifEmpty { null }
+                    Hero("COLLECTION", listOf(Slide(id, c?.backdropPath, null, c?.name ?: name, meta, about))) {
+                        SortButton(sorts, sort) { sort = it }
+                    }
+                }
+                when {
+                    d == null && error != null -> item { EmptyState(Icons.Rounded.Warning, "Couldn't load", error) }
+                    d == null -> item { Loading(Modifier.fillMaxWidth().padding(top = 60.dp)) }
+                    rows != null -> rows.forEachIndexed { n, r ->
+                        item("row:$n") {
+                            Shelf(r.title) {
+                                if (titles != null) {
+                                    itemsIndexed(r.index.mapNotNull { titles.getOrNull(it) }.distinctBy { it.id }, { _, t -> t.id }) { i, t ->
+                                        TitleCard(t, width = m.poster, rank = if (r.title == "Top 20" && i < 10) i + 1 else null)
+                                    }
+                                } else {
+                                    items(r.index.mapNotNull { d.items.getOrNull(it) }.distinctBy { it.id }, { it.id }) { PosterCard(it, width = m.poster) }
+                                }
+                            }
+                        }
+                    }
+                    else -> {
+                        val cards = mutableListOf<Pair<String, @Composable (Modifier) -> Unit>>()
+                        if (titles != null) sortedTitles(titles, sort).distinctBy { it.id }.forEach { t -> cards += t.id to @Composable { mod: Modifier -> TitleCard(t, mod) } }
+                        else {
+                            d.items.distinctBy { it.id }.forEach { i -> cards += i.id to @Composable { mod: Modifier -> PosterCard(i, mod) } }
+                            d.missing.orEmpty().distinctBy { it.id }.forEach { t -> cards += "m" + t.id to @Composable { mod: Modifier -> TitleCard(t, mod) } }
+                        }
+                        if (cards.isEmpty()) item { EmptyState(Icons.Rounded.Warning, "Nothing in this collection yet") }
+                        cards.chunked(cols).forEachIndexed { n, line ->
+                            item("line:$n:${line.first().first}") {
+                                Row(Modifier.padding(horizontal = m.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    line.forEach { (_, card) -> card(Modifier.weight(1f)) }
+                                    repeat(cols - line.size) { Spacer(Modifier.weight(1f)) }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            d.collection.syncError?.takeIf { it.isNotEmpty() }?.let { fullWidth { Text(it, color = Wren.ember) } }
+        }
+        FloatingBack()
+    }
+}
+
+private val CollectionSorts = listOf(
+    "" to "Collection order", "title" to "Title", "year" to "Year (newest)",
+    "year_asc" to "Year (oldest)", "rating" to "Rating", "added" to "Recently added",
+)
+
+/** The server orders library items; full TMDB title lists are ordered here. */
+private fun sortedTitles(titles: List<TitleView>, sort: String): List<TitleView> = when (sort) {
+    "title" -> titles.sortedBy { it.title.lowercase() }
+    "year" -> titles.sortedByDescending { it.year ?: 0 }
+    "year_asc" -> titles.sortedBy { it.year ?: 9999 }
+    "rating" -> titles.sortedByDescending { it.item?.rating ?: it.rating ?: 0.0 }
+    else -> titles
+}
+
+/** The hero's button for how a collection is shown. */
+@Composable
+private fun SortButton(sorts: List<Pair<String, String>>, sort: String, pick: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        GlassButton(sorts.firstOrNull { it.first == sort }?.second ?: "Collection order", Icons.AutoMirrored.Rounded.Sort, { open = true })
+        DropdownMenu(open, { open = false }) {
+            sorts.forEach { (v, l) ->
+                DropdownMenuItem({ Text(l) }, { open = false; pick(v) }, trailingIcon = { if (v == sort) Icon(Icons.Rounded.Check, null) })
+            }
         }
     }
 }

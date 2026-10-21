@@ -19,9 +19,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.runtime.mutableIntStateOf
+import com.wrentv.tv.data.ContinueAfters
 import com.wrentv.tv.data.OfflineItem
+import com.wrentv.tv.data.SimklStatus
 import com.wrentv.tv.data.UserPrefs
+import com.wrentv.tv.data.WatchedPercents
+import com.wrentv.tv.data.continueAfterLabel
 import com.wrentv.tv.data.languageName
+import com.wrentv.tv.ui.QrCode
+import kotlinx.coroutines.delay
 import com.wrentv.tv.ui.Choice
 import com.wrentv.tv.ui.ChoicePanel
 import com.wrentv.tv.ui.ConfirmPanel
@@ -48,7 +58,7 @@ private val Languages = listOf(
 private fun languageChoices(none: String): List<Choice<String>> =
     listOf(Choice("", none)) + Languages.map { Choice(it, languageName(it) ?: it) }.sortedBy { it.label.lowercase(Locale.getDefault()) }
 
-private enum class SettingsPanel { Audio, Subtitles, PosterSize, SignOut }
+private enum class SettingsPanel { Audio, Subtitles, Watched, ContinueAfter, PosterSize, SignOut }
 
 private val posterSizes = listOf(Choice("small", "Small"), Choice("medium", "Medium"), Choice("large", "Large"))
 
@@ -108,18 +118,26 @@ fun SettingsScreen() {
                     ListRow("Subtitles", { panel = SettingsPanel.Subtitles }, Modifier.rememberFocus("set:subs"),
                         value = if (p == null) "…" else languageName(p.subtitleLanguage) ?: "Off", enabled = p != null)
                 }
+                FormSection("Watching", "Saved to your account, so it applies on every device.") {
+                    val p = prefs
+                    ListRow("Counts as watched at", { panel = SettingsPanel.Watched }, Modifier.rememberFocus("set:watched"),
+                        detail = "How far in a movie or episode is marked watched", value = if (p == null) "…" else "${p.watchedPercent}%", enabled = p != null)
+                    ListRow("Add to Continue Watching after", { panel = SettingsPanel.ContinueAfter }, Modifier.rememberFocus("set:continue"),
+                        detail = "How long you watch before it's on Continue Watching", value = if (p == null) "…" else continueAfterLabel(p.continueAfter), enabled = p != null)
+                }
                 FormSection("Browsing") {
                     ListRow("Layouts", { nav.push(Route.Layouts) }, Modifier.rememberFocus("set:layouts"),
                         detail = if (state.isAdmin) "Rows on Home and each library, yours and everyone's" else "The rows on Home and each library")
+                    ListRow("Poster Size", { panel = SettingsPanel.PosterSize }, Modifier.rememberFocus("set:posters"),
+                        detail = "How big titles are on Home and as you browse, on this TV",
+                        value = posterSizes.firstOrNull { it.value == state.posterSize }?.label ?: "Medium")
                 }
+                SimklSection()
                 FormSection("Sound", "Kept on this TV.") {
                     ListRow("Interface Sounds", { state.uiSounds = !state.uiSounds }, Modifier.rememberFocus("set:sounds"),
                         detail = "A click as you move around", value = if (state.uiSounds) "On" else "Off")
                     ListRow("Theme Music", { state.themeMusic = !state.themeMusic }, Modifier.rememberFocus("set:theme"),
                         detail = "Plays a show's theme on its page", value = if (state.themeMusic) "On" else "Off")
-                    ListRow("Poster Size", { panel = SettingsPanel.PosterSize }, Modifier.rememberFocus("set:posters"),
-                        detail = "How big titles are on Home and as you browse",
-                        value = posterSizes.firstOrNull { it.value == state.posterSize }?.label ?: "Medium")
                 }
                 val saved = state.downloads.items
                 if (saved.isNotEmpty() || state.limits?.canDownload == true) {
@@ -161,6 +179,12 @@ fun SettingsScreen() {
         SettingsPanel.Subtitles -> ChoicePanel("Subtitles", languageChoices("Off"), prefs?.subtitleLanguage ?: "", { panel = null }) {
             prefs?.let { p -> save(p.copy(subtitleLanguage = it)) }
         }
+        SettingsPanel.Watched -> ChoicePanel("Counts as Watched At", WatchedPercents.map { Choice(it, "$it%") }, prefs?.watchedPercent, { panel = null }) {
+            prefs?.let { p -> save(p.copy(watchedPercent = it)) }
+        }
+        SettingsPanel.ContinueAfter -> ChoicePanel("Add to Continue Watching After", ContinueAfters.map { Choice(it.first, it.second) }, prefs?.continueAfter, { panel = null }) {
+            prefs?.let { p -> save(p.copy(continueAfter = it)) }
+        }
         SettingsPanel.PosterSize -> ChoicePanel("Poster Size", posterSizes, state.posterSize, { panel = null }) { state.posterSize = it }
         SettingsPanel.SignOut -> ConfirmPanel("Sign out?", "You'll need to sign in again to watch from ${server?.name ?: "this server"}.", "Sign Out", { panel = null }, destructive = true) {
             state.signOut()
@@ -182,4 +206,56 @@ private fun connectionLabel(url: String?): String? {
     val local = ip.startsWith("192.168.") || ip.startsWith("10.") || ip == "localhost" ||
         Regex("""^172\.(1[6-9]|2\d|3[01])\.""").containsMatchIn(ip) || host.endsWith(".local")
     return if (local) "Connected on your home network" else "Connected over the internet"
+}
+
+/**
+ * Linking Simkl: what's watched here is sent there, and its history
+ * imported. The code is entered on a phone. Hidden when the server has no
+ * Simkl app.
+ */
+@Composable
+private fun SimklSection() {
+    val state = LocalAppState.current
+    val notices = LocalNotices.current
+    var st by remember { mutableStateOf<SimklStatus?>(null) }
+    var tick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(tick) {
+        st = runCatching { state.api?.simkl() }.getOrNull()
+        // Waiting on approval or an import: check again shortly.
+        if (st?.busy == true) { delay(3000); tick++ }
+    }
+    val s = st ?: return
+    if (!s.available && !s.linked) return
+    fun act(f: suspend () -> Unit) {
+        state.scope.launch { runCatching { f() }.onFailure { notices.show("Simkl: ${it.message}") }; tick++ }
+    }
+    val a = s.account
+    val pending = s.pending
+    when {
+        s.linked && a != null -> FormSection("Simkl", when {
+            s.importing || a.importStatus == "running" -> "Importing your history…"
+            a.importStatus == "done" -> "Last import: ${a.importMovies} movies and ${a.importEpisodes} episodes marked watched."
+            a.importStatus.isNotEmpty() -> "Import failed: ${a.importStatus}"
+            else -> null
+        }) {
+            ListRow("Linked to ${a.username.ifEmpty { "Simkl" }}", {}, Modifier.rememberFocus("set:simkl"))
+            ListRow("Send what I watch to Simkl", { act { state.api?.simklScrobble(!a.scrobble) } }, Modifier.rememberFocus("set:simkl-scrobble"),
+                value = if (a.scrobble) "On" else "Off")
+            ListRow("Import history again", { act { state.api?.simklImport() } }, Modifier.rememberFocus("set:simkl-import"), enabled = !s.importing)
+            ListRow("Disconnect", { act { state.api?.simklUnlink() } }, Modifier.rememberFocus("set:simkl-unlink"))
+        }
+        pending != null && pending.error.isNullOrEmpty() -> FormSection("Simkl", "Waiting for you to approve it on Simkl…") {
+            Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+                QrCode(pending.urlComplete ?: pending.url, size = 160.dp)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("On your phone, open ${pending.url.removePrefix("https://")} and enter", style = MaterialTheme.typography.bodyLarge, color = Wren.secondary)
+                    Text(pending.userCode, style = MaterialTheme.typography.displaySmall, color = Wren.text)
+                }
+            }
+            ListRow("Cancel", { act { state.api?.simklCancelLink() } }, Modifier.rememberFocus("set:simkl-cancel"))
+        }
+        else -> FormSection("Simkl", pending?.error ?: "Link your Simkl account to import what you've already watched and keep Simkl up to date as you watch here.") {
+            ListRow("Connect Simkl", { act { state.api?.simklLink() } }, Modifier.rememberFocus("set:simkl-link"))
+        }
+    }
 }

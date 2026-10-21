@@ -5,6 +5,8 @@ struct SettingsView: View {
     @Environment(AppState.self) private var state
     @State private var audioLanguage = "en"
     @State private var subtitleLanguage = ""
+    @State private var watchedPercent = 90
+    @State private var continueAfter = 30
     @State private var loaded = false
     @State private var status: String?
     @AppStorage(PosterSize.key) private var posterSize = PosterSize.medium.rawValue
@@ -65,6 +67,23 @@ struct SettingsView: View {
                     Text(status ?? "Movies and episodes start with audio and subtitles in these languages when they have them. Saved to your account, so it applies on every device.")
                 }
                 .disabled(!loaded)
+                Section {
+                    Picker("Counts as watched at", selection: $watchedPercent) {
+                        ForEach(UserPrefs.watchedPercents, id: \.self) { Text("\($0)%").tag($0) }
+                    }
+                    Picker("Add to Continue Watching after", selection: $continueAfter) {
+                        ForEach(UserPrefs.continueAfters, id: \.0) { Text($0.1).tag($0.0) }
+                        if !UserPrefs.continueAfters.contains(where: { $0.0 == continueAfter }) {
+                            Text("\(continueAfter) seconds").tag(continueAfter)
+                        }
+                    }
+                } header: {
+                    Text("Watching")
+                } footer: {
+                    Text("How far in a movie or episode counts as watched, and how long you watch before it's on Continue Watching.")
+                }
+                .disabled(!loaded)
+                SimklSection()
                 if state.isAdmin {
                     Section {
                         ForEach(state.libraries) { lib in
@@ -87,6 +106,8 @@ struct SettingsView: View {
             if let p = try? await api.prefs() {
                 audioLanguage = p.audioLanguage
                 subtitleLanguage = p.subtitleLanguage ?? ""
+                watchedPercent = p.watchedPercent ?? 90
+                continueAfter = p.continueAfter ?? 30
             }
             // Let the pickers settle before changes count as the viewer's.
             try? await Task.sleep(for: .milliseconds(200))
@@ -94,11 +115,14 @@ struct SettingsView: View {
         }
         .onChange(of: audioLanguage) { save() }
         .onChange(of: subtitleLanguage) { save() }
+        .onChange(of: watchedPercent) { save() }
+        .onChange(of: continueAfter) { save() }
     }
 
     private func save() {
         guard loaded, let api = state.api else { return }
-        let prefs = UserPrefs(audioLanguage: audioLanguage, subtitleLanguage: subtitleLanguage)
+        let prefs = UserPrefs(audioLanguage: audioLanguage, subtitleLanguage: subtitleLanguage,
+                              watchedPercent: watchedPercent, continueAfter: continueAfter)
         Task {
             do {
                 _ = try await api.setPrefs(prefs)
@@ -117,6 +141,88 @@ struct SettingsView: View {
             } catch {
                 status = error.localizedDescription
             }
+        }
+    }
+}
+
+/// Linking Simkl: what's watched here is sent there, and its history
+/// imported. The code is entered on a phone. Hidden when the server has no
+/// Simkl app.
+struct SimklSection: View {
+    @Environment(AppState.self) private var state
+    @State private var st: SimklStatus?
+    @State private var error: String?
+    @State private var tick = 0
+
+    var body: some View {
+        Group {
+            if let s = st, s.available || s.linked {
+                Section {
+                    if s.linked, let a = s.account {
+                        LabeledContent("Linked to", value: a.username ?? "Simkl")
+                        Button { act { try await $0.simklScrobble(!a.scrobble) } } label: {
+                            LabeledContent("Send what I watch to Simkl", value: a.scrobble ? "On" : "Off")
+                        }
+                        Button("Import history again") { act { try await $0.simklImport() } }
+                            .disabled(s.importing == true || a.importStatus == "running")
+                        Button("Disconnect", role: .destructive) { act { try await $0.simklUnlink() } }
+                    } else if let p = s.pending, (p.error ?? "").isEmpty {
+                        HStack(spacing: 40) {
+                            QRCode(text: p.urlComplete ?? p.url).frame(width: 200, height: 200)
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("On your phone, open \(p.url.replacingOccurrences(of: "https://", with: "")) and enter")
+                                    .foregroundStyle(.secondary)
+                                Text(p.userCode).font(.largeTitle.monospaced().bold())
+                            }
+                        }
+                        .padding(.vertical, 12)
+                        Button("Cancel") { act { try await $0.simklCancelLink() } }
+                    } else {
+                        Button("Connect Simkl") { act { try await $0.simklLink() } }
+                    }
+                } header: {
+                    Text("Simkl")
+                } footer: {
+                    Text(error ?? footer(s))
+                }
+            }
+        }
+        .task(id: tick) {
+            st = try? await state.api?.simkl()
+            // Waiting on approval or an import: check again shortly.
+            if st?.busy == true {
+                try? await Task.sleep(for: .seconds(3))
+                if !Task.isCancelled { tick += 1 }
+            }
+        }
+    }
+
+    private func footer(_ s: SimklStatus) -> String {
+        if s.linked, let a = s.account {
+            if s.importing == true || a.importStatus == "running" { return "Importing your history…" }
+            if a.importStatus == "done" {
+                return "Last import: \(a.importMovies ?? 0) movies and \(a.importEpisodes ?? 0) episodes marked watched."
+            }
+            if let e = a.importStatus, !e.isEmpty { return "Import failed: \(e)" }
+            return "What you watch here is marked watched on Simkl."
+        }
+        if let p = s.pending {
+            if let e = p.error, !e.isEmpty { return e }
+            return "Waiting for you to approve it on Simkl…"
+        }
+        return "Link your Simkl account to import what you've already watched and keep Simkl up to date as you watch here."
+    }
+
+    private func act(_ f: @escaping (WrenTVAPI) async throws -> Void) {
+        guard let api = state.api else { return }
+        Task {
+            do {
+                try await f(api)
+                error = nil
+            } catch {
+                self.error = error.localizedDescription
+            }
+            tick += 1
         }
     }
 }

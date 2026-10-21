@@ -426,19 +426,32 @@ struct Badge: View {
 struct Shelf<Content: View>: View {
     let title: String
     var subtitle: String?
+    /// Where the title leads, if anywhere.
+    var link: (any Hashable)?
     @ViewBuilder let content: Content
 
-    init(title: String, subtitle: String? = nil, @ViewBuilder content: () -> Content) {
+    init(title: String, subtitle: String? = nil, link: (any Hashable)? = nil, @ViewBuilder content: () -> Content) {
         self.title = title
         self.subtitle = subtitle
+        self.link = link
         self.content = content()
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(title).font(.title3.bold())
-                if let subtitle { Text(subtitle).font(.callout).foregroundStyle(.secondary) }
+            Group {
+                if let link {
+                    NavigationLink(value: link) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            heading
+                            Image(systemName: "chevron.right").font(.callout.bold()).foregroundStyle(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) { heading }
+                }
             }
             .padding(.horizontal, 28)
             // Vertical room inside the scroll view so hover rings and lifted
@@ -451,6 +464,12 @@ struct Shelf<Content: View>: View {
             }
             .padding(.vertical, -14)
         }
+    }
+
+    @ViewBuilder
+    private var heading: some View {
+        Text(title).font(.title3.bold())
+        if let subtitle { Text(subtitle).font(.callout).foregroundStyle(.secondary) }
     }
 }
 

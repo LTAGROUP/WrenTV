@@ -155,6 +155,12 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     suspend fun collections(library: String? = null): List<WrenCollection> =
         get("/api/collections", library?.let { mapOf("libraryId" to it) } ?: emptyMap())
 
+    /** Collections named like [q], for search. Older servers ignore q, so the names are checked here too. */
+    suspend fun searchCollections(q: String): List<WrenCollection> {
+        val key = { s: String -> s.lowercase().filter { it.isLetterOrDigit() } }
+        return get<List<WrenCollection>>("/api/collections", mapOf("q" to q)).filter { key(it.name).contains(key(q)) }
+    }
+
     suspend fun collection(id: String, sort: String? = null): CollectionDetail =
         get("/api/collections/$id", sort?.let { mapOf("sort" to it) } ?: emptyMap())
 
@@ -171,6 +177,18 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     // Preferences follow the user across devices.
     suspend fun prefs(): UserPrefs = get("/api/me/prefs")
     suspend fun setPrefs(p: UserPrefs): UserPrefs = json.decodeFromString(send("PATCH", "/api/me/prefs", body = enc(p)))
+
+    // Simkl: link with a code, then what's watched here goes to Simkl.
+    suspend fun simkl(): SimklStatus = get("/api/me/simkl")
+    suspend fun simklLink(): SimklPending = post("/api/me/simkl/link")
+    suspend fun simklCancelLink() { send("DELETE", "/api/me/simkl/link") }
+    suspend fun simklUnlink() { send("DELETE", "/api/me/simkl") }
+    suspend fun simklImport() { send("POST", "/api/me/simkl/import") }
+    suspend fun simklScrobble(on: Boolean) { send("PATCH", "/api/me/simkl", body = buildJsonObject { put("scrobble", on) }) }
+
+    // A sign-in code a TV shows: a signed-in phone approves it.
+    suspend fun pairInfo(code: String): PairInfo = get("/api/pair/$code")
+    suspend fun approvePair(code: String) { send("POST", "/api/pair/$code/approve") }
 
     suspend fun stats(days: Int): StatsResponse {
         val tz = TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1000
@@ -208,6 +226,9 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
 
     /** A page's rows: "home", "movies", "shows" or "library:<id>". */
     suspend fun layout(scope: String): LayoutPage = get("/api/layouts/$scope")
+    /** [limit] of the page's rows from [offset]; servers without paging send them all. */
+    suspend fun layout(scope: String, offset: Int, limit: Int): LayoutPage =
+        get("/api/layouts/$scope", mapOf("offset" to offset.toString(), "limit" to limit.toString()))
     suspend fun hub(id: String): HubPage = get("/api/hubs/${java.net.URLEncoder.encode(id, "UTF-8").replace("+", "%20")}")
 
     /** [default] edits everyone's default (admins); otherwise the user's own layout. */

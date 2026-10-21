@@ -203,7 +203,12 @@ data class CollectionDetail(
     val missing: List<TitleView>? = null,
     /** When streaming, a TMDB collection's every title, in its order. */
     val titles: List<TitleView>? = null,
+    /** A big collection as rows, like Home: indexes into [titles] (or [items]). */
+    val rows: List<CollectionRowIndex>? = null,
 )
+
+@Serializable
+data class CollectionRowIndex(val title: String, val index: List<Int> = emptyList())
 
 @Serializable
 data class GenreCount(
@@ -219,7 +224,46 @@ data class UserPrefs(
     val audioLanguage: String = "",
     /** Subtitles turn on in this language when a file has them; empty is off. */
     val subtitleLanguage: String? = null,
+    /** How far in (50–98%) a movie or episode counts as watched. */
+    val watchedPercent: Int = 90,
+    /** Seconds (10–1800) watched before a title is on Continue Watching. */
+    val continueAfter: Int = 30,
 )
+
+/** The choices the settings offer, as on the web. */
+val WatchedPercents = listOf(50, 60, 70, 75, 80, 85, 90, 95, 98)
+val ContinueAfters = listOf(10 to "10 seconds", 30 to "30 seconds", 60 to "1 minute", 120 to "2 minutes", 300 to "5 minutes", 600 to "10 minutes")
+
+fun continueAfterLabel(s: Int): String = ContinueAfters.firstOrNull { it.first == s }?.second ?: if (s % 60 == 0) "${s / 60} minutes" else "$s seconds"
+
+/** The caller's Simkl link, from /api/me/simkl. */
+@Serializable
+data class SimklStatus(
+    val available: Boolean = false,
+    val linked: Boolean = false,
+    val account: SimklAccount? = null,
+    val pending: SimklPending? = null,
+    val importing: Boolean = false,
+) {
+    /** Worth checking again soon: waiting on approval or an import. */
+    val busy: Boolean get() = (pending != null && pending.error.isNullOrEmpty()) || importing || account?.importStatus == "running"
+}
+
+@Serializable
+data class SimklAccount(
+    val username: String = "",
+    val scrobble: Boolean = false,
+    val importStatus: String = "",
+    val importAt: Long = 0,
+    val importMovies: Int = 0,
+    val importEpisodes: Int = 0,
+)
+
+@Serializable
+data class SimklPending(val userCode: String = "", val url: String = "", val urlComplete: String? = null, val error: String? = null)
+
+@Serializable
+data class PairInfo(val device: String = "TV", val approved: Boolean = false)
 
 @Serializable
 data class GenreRow(val genre: String, val items: List<Item> = emptyList())
@@ -897,12 +941,19 @@ data class LayoutRow(
     val collection: WrenCollection? = null,
     val missing: List<TitleView>? = null,
     val ranked: Boolean = false,
+    /** A collection row has more than it shows. */
+    val more: Boolean = false,
     /** Set when the row is a single hub's first shelf. */
     val hubId: String? = null,
 )
 
 @Serializable
-data class LayoutPage(val rows: List<LayoutRow> = emptyList(), val custom: Boolean = false)
+data class LayoutPage(
+    val rows: List<LayoutRow> = emptyList(),
+    val custom: Boolean = false,
+    /** Where the next page of rows starts; null once there are no more. */
+    val nextOffset: Int? = null,
+)
 
 @Serializable
 data class HubPage(val hub: HubCard, val rows: List<LayoutRow> = emptyList())

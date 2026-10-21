@@ -36,8 +36,26 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import com.wrentv.tv.data.AppState
+import com.wrentv.tv.data.ContinueAfters
+import com.wrentv.tv.data.SimklStatus
 import com.wrentv.tv.data.UserPrefs
+import com.wrentv.tv.data.WatchedPercents
+import com.wrentv.tv.data.continueAfterLabel
 import com.wrentv.tv.data.languageName
+import com.wrentv.tv.data.normalizeTvCode
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Everything that isn't a tab: lists, settings and the account. */
@@ -55,6 +73,7 @@ fun MoreScreen() {
             if (state.canStream || state.libraries.any { it.type == "shows" }) NavRow(Icons.Rounded.CalendarMonth, "Calendar") { nav.push(Route.Calendar) }
             NavRow(Icons.Rounded.Dashboard, "Layouts") { nav.push(Route.Layouts) }
             NavRow(Icons.Rounded.Tune, "Settings") { nav.push(Route.Preferences) }
+            NavRow(Icons.Rounded.Tv, "Sign in a TV") { nav.push(Route.LinkTv) }
             SectionHeader("Account")
             state.accountEmail?.let { NavRow(Icons.Rounded.Person, it, onClick = null) }
             state.user?.let { u -> if (state.accountEmail == null) NavRow(Icons.Rounded.Person, u.username, onClick = null) }
@@ -99,9 +118,137 @@ fun PreferencesScreen() {
             Text("These apply on every device signed in to your account. You can still change tracks while watching.",
                 Modifier.fillMaxWidth().padding(horizontal = metrics().gutter, vertical = 8.dp), color = Wren.secondary, style = MaterialTheme.typography.bodySmall)
             error?.let { Text(it, Modifier.padding(horizontal = metrics().gutter), color = Wren.ember, style = MaterialTheme.typography.bodySmall) }
+            SectionHeader("Watching")
+            ChoicePicker("Counts as watched at", WatchedPercents.map { it to "$it%" }, p.watchedPercent) { save(p.copy(watchedPercent = it)) }
+            ChoicePicker("Add to Continue Watching after", ContinueAfters, p.continueAfter, continueAfterLabel(p.continueAfter)) { save(p.copy(continueAfter = it)) }
+            Text("How far in a movie or episode counts as watched, and how long you watch before it's on Continue Watching.",
+                Modifier.fillMaxWidth().padding(horizontal = metrics().gutter, vertical = 8.dp), color = Wren.secondary, style = MaterialTheme.typography.bodySmall)
             SectionHeader("Browsing")
             PosterSizePicker()
+            SimklSection()
         }
+    }
+}
+
+/** A setting picked from a short list. */
+@Composable
+private fun <T> ChoicePicker(title: String, choices: List<Pair<T, String>>, value: T, label: String? = null, pick: (T) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    androidx.compose.foundation.layout.Box {
+        NavRow(null, title, label ?: choices.firstOrNull { it.first == value }?.second) { open = true }
+        DropdownMenu(open, { open = false }) {
+            choices.forEach { (v, l) ->
+                DropdownMenuItem({ Text(l) }, { open = false; pick(v) }, trailingIcon = { if (v == value) Icon(Icons.Rounded.Check, null) })
+            }
+        }
+    }
+}
+
+/** Linking Simkl: what's watched here is sent there, and its history imported. Hidden when the server has no Simkl app. */
+@Composable
+private fun SimklSection() {
+    val state = LocalAppState.current
+    val scope = rememberCoroutineScope()
+    val uri = LocalUriHandler.current
+    var st by remember { mutableStateOf<SimklStatus?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var tick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(tick) {
+        st = runCatching { state.api?.simkl() }.getOrNull()
+        // Waiting on approval or an import: check again shortly.
+        if (st?.busy == true) { delay(3000); tick++ }
+    }
+    val s = st ?: return
+    if (!s.available && !s.linked) return
+    fun act(f: suspend () -> Unit) {
+        scope.launch { runCatching { f() }.onFailure { error = it.message }; tick++ }
+    }
+    SectionHeader("Simkl")
+    val a = s.account
+    val pending = s.pending
+    when {
+        s.linked && a != null -> {
+            NavRow(null, "Linked to ${a.username.ifEmpty { "your Simkl account" }}", onClick = null)
+            NavRow(null, "Send what I watch to Simkl", if (a.scrobble) "On" else "Off") { act { state.api?.simklScrobble(!a.scrobble) } }
+            NavRow(null, "Import history again", when {
+                s.importing || a.importStatus == "running" -> "Importing…"
+                a.importStatus == "done" -> "${a.importMovies} movies, ${a.importEpisodes} episodes"
+                a.importStatus.isNotEmpty() -> "Failed"
+                else -> null
+            }) { if (!s.importing) act { state.api?.simklImport() } }
+            NavRow(null, "Disconnect Simkl", tint = Wren.ember) { act { state.api?.simklUnlink() } }
+        }
+        pending != null && pending.error.isNullOrEmpty() -> {
+            NavRow(null, "Open ${pending.url.removePrefix("https://").removePrefix("http://")}", pending.userCode) {
+                runCatching { uri.openUri(pending.urlComplete ?: pending.url) }
+            }
+            Text("Enter the code on Simkl to approve it. Waiting…", Modifier.padding(horizontal = metrics().gutter, vertical = 4.dp),
+                color = Wren.secondary, style = MaterialTheme.typography.bodySmall)
+            NavRow(null, "Cancel") { act { state.api?.simklCancelLink() } }
+        }
+        else -> {
+            NavRow(null, "Connect Simkl") {
+                act { state.api?.simklLink()?.let { p -> runCatching { uri.openUri(p.urlComplete ?: p.url) } } }
+            }
+            Text(pending?.error ?: "Import what you've already watched, and keep Simkl up to date as you watch here.",
+                Modifier.padding(horizontal = metrics().gutter, vertical = 4.dp), color = if (pending?.error != null) Wren.ember else Wren.secondary,
+                style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    error?.let { Text(it, Modifier.padding(horizontal = metrics().gutter), color = Wren.ember, style = MaterialTheme.typography.bodySmall) }
+}
+
+/** Signs in a TV showing a code: to this account, or to this server as you. */
+@Composable
+fun LinkTvScreen() {
+    val state = LocalAppState.current
+    val scope = rememberCoroutineScope()
+    var code by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var pending by remember { mutableStateOf<AppState.TvCode?>(null) }
+    var linked by remember { mutableStateOf<String?>(null) }
+    Page("Sign in a TV") {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = metrics().gutter, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            val done = linked
+            if (done != null) {
+                Text("$done is signed in as ${state.user?.displayName?.ifEmpty { null } ?: state.user?.username ?: "you"}.", color = Color.White)
+                TextButton({ linked = null; code = "" }) { Text("Sign in another TV", color = Wren.ember) }
+                return@Column
+            }
+            Text("On the TV, choose Sign in with your phone, then type the code it shows.", color = Wren.secondary)
+            OutlinedTextField(code, { code = it.uppercase(); error = null }, Modifier.fillMaxWidth(), singleLine = true,
+                placeholder = { Text("ABCD-EFGH") }, textStyle = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, autoCorrectEnabled = false),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Wren.ember, cursorColor = Color.White))
+            Button({
+                busy = true
+                scope.launch {
+                    runCatching { state.lookUpTvCode(code) }.onSuccess { pending = it }.onFailure { error = it.message }
+                    busy = false
+                }
+            }, enabled = !busy && normalizeTvCode(code).length == 8, colors = ButtonDefaults.buttonColors(containerColor = Wren.ember)) { Text("Continue") }
+            error?.let { Text(it, color = Wren.ember, style = MaterialTheme.typography.bodySmall) }
+        }
+    }
+    pending?.let { p ->
+        AlertDialog(
+            { pending = null },
+            confirmButton = {
+                TextButton({
+                    pending = null
+                    scope.launch { runCatching { state.approveTvCode(p) }.onSuccess { linked = p.device; code = "" }.onFailure { error = it.message } }
+                }) { Text("Sign In", color = Wren.ember) }
+            },
+            dismissButton = { TextButton({ pending = null }) { Text("Cancel") } },
+            title = { Text("Sign in this TV?") },
+            text = {
+                Text(if (p.account) "${p.device} will be signed in to your Wren TV account (${state.accountEmail ?: "this account"}) and open your servers."
+                    else "${p.device} will be signed in to ${state.server?.name ?: "this server"} as ${state.user?.displayName?.ifEmpty { null } ?: state.user?.username ?: "you"}.")
+            },
+            containerColor = Wren.surface,
+        )
     }
 }
 

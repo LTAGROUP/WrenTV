@@ -204,6 +204,13 @@ struct CollectionDetail: Codable {
     var missing: [TitleView]?
     /// When streaming, a TMDB collection's every title, in its order.
     var titles: [TitleView]?
+    /// A big collection's shelves, unsorted: indexes into titles when there are any, else items.
+    var rows: [CollectionRow]?
+}
+
+struct CollectionRow: Codable, Hashable {
+    var title: String
+    var index: [Int]
 }
 
 /// Episodes airing around now, from the library's shows still running and the ones being watched.
@@ -313,10 +320,54 @@ struct GenreRoute: Hashable {
     var libraryId: String?
 }
 
+/// A TV waiting to be signed in with a code.
+struct PairInfo: Decodable {
+    var device: String
+    var approved: Bool
+}
+
 struct UserPrefs: Codable, Hashable {
     var audioLanguage: String
     /// Subtitles turn on in this language when a file has them; empty is off.
     var subtitleLanguage: String?
+    /// How far in (percent) a title counts as watched.
+    var watchedPercent: Int?
+    /// Seconds watched before a title is on Continue Watching.
+    var continueAfter: Int?
+
+    static let watchedPercents = [50, 60, 70, 75, 80, 85, 90, 95, 98]
+    static let continueAfters: [(Int, String)] = [(10, "10 seconds"), (30, "30 seconds"), (60, "1 minute"), (120, "2 minutes"),
+                                                  (300, "5 minutes"), (600, "10 minutes")]
+}
+
+/// The caller's Simkl link, from /api/me/simkl.
+struct SimklStatus: Decodable {
+    var available: Bool
+    var linked: Bool
+    var account: Account?
+    var pending: Pending?
+    var importing: Bool?
+
+    struct Account: Decodable {
+        var username: String?
+        var scrobble: Bool
+        var importStatus: String?
+        var importAt: Int64?
+        var importMovies: Int?
+        var importEpisodes: Int?
+    }
+
+    struct Pending: Decodable {
+        var userCode: String
+        var url: String
+        var urlComplete: String?
+        var error: String?
+    }
+
+    /// Worth checking again soon: waiting on approval or an import.
+    var busy: Bool {
+        (pending != nil && (pending?.error ?? "").isEmpty) || importing == true || account?.importStatus == "running"
+    }
 }
 
 struct GenreRow: Codable, Hashable {

@@ -137,10 +137,27 @@ public sealed class WrenTVApi
 
     public Task<CalendarResponse> Calendar() => Get<CalendarResponse>("/api/calendar");
 
-    public Task<CollectionDetail> Collection(string id) => Get<CollectionDetail>($"/api/collections/{id}");
+    /// Collections whose names match, a franchise's among them.
+    public Task<List<WrenCollection>> SearchCollections(string q) => Get<List<WrenCollection>>("/api/collections", [("q", q)]);
+
+    /// sort is null for the collection's own order (and a big one's rows).
+    public Task<CollectionDetail> Collection(string id, string? sort = null) =>
+        Get<CollectionDetail>($"/api/collections/{id}", sort == null ? null : [("sort", sort)]);
 
     public Task<UserPrefs> Prefs() => Get<UserPrefs>("/api/me/prefs");
     public async Task<UserPrefs> SetPrefs(UserPrefs p) => Json.Parse<UserPrefs>((await Send(HttpMethod.Patch, "/api/me/prefs", body: p)).Body);
+
+    // Simkl: what's watched here is sent there, and its history imported.
+    public Task<SimklStatus> Simkl() => Get<SimklStatus>("/api/me/simkl");
+    public Task SimklLink() => Send(HttpMethod.Post, "/api/me/simkl/link");
+    public Task SimklCancelLink() => Send(HttpMethod.Delete, "/api/me/simkl/link");
+    public Task SimklUnlink() => Send(HttpMethod.Delete, "/api/me/simkl");
+    public Task SimklImport() => Send(HttpMethod.Post, "/api/me/simkl/import");
+    public Task SimklScrobble(bool on) => Send(HttpMethod.Patch, "/api/me/simkl", body: new { scrobble = on });
+
+    /// A TV waiting to be signed in with a code, and signing it in as the caller.
+    public Task<PairInfo> PairInfo(string code) => Get<PairInfo>($"/api/pair/{code}");
+    public Task ApprovePair(string code) => Send(HttpMethod.Post, $"/api/pair/{code}/approve");
 
     public Task<ItemDetail> Item(string id) => Get<ItemDetail>($"/api/items/{id}");
     public Task<Extras> Extras(string id) => Get<Extras>($"/api/items/{id}/extras");
@@ -192,7 +209,13 @@ public sealed class WrenTVApi
     public Task<Item> AddStreamTitle(int tmdbId, string mediaType) => Post<Item>("/api/streaming/titles", new { tmdbId, mediaType });
 
     // Layouts. Servers from before layouts answer 404.
-    public Task<LayoutResponse> Layout(string scope) => Get<LayoutResponse>($"/api/layouts/{scope}");
+    public Task<LayoutResponse> Layout(string scope, int offset = 0, int? limit = null)
+    {
+        var q = new List<(string, string)>();
+        if (offset > 0) q.Add(("offset", offset.ToString()));
+        if (limit != null) q.Add(("limit", limit.Value.ToString()));
+        return Get<LayoutResponse>($"/api/layouts/{scope}", q);
+    }
     public Task<HubResponse> Hub(string id) => Get<HubResponse>($"/api/hubs/{Uri.EscapeDataString(id)}");
 
     /// everyone edits the server's default (admins); otherwise the user's own layout.
