@@ -94,9 +94,6 @@ func BearerToken(r *http.Request) string {
 	if t := r.Header.Get("X-WrenTV-Token"); t != "" {
 		return t
 	}
-	if t := r.Header.Get("X-Haven-Token"); t != "" { // legacy clients
-		return t
-	}
 	return r.URL.Query().Get("token")
 }
 
@@ -113,11 +110,7 @@ func NewLocal(d *db.DB, signingKey string) *Local {
 
 func (l *Local) Mode() string { return "local" }
 
-// Tokens issued before the rename carry the Haven issuer and stay valid.
-const (
-	issuer       = "wrentv-local"
-	legacyIssuer = "haven-local"
-)
+const issuer = "wrentv-local"
 
 type claims struct {
 	jwt.RegisteredClaims
@@ -142,7 +135,7 @@ func (l *Local) Authenticate(ctx context.Context, token string) (*Principal, err
 	var c claims
 	_, err := jwt.ParseWithClaims(token, &c, func(t *jwt.Token) (any, error) { return l.key, nil },
 		jwt.WithValidMethods([]string{"HS256"}))
-	if err != nil || (c.Issuer != issuer && c.Issuer != legacyIssuer) {
+	if err != nil || c.Issuer != issuer {
 		return nil, ErrUnauthorized
 	}
 	u, err := l.db.UserByID(ctx, c.Subject)

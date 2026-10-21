@@ -1,8 +1,7 @@
 // Command wrentv runs the Wren TV media server.
 //
 //	wrentv                run in the foreground
-//	wrentv install        install as a system service (systemd / launchd / Windows service),
-//	                      replacing a Haven-era "haven" service if one is installed
+//	wrentv install        install as a system service (systemd / launchd / Windows service)
 //	wrentv uninstall|start|stop|restart|status
 //	wrentv version
 //
@@ -11,7 +10,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -90,9 +88,6 @@ func main() {
 			fmt.Println(map[service.Status]string{service.StatusRunning: "running", service.StatusStopped: "stopped"}[st])
 			return
 		case "install", "uninstall", "start", "stop", "restart":
-			if cmd == "install" {
-				removeLegacyService()
-			}
 			if err := service.Control(svc, cmd); err != nil {
 				fmt.Fprintf(os.Stderr, "%s failed: %v\n", cmd, err)
 				os.Exit(1)
@@ -160,40 +155,13 @@ func (p *program) Stop(s service.Service) error {
 	return nil
 }
 
-// removeLegacyService stops and uninstalls the service Haven installed under
-// the name "haven", so the new one can take over its port. Its data is left
-// for MigrateDataDir to adopt.
-func removeLegacyService() {
-	old, err := service.New(&program{}, &service.Config{Name: "haven"})
-	if err != nil {
-		return
-	}
-	if _, err := old.Status(); errors.Is(err, service.ErrNotInstalled) {
-		return
-	}
-	_ = old.Stop()
-	if err := old.Uninstall(); err != nil {
-		fmt.Fprintf(os.Stderr, "could not uninstall the old haven service: %v\n", err)
-		return
-	}
-	fmt.Println("wrentv: removed the old haven service")
-}
-
 func run(ctx context.Context, dataDir string, ready chan<- error) error {
-	dataDir, notes, err := config.MigrateDataDir(dataDir)
-	for _, n := range notes {
-		slog.Info("migrated from Haven", "change", n)
-	}
-	if err != nil {
-		ready <- err
-		return err
-	}
 	cfg, err := config.Load(dataDir)
 	if err != nil {
 		ready <- err
 		return err
 	}
-	slog.Info("starting Wren TV", "version", version, "data", dataDir, "listen", cfg.Listen, "auth", cfg.Auth.Mode)
+	slog.Info("starting Wren TV", "version", version, "data", dataDir, "listen", cfg.Listen)
 
 	d, err := db.Open(dataDir)
 	if err != nil {
@@ -260,28 +228,22 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 		Thumbs: thumbs.New(filepath.Join(cfg.DataDir, "cache", "thumbs"), cfg.Transcode.FFmpegPath),
 		Sys:    sysstat.Start(),
 	}
-	switch cfg.Auth.Mode {
-	case "supabase":
-		srv.Supa = auth.NewSupabase(d, cfg)
-		// Local accounts work alongside Wren TV accounts: admins can add
-		// username/password users who sign in by typing the server's address.
-		srv.Local = auth.NewLocal(d, cfg.Auth.SigningKey)
-		srv.Auth = auth.Either(srv.Local, srv.Supa)
-		if !srv.Supa.Claimed() {
-			if cfg.Auth.Supabase.ClaimCode == "" {
-				cfg.Auth.Supabase.ClaimCode = auth.NewClaimCode()
-				_ = cfg.Save()
-			}
-			slog.Warn("server is not claimed yet: open the web app, sign in and enter this claim code",
-				"claim_code", cfg.Auth.Supabase.ClaimCode)
+	srv.Supa = auth.NewSupabase(d, cfg)
+	// Local accounts work alongside Wren TV accounts: admins can add
+	// username/password users who sign in by typing the server's address.
+	srv.Local = auth.NewLocal(d, cfg.Auth.SigningKey)
+	srv.Auth = auth.Either(srv.Local, srv.Supa)
+	if !srv.Supa.Claimed() {
+		if cfg.Auth.Supabase.ClaimCode == "" {
+			cfg.Auth.Supabase.ClaimCode = auth.NewClaimCode()
+			_ = cfg.Save()
 		}
-		srv.Direct = direct.New(cfg, func() []string { return api.LocalURLs(cfg) }, func() { go srv.HeartbeatNow() })
-		go srv.Direct.Run(ctx)
-		go srv.RunHeartbeat(ctx)
-	default:
-		srv.Local = auth.NewLocal(d, cfg.Auth.SigningKey)
-		srv.Auth = srv.Local
+		slog.Warn("server is not claimed yet: open the web app, sign in and enter this claim code",
+			"claim_code", cfg.Auth.Supabase.ClaimCode)
 	}
+	srv.Direct = direct.New(cfg, func() []string { return api.LocalURLs(cfg) }, func() { go srv.HeartbeatNow() })
+	go srv.Direct.Run(ctx)
+	go srv.RunHeartbeat(ctx)
 	// TVs and other devices linked by code or QR code from a signed-in device.
 	srv.Devices = auth.NewDevices(d, cfg.Auth.SigningKey, srv.Local, srv.Supa)
 	srv.Auth = auth.WithDevices(srv.Auth, srv.Devices)

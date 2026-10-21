@@ -94,7 +94,6 @@ func (s *Server) Router() http.Handler {
 
 	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	r.Get("/api/server", s.handleServerInfo)
-	r.Post("/api/setup/owner", s.handleSetupOwner)
 	r.Post("/api/setup/claim", s.handleClaim)
 	r.Post("/api/auth/login", s.handleLogin)
 	r.Get("/api/images/{size}/{file}", func(w http.ResponseWriter, r *http.Request) {
@@ -297,9 +296,6 @@ func (s *Server) integrationAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("X-WrenTV-Key")
 		if key == "" {
-			key = r.Header.Get("X-Haven-Key") // legacy integrations
-		}
-		if key == "" {
 			key = auth.BearerToken(r)
 		}
 		if !auth.IntegrationKeyOK(key, s.Cfg.IntegrationKey) {
@@ -314,7 +310,7 @@ func (s *Server) integrationAuth(next http.Handler) http.Handler {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-WrenTV-Token, X-WrenTV-Key, X-WrenTV-Client, X-Haven-Token, X-Haven-Key, Range")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-WrenTV-Token, X-WrenTV-Key, X-WrenTV-Client, Range")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges, X-Subtitle-Complete")
 		if r.Method == http.MethodOptions {

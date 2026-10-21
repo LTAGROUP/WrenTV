@@ -103,7 +103,6 @@ async function render() {
   if (!srv) return;
 
   if (!state.session) {
-    if (!isSupabase() && srv.setupRequired) return viewSetupOwner();
     return viewSignIn();
   }
   if (isSupabase() && srv.setupRequired) return viewClaim();
@@ -213,20 +212,6 @@ function viewSignIn(mode = 'in') {
       await account.signIn(v.email.trim(), v.password);
     }
     render();
-  });
-}
-
-function viewSetupOwner() {
-  authCard(`<h2 style="margin-bottom:6px">Set up ${esc(state.server.name)}</h2>
-    <p class="muted">Create the owner account for this server.</p>
-    <form><div class="field"><label>Name</label><input name="displayName" required></div>
-    <div class="field"><label>Username</label><input name="username" autocomplete="username" required></div>
-    <div class="field"><label>Password</label><input name="password" type="password" minlength="8" autocomplete="new-password" required></div>
-    <p class="error" hidden></p><button class="btn primary lg" style="width:100%">Create owner</button></form>`);
-  bindForm(async (v) => {
-    await local.setupOwner(v.username, v.password, v.displayName);
-    state.server.setupRequired = false;
-    go('/manage/libraries');
   });
 }
 

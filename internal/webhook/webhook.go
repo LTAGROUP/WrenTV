@@ -79,13 +79,11 @@ func (s *Sender) post(h config.WebhookConfig, event string, body []byte) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "WrenTV-Server")
 	req.Header.Set("X-WrenTV-Event", event)
-	req.Header.Set("X-Haven-Event", event) // legacy receivers
 	if h.Secret != "" {
 		mac := hmac.New(sha256.New, []byte(h.Secret))
 		mac.Write(body)
 		sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 		req.Header.Set("X-WrenTV-Signature", sig)
-		req.Header.Set("X-Haven-Signature", sig)
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {

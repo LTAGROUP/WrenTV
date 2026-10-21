@@ -156,7 +156,7 @@ func (m *Manager) sync(ctx context.Context) {
 func (m *Manager) check(ctx context.Context) Status {
 	rc := m.cfg.RemoteAccess
 	sb := m.cfg.Auth.Supabase
-	if !rc.Enabled || m.cfg.Auth.Mode != "supabase" || sb.ServerID == "" {
+	if !rc.Enabled || sb.ServerID == "" {
 		return Status{Enabled: rc.Enabled, LocalURLs: []string{}}
 	}
 	st := Status{Enabled: true, LocalURLs: []string{}}

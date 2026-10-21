@@ -78,7 +78,6 @@ func TestCheckPublishesHTTPSAddresses(t *testing.T) {
 	defer api.Close()
 
 	cfg := &config.Config{DataDir: t.TempDir(), Listen: ":32500"}
-	cfg.Auth.Mode = "supabase"
 	cfg.Auth.Supabase.ServerID, cfg.Auth.Supabase.ServerSecret = "srv", "sec"
 	cfg.RemoteAccess = config.RemoteAccessConfig{Enabled: true, PublicPort: 40000, API: api.URL}
 	m := New(cfg, func() []string { return []string{"http://192.168.1.20:32500", "http://10.0.0.5:32500"} }, nil)

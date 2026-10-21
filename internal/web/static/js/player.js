@@ -38,7 +38,7 @@ class Player {
   constructor(itemId, opts) {
     this.itemId = itemId;
     this.opts = opts;
-    this.quality = lsGet('wrentv.quality', lsGet('haven.quality', 'orig'));
+    this.quality = lsGet('wrentv.quality', 'orig');
     this.audioIndex = undefined;
     // A version the viewer picked sticks; otherwise the server picks the best
     // one for the quality setting (e.g. the 1080p file rather than transcoding 4K).

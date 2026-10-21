@@ -1,7 +1,7 @@
 /bin/
 /dist/
 # Local config / data (contains secrets like API keys)
-haven.yaml
+wrentv.yaml
 *.db
 *.db-wal
 *.db-shm

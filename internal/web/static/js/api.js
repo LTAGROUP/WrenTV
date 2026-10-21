@@ -14,14 +14,12 @@ export const state = {
   user: null,        // /api/me user
   libraryIds: null,
   // local account: {token}; Wren TV account: {access_token, refresh_token, expires_at, user}
-  // Sessions saved before the rename live under the old haven.* key.
-  session: LS.get('wrentv.session') ?? LS.get('haven.session'),
+  session: LS.get('wrentv.session'),
 };
 
 export function saveSession(s) {
   state.session = s;
   LS.set('wrentv.session', s);
-  LS.set('haven.session', null);
 }
 
 export const isSupabase = () => state.server?.authMode === 'supabase';
@@ -120,10 +118,6 @@ export const img = (path, size = 'w342') => (path ? `/api/images/${size}/${path.
 export const local = {
   async login(username, password) {
     const d = await api('/api/auth/login', { method: 'POST', body: { username, password, device: 'Web' } });
-    saveSession({ token: d.token });
-  },
-  async setupOwner(username, password, displayName) {
-    const d = await api('/api/setup/owner', { method: 'POST', body: { username, password, displayName, device: 'Web' } });
     saveSession({ token: d.token });
   },
 };

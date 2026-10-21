@@ -1,6 +1,5 @@
 // Package config loads Wren TV server configuration from a YAML file in the
-// data directory, with environment-variable overrides (WRENTV_*, or the
-// legacy HAVEN_*).
+// data directory, with environment-variable overrides (WRENTV_*).
 package config
 
 import (
@@ -72,10 +71,6 @@ const (
 )
 
 type AuthConfig struct {
-	// Mode is "supabase" (Wren TV accounts: sign in once, link devices,
-	// share servers; the default) or "local" (accounts stored on this
-	// server only).
-	Mode string `yaml:"mode"`
 	// SigningKey signs locally issued tokens. Generated on first run.
 	SigningKey string         `yaml:"signing_key"`
 	Supabase   SupabaseConfig `yaml:"supabase"`
@@ -309,7 +304,6 @@ func defaults() Config {
 	return Config{
 		ServerName:   host,
 		Listen:       ":32500",
-		Auth:         AuthConfig{Mode: "supabase"},
 		RemoteAccess: RemoteAccessConfig{Enabled: true, UPnP: true},
 		Metadata:     MetadataConfig{Language: "en-US", Workers: 8},
 		Transcode:    TranscodeConfig{FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HWAccel: "auto", VAAPIDevice: "/dev/dri/renderD128"},
@@ -420,7 +414,6 @@ func (c *Config) applyEnv() {
 	}
 	set("LISTEN", &c.Listen)
 	set("SERVER_NAME", &c.ServerName)
-	set("AUTH_MODE", &c.Auth.Mode)
 	set("TMDB_API_KEY", &c.Metadata.TMDBAPIKey)
 	set("OMDB_API_KEY", &c.Metadata.OMDbAPIKey)
 	set("FFMPEG", &c.Transcode.FFmpegPath)

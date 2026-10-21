@@ -112,18 +112,18 @@ Full docs: [wrentv.com/docs](https://wrentv.com/docs/).
 
 ### Signing in
 
-- **Wren TV accounts** (the default, see [below](#wren-tv-accounts)): people sign in with their email, and the apps
-  find their servers automatically. Owners share by email. Admins can still add local accounts under
-  **Sharing → Local accounts** for people who don't want a Wren TV account. Those users connect by address and sign
-  in with their username.
-- **Local accounts only** (`auth.mode: local`): the first person to open the server creates the owner account.
-  Admins add everyone else under **Users**. In the apps, choose **Connect to a server by address**, enter the
-  address, then sign in with the username and password.
+- **Wren TV accounts** (see [below](#wren-tv-accounts)): people sign in with their email, and the apps find their
+  servers automatically. Owners share by email.
+- **Local accounts**, if you want them: admins add them under **Sharing → Local accounts** for people who don't want
+  a Wren TV account. In the apps, choose **Connect to a server by address**, enter the address, then sign in with
+  the username and password.
+
+Both work on every server, so there's nothing to switch.
 
 ### First run from the command line
 
 ```bash
-curl -X POST localhost:32500/api/setup/owner -d '{"username":"me","password":"…"}'      # → {token}
+curl -X POST localhost:32500/api/auth/login -d '{"username":"me","password":"…"}'       # a local admin → {token}
 curl -X POST localhost:32500/api/libraries -H "Authorization: Bearer $TOKEN" \
      -d '{"name":"Movies","type":"movies","paths":["/media/Movies"]}'
 ```
@@ -200,7 +200,7 @@ scanner:
 ```
 
 Environment overrides: `WRENTV_DATA_DIR`, `WRENTV_LISTEN`, `WRENTV_SERVER_NAME`, `WRENTV_PUBLIC_URL`,
-`WRENTV_AUTH_MODE`, `WRENTV_TMDB_API_KEY`,
+`WRENTV_TMDB_API_KEY`,
 `WRENTV_FFMPEG`, `WRENTV_FFPROBE`, `WRENTV_HWACCEL`, `WRENTV_SCAN_POLL_SEC`, `WRENTV_STREAMING`,
 `WRENTV_TORBOX_API_KEY`, `WRENTV_ALLDEBRID_API_KEY`, `WRENTV_REALDEBRID_API_KEY`,
 `WRENTV_REMOTE_ACCESS`, `WRENTV_PUBLIC_PORT`, `WRENTV_ACME_DIRECTORY`, `WRENTV_DIRECT_API`.

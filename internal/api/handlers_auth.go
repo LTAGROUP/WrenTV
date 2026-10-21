@@ -13,19 +13,13 @@ import (
 )
 
 func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
-	setup := false
-	switch {
-	case s.Supa != nil:
-		setup = !s.Supa.Claimed()
-	case s.Local != nil:
-		n, _ := s.DB.CountUsers(r.Context())
-		setup = n == 0
-	}
+	// Every server uses Wren TV accounts; setupRequired means it's unclaimed.
+	setup := s.Supa != nil && !s.Supa.Claimed()
 	info := map[string]any{
 		"name":          s.Cfg.ServerName,
 		"machineId":     s.Cfg.MachineID,
 		"version":       s.Version,
-		"authMode":      s.Auth.Mode(),
+		"authMode":      "supabase",
 		"setupRequired": setup,
 		"localAccounts": s.Local != nil,
 		"streaming":     s.Streaming.Active(),
@@ -42,39 +36,6 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 type userResponse struct {
 	*db.User
 	Role string `json:"role"`
-}
-
-// handleSetupOwner creates the first (admin) account in local mode.
-func (s *Server) handleSetupOwner(w http.ResponseWriter, r *http.Request) {
-	if s.Local == nil || s.Supa != nil {
-		writeErr(w, http.StatusBadRequest, "this server uses Wren TV accounts; claim it instead")
-		return
-	}
-	var req struct {
-		Username    string `json:"username"`
-		Password    string `json:"password"`
-		DisplayName string `json:"displayName"`
-		Device      string `json:"device"`
-	}
-	if err := decode(r, &req); err != nil {
-		writeErr(w, 400, err.Error())
-		return
-	}
-	if n, _ := s.DB.CountUsers(r.Context()); n > 0 {
-		writeErr(w, http.StatusConflict, "server is already set up")
-		return
-	}
-	u, err := s.createLocalUser(r, req.Username, req.Password, req.DisplayName, true)
-	if err != nil {
-		writeErr(w, 400, err.Error())
-		return
-	}
-	tok, err := s.Local.Issue(u, req.Device)
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"token": tok, "user": userResponse{u, "owner"}})
 }
 
 func (s *Server) createLocalUser(r *http.Request, username, password, display string, admin bool) (*db.User, error) {
