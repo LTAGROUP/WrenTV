@@ -158,16 +158,19 @@ func (s *Server) handleDiscoverHome(w http.ResponseWriter, r *http.Request) {
 }
 
 // recentlyWatched is the movies and shows the user played most recently,
-// newest first.
+// newest first. Like Continue Watching, a play only counts once it's past
+// the user's Continue Watching threshold (or finished), so a title opened
+// for a few seconds doesn't drive Because You Watched.
 func (s *Server) recentlyWatched(ctx context.Context, userID string, ids []string, limit int) []*db.Item {
 	out := []*db.Item{}
 	if len(ids) == 0 {
 		return out
 	}
+	prefs, _ := s.DB.GetPrefs(ctx, userID)
 	rows, err := s.DB.QueryContext(ctx, `SELECT CASE WHEN i.kind='episode' THEN i.show_id ELSE i.id END t, MAX(w.updated_at) m
 		FROM watch_state w JOIN items i ON i.id=w.item_id
-		WHERE w.user_id=? AND i.kind IN ('movie','episode') AND (w.watched=1 OR w.position>0)
-		GROUP BY t ORDER BY m DESC LIMIT ?`, userID, limit*2)
+		WHERE w.user_id=? AND i.kind IN ('movie','episode') AND (w.watched=1 OR w.position > ?)
+		GROUP BY t ORDER BY m DESC LIMIT ?`, userID, prefs.ContinueAfterSeconds(), limit*2)
 	if err != nil {
 		return out
 	}
