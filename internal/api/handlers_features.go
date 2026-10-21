@@ -771,7 +771,7 @@ func (s *Server) syncCollection(ctx context.Context, c *db.Collection) error {
 		if err != nil {
 			return err
 		}
-		if n := titleCap(c, maxExternal); len(ts) > n {
+		if n := titleCap(c, 0); n > 0 && len(ts) > n {
 			ts = ts[:n]
 		}
 		s.withPosters(ctx, ts)
@@ -803,7 +803,7 @@ func (s *Server) syncCollection(ctx context.Context, c *db.Collection) error {
 			c.BackdropPath = f.BackdropPath
 		}
 	case "list":
-		l, err := s.TMDB.List(ctx, ru.SourceID, titleCap(c, maxExternal))
+		l, err := s.TMDB.List(ctx, ru.SourceID, titleCap(c, 0))
 		if err != nil {
 			return err
 		}

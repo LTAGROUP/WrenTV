@@ -17,16 +17,15 @@ import (
 
 // Lists from outside TMDB (MDBList, Simkl) name their titles by TMDB ID;
 // posters come from TMDB. A list keeps up to the collection's "show at most"
-// count of titles, or maxExternal when that's unset.
-const maxExternal = 1000
+// count of titles, or all of them when that's unset.
 
 // chartDefault is how many titles a chart keeps when "show at most" is unset.
 const chartDefault = 100
 
-// titleCap is how many titles a synced collection keeps.
+// titleCap is how many titles a synced collection keeps; 0 keeps them all.
 func titleCap(c *db.Collection, fallback int) int {
 	if c.ItemLimit > 0 {
-		return min(c.ItemLimit, maxExternal)
+		return c.ItemLimit
 	}
 	return fallback
 }
