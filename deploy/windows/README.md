@@ -10,7 +10,7 @@
    & "C:\Program Files\WrenTV\wrentv.exe" start
    ```
 
-   This registers a Windows service named `wrentv` (and removes an old `haven` service) that starts automatically.
+   This registers a Windows service named `wrentv` that starts automatically.
 4. Edit `C:\ProgramData\WrenTV\wrentv.yaml` (created on first start) and set
    `transcode.ffmpeg_path` / `ffprobe_path` if ffmpeg is not on `PATH`, then
    `wrentv.exe restart`.

@@ -56,7 +56,7 @@ func NewSupabase(d *db.DB, cfg *config.Config) *Supabase {
 
 func (s *Supabase) Mode() string { return "supabase" }
 
-func (s *Supabase) base() string { return strings.TrimSuffix(s.cfg.Auth.Supabase.URL, "/") }
+func (s *Supabase) base() string { return config.SupabaseURL }
 
 func (s *Supabase) Claimed() bool { return s.cfg.Auth.Supabase.ServerID != "" }
 
@@ -94,7 +94,7 @@ func (s *Supabase) verify(ctx context.Context, token string) (id, email, name st
 	}
 	s.mu.Unlock()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.base()+"/auth/v1/user", nil)
-	req.Header.Set("apikey", s.cfg.Auth.Supabase.PublishableKey)
+	req.Header.Set("apikey", config.SupabasePublishableKey)
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := s.http.Do(req)
 	if err != nil {
@@ -288,7 +288,7 @@ func (s *Supabase) Heartbeat(ctx context.Context, urls []string, remoteURL, vers
 func (s *Supabase) rpc(ctx context.Context, userToken, fn string, args any, out any) error {
 	body, _ := json.Marshal(args)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, s.base()+"/rest/v1/rpc/"+fn, bytes.NewReader(body))
-	req.Header.Set("apikey", s.cfg.Auth.Supabase.PublishableKey)
+	req.Header.Set("apikey", config.SupabasePublishableKey)
 	req.Header.Set("Content-Type", "application/json")
 	if userToken != "" {
 		req.Header.Set("Authorization", "Bearer "+userToken)

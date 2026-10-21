@@ -262,11 +262,6 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	}
 	switch cfg.Auth.Mode {
 	case "supabase":
-		if cfg.Auth.Supabase.URL == "" || cfg.Auth.Supabase.PublishableKey == "" {
-			err := errors.New("auth.mode is supabase but auth.supabase.url / publishable_key are not set")
-			ready <- err
-			return err
-		}
 		srv.Supa = auth.NewSupabase(d, cfg)
 		// Local accounts work alongside Wren TV accounts: admins can add
 		// username/password users who sign in by typing the server's address.

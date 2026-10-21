@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/LTAGROUP/wrentv/internal/auth"
+	"github.com/LTAGROUP/wrentv/internal/config"
 	"github.com/LTAGROUP/wrentv/internal/db"
 )
 
@@ -32,7 +33,7 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 		"localUrls":     s.advertisedLocalURLs(),
 	}
 	if s.Supa != nil {
-		info["supabase"] = map[string]string{"url": s.Cfg.Auth.Supabase.URL, "publishableKey": s.Cfg.Auth.Supabase.PublishableKey}
+		info["supabase"] = map[string]string{"url": config.SupabaseURL, "publishableKey": config.SupabasePublishableKey}
 		info["serverId"] = s.Cfg.Auth.Supabase.ServerID
 	}
 	writeJSON(w, 200, info)

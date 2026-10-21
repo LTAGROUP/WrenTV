@@ -64,9 +64,17 @@ type MarkersConfig struct {
 	Fingerprint bool `yaml:"fingerprint"`
 }
 
+// The Wren TV account service. Every server uses this one; the publishable
+// key is public (every app ships it) and row-level security guards the data.
+const (
+	SupabaseURL            = "https://buycndonhmcafzzcvmgu.supabase.co"
+	SupabasePublishableKey = "sb_publishable_vNiXbucy_8L_RQBFPoBPvA_HNZv1i15"
+)
+
 type AuthConfig struct {
-	// Mode is "local" (accounts stored on this server) or "supabase"
-	// (Wren TV accounts: sign in once, link devices, share servers).
+	// Mode is "supabase" (Wren TV accounts: sign in once, link devices,
+	// share servers; the default) or "local" (accounts stored on this
+	// server only).
 	Mode string `yaml:"mode"`
 	// SigningKey signs locally issued tokens. Generated on first run.
 	SigningKey string         `yaml:"signing_key"`
@@ -74,8 +82,6 @@ type AuthConfig struct {
 }
 
 type SupabaseConfig struct {
-	URL            string `yaml:"url"`
-	PublishableKey string `yaml:"publishable_key"`
 	// ServerID and ServerSecret are filled in when the server is claimed.
 	ServerID     string `yaml:"server_id"`
 	ServerSecret string `yaml:"server_secret"`
@@ -303,7 +309,7 @@ func defaults() Config {
 	return Config{
 		ServerName:   host,
 		Listen:       ":32500",
-		Auth:         AuthConfig{Mode: "local"},
+		Auth:         AuthConfig{Mode: "supabase"},
 		RemoteAccess: RemoteAccessConfig{Enabled: true, UPnP: true},
 		Metadata:     MetadataConfig{Language: "en-US", Workers: 8},
 		Transcode:    TranscodeConfig{FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HWAccel: "auto", VAAPIDevice: "/dev/dri/renderD128"},
@@ -415,8 +421,6 @@ func (c *Config) applyEnv() {
 	set("LISTEN", &c.Listen)
 	set("SERVER_NAME", &c.ServerName)
 	set("AUTH_MODE", &c.Auth.Mode)
-	set("SUPABASE_URL", &c.Auth.Supabase.URL)
-	set("SUPABASE_PUBLISHABLE_KEY", &c.Auth.Supabase.PublishableKey)
 	set("TMDB_API_KEY", &c.Metadata.TMDBAPIKey)
 	set("OMDB_API_KEY", &c.Metadata.OMDbAPIKey)
 	set("FFMPEG", &c.Transcode.FFmpegPath)

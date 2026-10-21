@@ -112,13 +112,13 @@ Full docs: [wrentv.com/docs](https://wrentv.com/docs/).
 
 ### Signing in
 
-- **Local accounts** (the default): the first person to open the server creates the owner account. Admins add
-  everyone else under **Users**. In the apps, choose **Connect to a server by address**, enter the address, then
-  sign in with the username and password.
-- **Wren TV accounts** (optional, see [below](#accounts-with-supabase-optional)): people sign in with their email,
-  and the apps find their servers automatically. Owners share by email. Admins can still add local accounts under
+- **Wren TV accounts** (the default, see [below](#wren-tv-accounts)): people sign in with their email, and the apps
+  find their servers automatically. Owners share by email. Admins can still add local accounts under
   **Sharing → Local accounts** for people who don't want a Wren TV account. Those users connect by address and sign
   in with their username.
+- **Local accounts only** (`auth.mode: local`): the first person to open the server creates the owner account.
+  Admins add everyone else under **Users**. In the apps, choose **Connect to a server by address**, enter the
+  address, then sign in with the username and password.
 
 ### First run from the command line
 
@@ -145,9 +145,8 @@ listen: ":32500"
 public_url: ""                 # externally reachable URL
 integration_key: wtv_…         # generated; for backend services (X-WrenTV-Key)
 auth:
-  mode: local                  # local | supabase (local accounts work in both)
-  supabase: { url: "", publishable_key: "" }
-remote_access:                 # automatic HTTPS addresses (supabase mode only)
+  mode: supabase               # supabase (Wren TV accounts) | local (local accounts work in both)
+remote_access:                 # automatic HTTPS addresses (Wren TV accounts only)
   enabled: true
   upnp: true                   # forward a port with UPnP / NAT-PMP
   public_port: 0               # a port you forwarded by hand (replaces UPnP)
@@ -201,30 +200,10 @@ scanner:
 ```
 
 Environment overrides: `WRENTV_DATA_DIR`, `WRENTV_LISTEN`, `WRENTV_SERVER_NAME`, `WRENTV_PUBLIC_URL`,
-`WRENTV_AUTH_MODE`, `WRENTV_SUPABASE_URL`, `WRENTV_SUPABASE_PUBLISHABLE_KEY`, `WRENTV_TMDB_API_KEY`,
+`WRENTV_AUTH_MODE`, `WRENTV_TMDB_API_KEY`,
 `WRENTV_FFMPEG`, `WRENTV_FFPROBE`, `WRENTV_HWACCEL`, `WRENTV_SCAN_POLL_SEC`, `WRENTV_STREAMING`,
 `WRENTV_TORBOX_API_KEY`, `WRENTV_ALLDEBRID_API_KEY`, `WRENTV_REALDEBRID_API_KEY`,
 `WRENTV_REMOTE_ACCESS`, `WRENTV_PUBLIC_PORT`, `WRENTV_ACME_DIRECTORY`, `WRENTV_DIRECT_API`.
-
-## Upgrading from Haven
-
-Wren TV was called Haven. Upgrades keep your data:
-
-- On first start, the old default data directory (`Application Support/Haven`, `/var/lib/haven`,
-  `~/.local/share/haven`, `C:\ProgramData\Haven`) is moved to the new one, with a symlink left at the
-  old path; if it can't be moved it is used in place. `haven.yaml` and `haven.db` are renamed to
-  `wrentv.yaml` and `wrentv.db`.
-- `HAVEN_*` environment variables still work (`WRENTV_*` wins when both are set).
-- `wrentv install` stops and uninstalls an old `haven` service first.
-- Sign-in tokens, `hvn_` integration keys and `X-Haven-*` request headers keep working; webhooks send
-  both `X-WrenTV-*` and `X-Haven-*` headers.
-- Docker: the container and image are now `wrentv`; keep mounting the same `/config` volume.
-- Hand-installed systemd unit (`haven.service`, which runs as user `haven`): the new unit runs as `wrentv`,
-  which can't move the old directory itself. Run `systemctl disable --now haven`, create the `wrentv` user,
-  then `mv /var/lib/haven /var/lib/wrentv && chown -R wrentv:wrentv /var/lib/wrentv` before enabling
-  `wrentv.service`.
-
-Back up the data directory before upgrading.
 
 ## Streaming
 
@@ -291,11 +270,11 @@ Authenticate with `Authorization: Bearer <token>` (from `/api/auth/login`).
 - Admin: `/api/libraries` (CRUD and scan), `/api/users` (with per-user `limits`), `/api/admin/status`, `/api/admin/settings`,
   `/api/admin/downloads`, `/api/items/{id}/server-download`, `/api/items/{id}/streams`
 
-## Accounts with Supabase (optional)
+## Wren TV accounts
 
-`supabase/migrations/` contains the account backend: profiles, server claiming, and sharing and invites.
-Apply the migrations to your Supabase project, then set `auth.mode: supabase` with your project URL and publishable
-key. Open the web app, sign in, and claim the server with the claim code printed in the server log.
+Every server signs people in with the hosted Wren TV account service; there's nothing to set up. Open the web app,
+sign in, and claim the server with the claim code printed in the server log. (`supabase/migrations/` is that
+service's schema: profiles, server claiming, and sharing and invites.)
 
 Local accounts keep working in this mode. Admins create them under **Sharing → Local accounts** (or `POST /api/users`),
 and those people sign in by entering the server's address in the app and then their username and password.
