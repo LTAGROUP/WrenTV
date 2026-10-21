@@ -196,6 +196,24 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
         }
     }
     suspend fun discoverHome(): DiscoverHome = get("/api/discover/home")
+
+    /** A page's rows: "home", "movies", "shows" or "library:<id>". */
+    suspend fun layout(scope: String): LayoutPage = get("/api/layouts/$scope")
+    suspend fun hub(id: String): HubPage = get("/api/hubs/${java.net.URLEncoder.encode(id, "UTF-8").replace("+", "%20")}")
+
+    /** [default] edits everyone's default (admins); otherwise the user's own layout. */
+    suspend fun layoutConfig(scope: String, default: Boolean): LayoutConfig =
+        get("/api/layouts/$scope/config", mapOf("target" to if (default) "default" else "me"))
+    suspend fun setLayout(scope: String, default: Boolean, entries: List<LayoutEntry>) {
+        send("PUT", "/api/layouts/$scope", mapOf("target" to if (default) "default" else "me"), buildJsonObject {
+            put("entries", kotlinx.serialization.json.JsonArray(entries.map {
+                buildJsonObject { put("type", it.type); put("ref", it.ref); put("hidden", it.hidden) }
+            }))
+        })
+    }
+    suspend fun resetLayout(scope: String, default: Boolean) {
+        send("DELETE", "/api/layouts/$scope", mapOf("target" to if (default) "default" else "me"))
+    }
     suspend fun catalog(type: String, sort: String, genre: Int?, page: Int): CatalogPage =
         get("/api/discover/browse", mapOf("type" to type, "sort" to sort, "genre" to (genre?.toString() ?: ""), "page" to page.toString()))
 

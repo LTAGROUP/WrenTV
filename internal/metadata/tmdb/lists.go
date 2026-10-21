@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -120,15 +122,43 @@ func (c *Client) Genres(ctx context.Context, mediaType string) ([]Genre, error) 
 // "popular", "top_rated" or "new"; genreID 0 means any genre. Returns the
 // page's titles and the number of pages TMDB will serve.
 func (c *Client) Discover(ctx context.Context, mediaType, sort string, genreID, page int) ([]Title, int, error) {
+	q := DiscoverQuery{Sort: sort, Page: page}
+	if genreID > 0 {
+		q.Genres = []int{genreID}
+	}
+	return c.DiscoverWith(ctx, mediaType, q)
+}
+
+// DiscoverQuery narrows the catalog. Genres and Providers match any of
+// theirs; Providers are watch providers in the client's region.
+type DiscoverQuery struct {
+	Sort      string
+	Genres    []int
+	Providers []int
+	Page      int
+}
+
+func joinInts(v []int, sep string) string {
+	parts := make([]string, len(v))
+	for i, n := range v {
+		parts[i] = fmt.Sprint(n)
+	}
+	return strings.Join(parts, sep)
+}
+
+func (c *Client) DiscoverWith(ctx context.Context, mediaType string, q DiscoverQuery) ([]Title, int, error) {
 	date := "primary_release_date"
 	if mediaType == "tv" {
 		date = "first_air_date"
 	}
-	params := url.Values{"page": {fmt.Sprint(page)}, "include_adult": {"false"}}
-	switch sort {
+	params := url.Values{"page": {fmt.Sprint(max(1, q.Page))}, "include_adult": {"false"}}
+	switch q.Sort {
 	case "top_rated":
 		params.Set("sort_by", "vote_average.desc")
 		params.Set("vote_count.gte", "500")
+		if len(q.Providers) > 0 || len(q.Genres) > 0 {
+			params.Set("vote_count.gte", "200")
+		}
 	case "new":
 		params.Set("sort_by", date+".desc")
 		params.Set(date+".lte", time.Now().Format("2006-01-02"))
@@ -136,8 +166,13 @@ func (c *Client) Discover(ctx context.Context, mediaType, sort string, genreID, 
 	default:
 		params.Set("sort_by", "popularity.desc")
 	}
-	if genreID > 0 {
-		params.Set("with_genres", fmt.Sprint(genreID))
+	if len(q.Genres) > 0 {
+		params.Set("with_genres", joinInts(q.Genres, "|"))
+	}
+	if len(q.Providers) > 0 {
+		params.Set("with_watch_providers", joinInts(q.Providers, "|"))
+		params.Set("watch_region", c.Region())
+		params.Set("with_watch_monetization_types", "flatrate")
 	}
 	var r struct {
 		Results    []Title `json:"results"`
@@ -151,4 +186,32 @@ func (c *Client) Discover(ctx context.Context, mediaType, sort string, genreID, 
 	}
 	// TMDB never serves past page 500.
 	return r.Results, min(r.TotalPages, 500), nil
+}
+
+// Region is the country streaming availability is looked up in, from the
+// metadata language ("en-GB" → "GB"); "US" when it names none.
+func (c *Client) Region() string {
+	if i := strings.LastIndex(c.language, "-"); i > 0 && len(c.language)-i == 3 {
+		return strings.ToUpper(c.language[i+1:])
+	}
+	return "US"
+}
+
+// WatchProvider is a streaming service TMDB tracks.
+type WatchProvider struct {
+	ID       int    `json:"provider_id"`
+	Name     string `json:"provider_name"`
+	LogoPath string `json:"logo_path"`
+	Priority int    `json:"display_priority"`
+}
+
+// WatchProviders lists the movie streaming services in the client's region,
+// most prominent first.
+func (c *Client) WatchProviders(ctx context.Context) ([]WatchProvider, error) {
+	var r struct {
+		Results []WatchProvider `json:"results"`
+	}
+	err := c.get(ctx, "/watch/providers/movie", url.Values{"watch_region": {c.Region()}}, 7*24*time.Hour, &r)
+	sort.SliceStable(r.Results, func(i, j int) bool { return r.Results[i].Priority < r.Results[j].Priority })
+	return r.Results, err
 }

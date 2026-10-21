@@ -18,7 +18,6 @@ sealed interface Route {
     data object Movies : Route { override val key = "movies" }
     data object Shows : Route { override val key = "shows" }
     data object Collections : Route { override val key = "collections" }
-    data object Genres : Route { override val key = "genres" }
     data object Search : Route { override val key = "search" }
     data object LiveTv : Route { override val key = "livetv" }
     data object Downloads : Route { override val key = "downloads" }
@@ -31,11 +30,15 @@ sealed interface Route {
     data object Users : Route { override val key = "users" }
     data object ManageLibraries : Route { override val key = "manage-libraries" }
     data object ServerSettings : Route { override val key = "server-settings" }
+    data object Layouts : Route { override val key = "layouts" }
+    data class LayoutEditor(val scope: String, val title: String) : Route { override val key = "layout-editor:$scope" }
 
     // Pushed pages.
     data class Detail(val itemId: String, val seed: Item? = null) : Route { override val key = "item:$itemId" }
     data class Collection(val collection: WrenCollection) : Route { override val key = "collection:${collection.id}" }
     data class GenreItems(val genre: String, val libraryId: String? = null) : Route { override val key = "genre:$genre:$libraryId" }
+    data class Hub(val id: String, val name: String) : Route { override val key = "hub:$id" }
+    /** Every movie or show TMDB has, as a grid, opened from the Movies and TV Shows pages. */
     data class StreamTitle(val tmdbId: Int, val mediaType: String, val title: String) : Route { override val key = "stream:$mediaType:$tmdbId" }
     data class Trailer(val youtubeKey: String, val title: String) : Route { override val key = "trailer:$youtubeKey" }
     data class Player(val target: PlayTarget) : Route { override val key = "player:${target.itemId}" }

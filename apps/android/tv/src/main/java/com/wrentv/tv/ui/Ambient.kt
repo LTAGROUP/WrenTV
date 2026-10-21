@@ -38,6 +38,7 @@ import coil3.request.allowHardware
 import coil3.toBitmap
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import com.wrentv.tv.ui.screens.HeroEntry
 
 /**
  * The focused title's artwork, shown behind Home, Collections and library
@@ -50,7 +51,15 @@ class AmbientState {
     var path by mutableStateOf<String?>(null)
         private set
 
-    fun show(route: String, backdrop: String?) {
+    /** The focused title, for a cinematic page's hero. Unlike the art, it changes at once. */
+    var entry by mutableStateOf<HeroEntry?>(null)
+        private set
+
+    fun show(route: String, backdrop: String?, entry: HeroEntry? = null) {
+        if (entry != null) {
+            this.route = route
+            this.entry = entry
+        }
         if (backdrop.isNullOrEmpty()) return
         this.route = route
         path = backdrop
@@ -61,10 +70,10 @@ val LocalAmbient = staticCompositionLocalOf { AmbientState() }
 
 /** Makes a card's backdrop the page's while it has focus. */
 @Composable
-fun Modifier.ambient(backdrop: String?): Modifier {
+fun Modifier.ambient(backdrop: String?, entry: (() -> HeroEntry)? = null): Modifier {
     val ambient = LocalAmbient.current
     val route = LocalRouteKey.current
-    return onFocusChanged { if (it.hasFocus) ambient.show(route, backdrop) }
+    return onFocusChanged { if (it.hasFocus) ambient.show(route, backdrop, entry?.invoke()) }
 }
 
 /**
@@ -81,7 +90,11 @@ fun AmbientBackdrop(routeKey: String) {
     // Skimming along a row shouldn't flash every poster's art.
     LaunchedEffect(routeKey) {
         snapshotFlow { if (ambient.route == routeKey) ambient.path else null }.collectLatest {
-            if (it != null) delay(260)
+            if (it != null) {
+                // Start fetching now, so the art is ready when the pause ends.
+                api?.imageUrl(it, "w1280")?.let { u -> SingletonImageLoader.get(context).enqueue(ImageRequest.Builder(context).data(u).build()) }
+                delay(260)
+            }
             shown = it
         }
     }
@@ -110,8 +123,12 @@ fun AmbientBackdrop(routeKey: String) {
     }
 }
 
+private val tints = object : android.util.LruCache<String, Color>(200) {}
+
 /** The art's main colour, favouring saturated pixels, kept dark enough for white text. */
-private suspend fun dominantColor(context: Context, url: String): Color? = runCatching {
+private suspend fun dominantColor(context: Context, url: String): Color? = tints.get(url) ?: extractColor(context, url)?.also { tints.put(url, it) }
+
+private suspend fun extractColor(context: Context, url: String): Color? = runCatching {
     val req = ImageRequest.Builder(context).data(url).size(32, 18).allowHardware(false).build()
     val bmp = (SingletonImageLoader.get(context).execute(req) as? SuccessResult)?.image?.toBitmap() ?: return null
     var r = 0.0; var g = 0.0; var b = 0.0; var w = 0.0

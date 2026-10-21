@@ -51,7 +51,11 @@ import com.wrentv.tv.ui.rememberFocus
 import com.wrentv.tv.ui.rememberLoaded
 
 @Composable
-fun HomeScreen() {
+fun HomeScreen() = LayoutPageScreen("home") { ClassicHomeScreen() }
+
+/** Home on servers from before layouts. */
+@Composable
+private fun ClassicHomeScreen() {
     val state = LocalAppState.current
     // Servers from before discovery don't have its endpoint.
     var unsupported by remember { mutableStateOf(false) }

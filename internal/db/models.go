@@ -128,6 +128,9 @@ func (d *DB) UpdateUserLimits(ctx context.Context, id string, l UserLimits) erro
 }
 
 func (d *DB) DeleteUser(ctx context.Context, id string) error {
+	if _, err := d.ExecContext(ctx, `DELETE FROM layouts WHERE user_id=? AND user_id != ''`, id); err != nil {
+		return err
+	}
 	_, err := d.ExecContext(ctx, `DELETE FROM users WHERE id=?`, id)
 	return err
 }

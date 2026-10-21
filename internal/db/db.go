@@ -354,6 +354,37 @@ var migrations = []string{
 	// Collections shown as rows on their library's page, in their own order.
 	`ALTER TABLE collections ADD COLUMN show_in_library INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE collections ADD COLUMN library_order INTEGER NOT NULL DEFAULT 0;`,
+	// Hubs (a genre, a streaming service: a page of shelves), the categories
+	// that group them into one row, and page layouts: the admin's default
+	// (user_id '') and each user's own.
+	`CREATE TABLE hubs (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		kind TEXT NOT NULL DEFAULT 'custom',
+		tagline TEXT NOT NULL DEFAULT '',
+		backdrop_path TEXT NOT NULL DEFAULT '',
+		logo_path TEXT NOT NULL DEFAULT '',
+		color TEXT NOT NULL DEFAULT '',
+		shelves TEXT NOT NULL DEFAULT '[]',
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+	CREATE TABLE hub_categories (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		style TEXT NOT NULL DEFAULT 'tiles',
+		hub_ids TEXT NOT NULL DEFAULT '[]',
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+	CREATE TABLE layouts (
+		scope TEXT NOT NULL,
+		user_id TEXT NOT NULL DEFAULT '',
+		entries TEXT NOT NULL DEFAULT '[]',
+		updated_at INTEGER NOT NULL,
+		PRIMARY KEY (scope, user_id)
+	);
+	` + seedHubsSQL(),
 }
 
 // fkOff lists migrations (1-based) that rebuild tables. They run with

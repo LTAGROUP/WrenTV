@@ -56,15 +56,17 @@ import com.wrentv.tv.R
 import com.wrentv.tv.data.AppState
 import com.wrentv.tv.player.LivePlayerScreen
 import com.wrentv.tv.player.PlayerScreen
-import com.wrentv.tv.ui.screens.CatalogScreen
 import com.wrentv.tv.ui.screens.CollectionDetailScreen
 import com.wrentv.tv.ui.screens.CollectionsScreen
 import com.wrentv.tv.ui.screens.ConnectScreen
 import com.wrentv.tv.ui.screens.DetailScreen
 import com.wrentv.tv.ui.screens.DownloadsScreen
 import com.wrentv.tv.ui.screens.GenreItemsScreen
-import com.wrentv.tv.ui.screens.GenresScreen
 import com.wrentv.tv.ui.screens.HomeScreen
+import com.wrentv.tv.ui.screens.HubScreen
+import com.wrentv.tv.ui.screens.KindScreen
+import com.wrentv.tv.ui.screens.LayoutEditorScreen
+import com.wrentv.tv.ui.screens.LayoutsScreen
 import com.wrentv.tv.ui.screens.LibraryScreen
 import com.wrentv.tv.ui.screens.LiveTvScreen
 import com.wrentv.tv.ui.screens.ManageLibrariesScreen
@@ -189,7 +191,8 @@ private fun Main(state: AppState, nav: Navigator) {
     CompositionLocalProvider(LocalTopBar provides bar, LocalRouteKey provides route.key, LocalAmbient provides ambient) {
         Box(Modifier.fillMaxSize().onFocusChanged { anyFocus = it.hasFocus }) {
             // Browsing pages take on the focused title's artwork.
-            if (route == Route.Home || route == Route.Collections || route == Route.Movies || route == Route.Shows || route is Route.Library) {
+            if (route == Route.Home || route == Route.Collections || route == Route.Movies || route == Route.Shows || route is Route.Library ||
+                route is Route.Hub || route is Route.Collection) {
                 AmbientBackdrop(route.key)
             }
             Box(Modifier.fillMaxSize().focusRequester(page).focusGroup()) {
@@ -213,10 +216,9 @@ private fun Main(state: AppState, nav: Navigator) {
 private fun Page(route: Route) {
     when (route) {
         Route.Home -> HomeScreen()
-        Route.Movies -> CatalogScreen("movie")
-        Route.Shows -> CatalogScreen("show")
+        Route.Movies -> KindScreen("movie")
+        Route.Shows -> KindScreen("show")
         Route.Collections -> CollectionsScreen()
-        Route.Genres -> GenresScreen()
         Route.Search -> SearchScreen()
         Route.LiveTv -> LiveTvScreen()
         Route.Downloads -> DownloadsScreen()
@@ -227,8 +229,11 @@ private fun Page(route: Route) {
         Route.Users -> UsersScreen()
         Route.ManageLibraries -> ManageLibrariesScreen()
         Route.ServerSettings -> ServerSettingsScreen()
+        Route.Layouts -> LayoutsScreen()
+        is Route.LayoutEditor -> LayoutEditorScreen(route.scope, route.title)
         is Route.Detail -> DetailScreen(route.itemId, route.seed)
         is Route.Collection -> CollectionDetailScreen(route.collection)
+        is Route.Hub -> HubScreen(route.id, route.name)
         is Route.GenreItems -> GenreItemsScreen(route.genre, route.libraryId)
         is Route.StreamTitle -> StreamTitleScreen(route)
         is Route.Trailer -> TrailerScreen(route.youtubeKey, route.title)
@@ -251,7 +256,6 @@ private fun TopBar(state: AppState, nav: Navigator, page: FocusRequester) {
         } else {
             state.libraries.forEach { add(Route.Library(it.id) to it.name) }
             add(Route.Collections to "Collections")
-            add(Route.Genres to "Genres")
         }
         if (state.downloads.items.isNotEmpty() || state.limits?.canDownload == true) add(Route.Downloads to "Downloads")
     }

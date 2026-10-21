@@ -106,6 +106,10 @@ fun SettingsScreen() {
                     ListRow("Subtitles", { panel = SettingsPanel.Subtitles }, Modifier.rememberFocus("set:subs"),
                         value = if (p == null) "…" else languageName(p.subtitleLanguage) ?: "Off", enabled = p != null)
                 }
+                FormSection("Browsing") {
+                    ListRow("Layouts", { nav.push(Route.Layouts) }, Modifier.rememberFocus("set:layouts"),
+                        detail = if (state.isAdmin) "Rows on Home and each library, yours and everyone's" else "The rows on Home and each library")
+                }
                 FormSection("Sound", "Kept on this TV.") {
                     ListRow("Interface Sounds", { state.uiSounds = !state.uiSounds }, Modifier.rememberFocus("set:sounds"),
                         detail = "A click as you move around", value = if (state.uiSounds) "On" else "Off")

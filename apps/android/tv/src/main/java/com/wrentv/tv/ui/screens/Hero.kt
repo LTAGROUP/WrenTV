@@ -83,8 +83,9 @@ data class HeroEntry(
 )
 
 fun Item.heroEntry() = HeroEntry(
-    id = id, title = title, backdrop = backdropPath, logo = logoPath,
+    id = id, title = if (kind == "episode") showTitle ?: title else title, backdrop = backdropPath, logo = logoPath,
     meta = listOfNotNull(
+        if (kind == "episode") "$episodeLabel · $title" else null,
         year?.toString(),
         if (kind == "show") "Series" else null,
         runtimeMin?.takeIf { it > 0 }?.let { formatDuration(it * 60.0) },

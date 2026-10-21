@@ -1,5 +1,7 @@
 package com.wrentv.tv.ui.screens
 
+import com.wrentv.tv.ui.CinematicPoster
+import com.wrentv.tv.ui.CinematicBrowse
 import com.wrentv.tv.data.DiscoverHome
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.foundation.background
@@ -239,8 +241,8 @@ fun LibraryScreen(id: String) {
     var chosen by rememberSaveable { mutableStateOf<String?>(null) }
     val rows = rememberLoaded<List<CollectionShelf>>("rows:$id", state.refreshTick) { state.api?.libraryRows(id) }
     val hasRows = !rows.value.isNullOrEmpty()
-    // Like Plex, a library with rows opens on them.
-    val tab = chosen ?: if (hasRows) "rows" else "titles"
+    // A library shows its rows; servers with neither layouts nor rows get the title grid.
+    val tab = chosen ?: "rows"
     var genre by rememberSaveable { mutableStateOf<String?>(null) }
     var unwatched by rememberSaveable { mutableStateOf(false) }
     var picker by remember { mutableStateOf<String?>(null) }
@@ -256,24 +258,16 @@ fun LibraryScreen(id: String) {
     val name = library?.name ?: "Library"
     val noun = if (library?.type == "shows") "Shows" else "Movies"
 
-    @Composable
-    fun tabs() {
-        if (hasRows) Chip("Recommended", tab == "rows", { chosen = "rows" }, Modifier.rememberFocus("tab:rows", default = tab == "rows"))
-        Chip(noun, tab == "titles", { chosen = "titles" }, Modifier.rememberFocus("tab:titles", default = tab == "titles"))
-        Chip("Collections", tab == "collections", { chosen = "collections" }, Modifier.rememberFocus("tab:collections"))
-        Chip("Genres", tab == "genres", { chosen = "genres" }, Modifier.rememberFocus("tab:genres"))
-    }
-
     when (tab) {
-        "rows" -> LibraryRows(name, rows.value.orEmpty(), menu) { tabs() }
-        "collections" -> CollectionsGrid(id, name) { tabs() }
-        "genres" -> GenresGrid(id, name) { tabs() }
+        "rows" -> LayoutPageScreen("library:$id", label = name) {
+            // Older servers: the library's collection rows, or its titles when it has none.
+            if (hasRows || rows.loading) LibraryRows(name, rows.value.orEmpty(), menu)
+            else LaunchedEffect(Unit) { chosen = "titles" }
+        }
         else -> Row(Modifier.fillMaxSize()) {
             val list = items.value
             PosterGrid(grid, Modifier.weight(1f)) {
                 header(name, list?.let { "${it.size} ${noun.lowercase()}" }) {
-                    tabs()
-                    Spacer(Modifier.width(18.dp))
                     Chip(genre ?: "All Genres", genre != null, { picker = "genre" }, Modifier.rememberFocus("chip:genre"), icon = Icons.Rounded.Label)
                     Chip("Unwatched", unwatched, { unwatched = !unwatched }, Modifier.rememberFocus("chip:unwatched"), icon = Icons.Rounded.VisibilityOff)
                     Chip(SortOptions.firstOrNull { it.value == sort }?.label ?: "Title", false, { picker = "sort" },
@@ -306,7 +300,7 @@ fun LibraryScreen(id: String) {
 
 /** A library's collection rows, each a carousel of posters. */
 @Composable
-private fun LibraryRows(name: String, rows: List<CollectionShelf>, menu: ItemMenuState, tabs: @Composable () -> Unit) {
+private fun LibraryRows(name: String, rows: List<CollectionShelf>, menu: ItemMenuState) {
     val list = rememberLazyListState()
     ReportScroll(list)
     val nav = LocalNavigator.current
@@ -314,8 +308,6 @@ private fun LibraryRows(name: String, rows: List<CollectionShelf>, menu: ItemMen
         item("header") {
             Column(Modifier.padding(start = PageGutter, end = PageGutter, top = TopBarSpace)) {
                 Text(name, style = MaterialTheme.typography.displaySmall, color = Wren.text)
-                Spacer(Modifier.height(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) { tabs() }
             }
         }
         rows.forEach { row ->
@@ -376,12 +368,12 @@ private fun LetterRail(items: List<Item>, jump: (Int) -> Unit) {
 fun CollectionsScreen() = CollectionsGrid(null, "Collections")
 
 @Composable
-private fun CollectionsGrid(libraryId: String?, title: String, chips: @Composable () -> Unit = {}) {
+private fun CollectionsGrid(libraryId: String?, title: String) {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
     val collections = rememberLoaded<List<WrenCollection>>("collections:$libraryId", state.refreshTick) { state.api?.collections(libraryId) }
     PosterGrid {
-        header(title, collections.value?.let { "${it.size} collection${if (it.size == 1) "" else "s"}" }, chips)
+        header(title, collections.value?.let { "${it.size} collection${if (it.size == 1) "" else "s"}" })
         val list = collections.value
         when {
             list == null && collections.error != null -> fullWidth("error") { EmptyState("Couldn't load", collections.error, icon = Icons.Rounded.WifiOff) }
@@ -443,45 +435,47 @@ fun CollectionDetailScreen(seed: WrenCollection) {
     }
     val c = detail.value?.collection ?: seed
     val d = detail.value
-    PosterGrid {
-        fullWidth("header") {
-            Box(Modifier.fillMaxWidth().height(360.dp)) {
-                RemoteImage(state.api?.imageUrl(c.backdropPath, "w1280"), Modifier.fillMaxSize())
-                Box(Modifier.fillMaxSize().heroScrim())
-                Column(Modifier.align(Alignment.BottomStart).padding(bottom = 12.dp).width(760.dp)) {
-                    Text("COLLECTION", style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold), color = Wren.ember)
-                    Text(c.name, style = MaterialTheme.typography.displaySmall, color = Wren.text)
-                    if (c.description.isNotEmpty()) Text(c.description, style = MaterialTheme.typography.bodyLarge, color = Wren.secondary, maxLines = 3)
-                    Spacer(Modifier.height(6.dp))
-                    val count = d?.titles?.let { "${it.size} title${if (it.size == 1) "" else "s"}" } ?: "${d?.items?.size ?: c.itemCount ?: 0} in your library"
-                    Text(listOfNotNull(count, c.kindLabel, c.visibleFrom.takeIf { it.isNotEmpty() }?.let { "Visible $it – ${c.visibleUntil}" }).joinToString("  ·  "),
-                        style = MaterialTheme.typography.bodyMedium, color = Wren.secondary)
-                    c.syncError?.takeIf { it.isNotEmpty() && state.isAdmin }?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Wren.ember) }
-                    Spacer(Modifier.height(14.dp))
-                    Chip(collectionSorts.firstOrNull { it.value == sort }?.label ?: "Collection order", false, { picker = true },
-                        Modifier.rememberFocus("chip:sort"), icon = Icons.AutoMirrored.Rounded.Sort)
-                }
-            }
-        }
+    val count = d?.titles?.let { "${it.size} title${if (it.size == 1) "" else "s"}" } ?: "${d?.items?.size ?: c.itemCount ?: 0} in your library"
+    val hero = HeroEntry(
+        id = "collection:${c.id}", title = c.name, backdrop = c.backdropPath, logo = null,
+        meta = listOfNotNull(count, c.kindLabel, c.visibleFrom.takeIf { it.isNotEmpty() }?.let { "Visible $it – ${c.visibleUntil}" }),
+        badges = emptyList(),
+        overview = c.syncError?.takeIf { it.isNotEmpty() && state.isAdmin } ?: c.description.ifEmpty { null },
+        item = null,
+    )
+    val list = rememberLazyListState()
+    CinematicBrowse(list, fallback = hero, label = "Collection", pills = {
+        Chip(collectionSorts.firstOrNull { it.value == sort }?.label ?: "Collection order", false, { picker = true },
+            Modifier.rememberFocus("chip:sort"), icon = Icons.AutoMirrored.Rounded.Sort)
+    }) {
         when {
-            d == null && detail.error != null -> fullWidth("error") { EmptyState("Couldn't load", detail.error, icon = Icons.Rounded.WifiOff) }
-            d == null -> fullWidth("loading") { Loading() }
+            d == null && detail.error != null -> extra("error") { EmptyState("Couldn't load", detail.error, icon = Icons.Rounded.WifiOff) }
+            d == null -> extra("loading") { Loading() }
             d.titles != null -> {
                 val titles = sortedTitles(d.titles.orEmpty(), sort)
-                items(titles, key = { it.id }) { t -> TitleCard(t, Modifier.rememberFocus("t:${t.id}", default = t == titles.first()), width = CardWidth) }
-                if (titles.isEmpty()) fullWidth("none") { EmptyState("Nothing in this collection yet") }
+                if (titles.isEmpty()) extra("none") { EmptyState("Nothing in this collection yet") }
+                else row("titles") {
+                    Shelf("All Titles", subtitle = "${titles.count { it.item != null }} in your library") {
+                        items(titles, key = { it.id }) { t -> TitleCard(t, Modifier.rememberFocus("t:${t.id}", default = t == titles.first()), width = CinematicPoster) }
+                    }
+                }
             }
             else -> {
-                items(d.items, key = { it.id }) { item ->
-                    PosterCard(item, { nav.push(Route.Detail(item.id, item)) }, Modifier.rememberFocus("i:${item.id}", default = item == d.items.first()), width = CardWidth,
-                        onLongClick = if (state.isAdmin && c.kind == "manual") ({ removing = item }) else null)
+                if (d.items.isNotEmpty()) row("items") {
+                    Shelf("In Your Library") {
+                        items(d.items, key = { it.id }) { item ->
+                            PosterCard(item, { nav.push(Route.Detail(item.id, item)) }, Modifier.rememberFocus("i:${item.id}", default = item == d.items.first()),
+                                width = CinematicPoster, onLongClick = if (state.isAdmin && c.kind == "manual") ({ removing = item }) else null)
+                        }
+                    }
                 }
-                if (d.items.isEmpty()) fullWidth("none") { EmptyState("Nothing in this collection yet") }
                 val missing = d.missing.orEmpty()
-                if (missing.isNotEmpty()) {
-                    fullWidth("missing") { SectionTitle("Not in your library", Modifier.padding(top = 12.dp)) }
-                    items(missing, key = { "m:${it.id}" }) { t -> TitleCard(t, Modifier.rememberFocus("m:${t.id}"), width = CardWidth) }
+                if (missing.isNotEmpty()) row("missing") {
+                    Shelf("Not in Your Library") {
+                        items(missing, key = { "m:${it.id}" }) { t -> TitleCard(t, Modifier.rememberFocus("m:${t.id}"), width = CinematicPoster) }
+                    }
                 }
+                if (d.items.isEmpty() && missing.isEmpty()) extra("none") { EmptyState("Nothing in this collection yet") }
             }
         }
     }
@@ -509,48 +503,6 @@ private fun sortedTitles(titles: List<TitleView>, sort: String): List<TitleView>
     "year_asc" -> titles.sortedBy { it.year ?: 9999 }
     "rating" -> titles.sortedByDescending { it.item?.rating ?: it.rating ?: 0.0 }
     else -> titles
-}
-
-// Genres
-
-@Composable
-fun GenresScreen() = GenresGrid(null, "Genres")
-
-@Composable
-private fun GenresGrid(libraryId: String?, title: String, chips: @Composable () -> Unit = {}) {
-    val state = LocalAppState.current
-    val nav = LocalNavigator.current
-    val genres = rememberLoaded<List<GenreCount>>("genres:$libraryId", state.refreshTick) { state.api?.genres(libraryId) }
-    val grid = rememberLazyGridState()
-    ReportScroll(grid)
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(4), state = grid, modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = PageGutter, end = PageGutter, bottom = 48.dp),
-        horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp),
-    ) {
-        header(title, null, chips)
-        val list = genres.value
-        when {
-            list == null -> fullWidth("loading") { Loading() }
-            list.isEmpty() -> fullWidth("none") { EmptyState("No genres yet", "Genres come from TMDB once titles are matched.", icon = Icons.Rounded.Label) }
-            else -> items(list, key = { it.genre }) { g ->
-                ArtCard({ nav.push(Route.GenreItems(g.genre, libraryId)) }, Modifier.fillMaxWidth().height(120.dp).rememberFocus("g:${g.genre}", default = g == list.first())) {
-                    RemoteImage(state.api?.imageUrl(g.backdropPath, "w780"), Modifier.fillMaxSize())
-                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.1f), Color.Black.copy(alpha = 0.85f)))))
-                    Column(Modifier.align(Alignment.BottomStart).padding(14.dp)) {
-                        Text(g.genre, style = MaterialTheme.typography.titleLarge, color = Color.White)
-                        Text(genreCount(g), style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.7f))
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun genreCount(g: GenreCount): String = when {
-    g.movies > 0 && g.shows > 0 -> "${g.movies} movie${if (g.movies == 1) "" else "s"} · ${g.shows} show${if (g.shows == 1) "" else "s"}"
-    g.shows > 0 -> "${g.shows} show${if (g.shows == 1) "" else "s"}"
-    else -> "${g.count} title${if (g.count == 1) "" else "s"}"
 }
 
 @Composable

@@ -1,5 +1,6 @@
 package com.wrentv.tv.ui
 
+import com.wrentv.tv.ui.screens.heroEntry
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -269,7 +270,7 @@ fun PosterCard(item: Item, onClick: () -> Unit, modifier: Modifier = Modifier, w
     val api = LocalAppState.current.api
     var focused by remember { mutableStateOf(false) }
     Column(modifier.width(width)) {
-        ArtCard(onClick, Modifier.width(width).aspectRatio(2f / 3f).onFocusChanged { focused = it.hasFocus }.ambient(item.backdropPath), onLongClick) {
+        ArtCard(onClick, Modifier.width(width).aspectRatio(2f / 3f).onFocusChanged { focused = it.hasFocus }.ambient(item.backdropPath) { item.heroEntry() }, onLongClick) {
             RemoteImage(api?.imageUrl(item.posterPath), Modifier.fillMaxSize())
             if (item.posterPath == null) PlaceholderTitle(item.displayTitle)
             if (item.inProgress) item.progress?.let { ProgressStrip(it.fraction, Modifier.align(Alignment.BottomCenter)) }
@@ -290,7 +291,7 @@ fun LandscapeCard(item: Item, onClick: () -> Unit, modifier: Modifier = Modifier
     val api = LocalAppState.current.api
     var focused by remember { mutableStateOf(false) }
     Column(modifier.width(width)) {
-        ArtCard(onClick, Modifier.width(width).aspectRatio(16f / 9f).onFocusChanged { focused = it.hasFocus }.ambient(item.backdropPath), onLongClick) {
+        ArtCard(onClick, Modifier.width(width).aspectRatio(16f / 9f).onFocusChanged { focused = it.hasFocus }.ambient(item.backdropPath) { item.heroEntry() }, onLongClick) {
             RemoteImage(api?.imageUrl(item.stillPath ?: item.backdropPath, "w780"), Modifier.fillMaxSize())
             item.progress?.takeIf { it.position > 0 && !it.watched }?.let { ProgressStrip(it.fraction, Modifier.align(Alignment.BottomCenter)) }
         }
@@ -321,7 +322,7 @@ fun TitleCard(title: TitleView, modifier: Modifier = Modifier, rank: Int? = null
                     else -> notices.show("${title.title} isn't on this server.")
                 }
             },
-            modifier = Modifier.width(width).aspectRatio(2f / 3f).onFocusChanged { focused = it.hasFocus }.ambient(title.backdropPath ?: title.item?.backdropPath),
+            modifier = Modifier.width(width).aspectRatio(2f / 3f).onFocusChanged { focused = it.hasFocus }.ambient(title.backdropPath ?: title.item?.backdropPath) { title.heroEntry() },
         ) {
             RemoteImage(state.api?.imageUrl(title.posterPath), Modifier.fillMaxSize().alpha(if (missing) 0.6f else 1f))
             if (title.posterPath == null) PlaceholderTitle(title.title)

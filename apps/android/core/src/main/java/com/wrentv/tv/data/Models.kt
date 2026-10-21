@@ -742,3 +742,63 @@ data class LivePlayResponse(
     val sessionId: String? = null,
     val message: String? = null,
 )
+
+/** A hub as a tile: a genre, a streaming service or an admin's own. */
+@Serializable
+data class HubCard(
+    val id: String,
+    val name: String = "",
+    val kind: String = "custom",
+    val tagline: String? = null,
+    val backdropPath: String? = null,
+    val logoPath: String? = null,
+    /** "#rrggbb" behind a service's logo. */
+    val color: String? = null,
+)
+
+/** One row of a page or hub, resolved by the server. */
+@Serializable
+data class LayoutRow(
+    val id: String,
+    /** "landscape", "items", "titles", "hubs" or "collection". */
+    val kind: String = "items",
+    val title: String = "",
+    val subtitle: String? = null,
+    val items: List<Item>? = null,
+    val titles: List<TitleView>? = null,
+    val hubs: List<HubCard>? = null,
+    /** A hub row's "tiles" or "logos". */
+    val style: String? = null,
+    val collection: WrenCollection? = null,
+    val missing: List<TitleView>? = null,
+    val ranked: Boolean = false,
+    /** Set when the row is a single hub's first shelf. */
+    val hubId: String? = null,
+)
+
+@Serializable
+data class LayoutPage(val rows: List<LayoutRow> = emptyList(), val custom: Boolean = false)
+
+@Serializable
+data class HubPage(val hub: HubCard, val rows: List<LayoutRow> = emptyList())
+
+/** A row as the layout editor sees it. */
+@Serializable
+data class LayoutEntry(
+    val type: String,
+    val ref: String,
+    val hidden: Boolean = false,
+    val title: String = "",
+    val detail: String? = null,
+) {
+    val key: String get() = "$type|$ref"
+}
+
+@Serializable
+data class LayoutConfig(
+    val entries: List<LayoutEntry> = emptyList(),
+    /** Whether this is a saved layout of its own rather than the inherited one. */
+    val custom: Boolean = false,
+    val hasDefault: Boolean = false,
+    val options: List<LayoutEntry> = emptyList(),
+)
