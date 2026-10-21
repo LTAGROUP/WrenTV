@@ -8,6 +8,7 @@ struct PreferencesView: View {
     @State private var subtitleLanguage = ""
     @State private var loaded = false
     @State private var status: String?
+    @AppStorage(PosterSize.key) private var posterSize = PosterSize.medium.rawValue
 
     /// ISO 639-1 codes the server understands, shown in the user's language.
     private static let languages = ["en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "hi", "ru", "ar", "nl", "sv", "no", "da", "fi",
@@ -39,6 +40,15 @@ struct PreferencesView: View {
             } footer: {
                 Text(status ?? "Movies and episodes start with audio and subtitles in these languages when they have them. Saved to your account, so it applies on every device.")
                     .foregroundStyle(.secondary)
+            }
+            Section {
+                Picker("Poster size", selection: $posterSize) {
+                    ForEach(PosterSize.allCases) { Text($0.label).tag($0.rawValue) }
+                }
+            } header: {
+                Text("Browsing")
+            } footer: {
+                Text("How big posters and tiles are on this Mac.").foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

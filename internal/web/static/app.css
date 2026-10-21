@@ -109,8 +109,8 @@ textarea { min-height: 80px; font-family: ui-monospace, Menlo, monospace; font-s
 .arrows button:hover { background: var(--accent); border-color: var(--accent); }
 .row { display: flex; gap: 16px; overflow-x: auto; padding: 14px 10px 26px; margin: -14px -10px -16px; scroll-padding-inline: 10px; scroll-snap-type: x proximity; scroll-behavior: smooth; scrollbar-width: none; }
 .row::-webkit-scrollbar { display: none; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 22px 18px; }
-.card { width: 150px; flex: none; cursor: pointer; scroll-snap-align: start; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(150px * var(--ps, 1)), 1fr)); gap: 22px 18px; }
+.card { width: calc(150px * var(--ps, 1)); flex: none; cursor: pointer; scroll-snap-align: start; }
 .grid .card { width: auto; }
 .poster { position: relative; aspect-ratio: 2/3; border-radius: var(--radius); overflow: hidden; background: var(--bg-3);
   transition: transform .25s var(--ease), box-shadow .25s var(--ease); }
@@ -125,7 +125,7 @@ textarea { min-height: 80px; font-family: ui-monospace, Menlo, monospace; font-s
 .card .rank { position: absolute; left: 6px; top: 6px; background: #121016d9; color: var(--cream); font-weight: 800; font-size: 12px; border-radius: 5px; padding: 2px 7px; }
 .card .t { margin-top: 7px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .s { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wide { width: 280px; }
+.wide { width: calc(280px * var(--ps, 1)); }
 .thumb { position: relative; aspect-ratio: 16/9; border-radius: var(--radius); overflow: hidden; background: var(--bg-3);
   transition: transform .25s var(--ease), box-shadow .25s var(--ease); }
 .wide .play-ov { position: absolute; inset: 0; display: grid; place-items: center; background: #0006; opacity: 0; transition: opacity .2s; }
@@ -451,7 +451,7 @@ textarea { min-height: 80px; font-family: ui-monospace, Menlo, monospace; font-s
   .hero h1 { font-size: 28px; }
   .episode { grid-template-columns: 130px 1fr; } .episode .thumb { width: 130px; }
   .grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 16px 12px; }
-  .card { width: 120px; } .wide { width: 230px; }
+  .card { width: calc(120px * var(--ps, 1)); } .wide { width: calc(230px * var(--ps, 1)); }
   .feature { margin: -16px -16px 24px; padding: 30px 16px 30px; min-height: 56vh; }
   .feature h1 { font-size: 32px; }
   .shelf-head .arrows { display: none; }
@@ -600,3 +600,12 @@ textarea { min-height: 80px; font-family: ui-monospace, Menlo, monospace; font-s
 .layout-rows li > div { flex: 1; min-width: 0; }
 .layout-rows li.hidden b { color: var(--muted); font-weight: 500; }
 .layout-add { margin-bottom: 12px; max-width: 420px; }
+
+/* ---------- collection tiles & calendar ---------- */
+.coll-tile .thumb::after { content: ""; position: absolute; inset: 0; background: linear-gradient(0deg, #121016f0 0%, #12101633 55%, transparent 100%); }
+.coll-tile .thumb b { position: absolute; left: 12px; right: 12px; bottom: 10px; z-index: 1; font-size: 16px; line-height: 1.2;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.coll-tile .thumb .ph { position: absolute; inset: 0; background: linear-gradient(135deg, var(--bg-4), var(--bg-3)); }
+.thumb .flag { position: absolute; left: 8px; top: 8px; z-index: 1; font-size: 10.5px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
+  background: #121016d9; color: var(--cream); border-radius: 5px; padding: 3px 7px; }
+.thumb .flag.next { background: var(--accent); }

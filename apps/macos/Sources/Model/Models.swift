@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 struct WatchState: Codable, Hashable {
     var position: Double
@@ -185,6 +186,8 @@ struct WrenCollection: Codable, Hashable, Identifiable {
     var syncError: String?
     var itemCount: Int?
     var active: Bool?
+    /// The shelf it sits on: Collections, Franchises, Lists, Charts or Smart Collections.
+    var group: String?
 
     var kindLabel: String {
         switch kind {
@@ -201,6 +204,93 @@ struct CollectionDetail: Codable {
     var missing: [TitleView]?
     /// When streaming, a TMDB collection's every title, in its order.
     var titles: [TitleView]?
+}
+
+/// Episodes airing around now, from the library's shows still running and the ones being watched.
+struct CalendarResponse: Codable {
+    var from: String
+    var to: String
+    var episodes: [CalendarEpisode]
+}
+
+struct CalendarEpisode: Codable, Hashable, Identifiable {
+    var date: String // YYYY-MM-DD
+    var show: Item
+    var seasonNumber: Int
+    var episodeNumber: Int
+    var title: String
+    var overview: String?
+    var stillPath: String?
+    /// The episode in the library, when it's there.
+    var itemId: String?
+    var watched: Bool
+    /// The viewer has watched some of the show; upNext is the episode they're up to.
+    var watching: Bool
+    var upNext: Bool
+
+    var id: String { "\(show.id):\(seasonNumber):\(episodeNumber)" }
+    var code: String { "S\(seasonNumber) E\(episodeNumber)" }
+    var name: String { title.isEmpty ? "Episode \(episodeNumber)" : title }
+    var day: Date? { CalendarEpisode.parser.date(from: date) }
+
+    static let parser: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    /// "Today", "Tomorrow", "Yesterday", or the weekday and date.
+    static func dayName(_ date: String) -> String {
+        guard let d = parser.date(from: date) else { return date }
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return "Today" }
+        if cal.isDateInTomorrow(d) { return "Tomorrow" }
+        if cal.isDateInYesterday(d) { return "Yesterday" }
+        return d.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+    }
+
+    /// "Airs tomorrow", "Aired Oct 12, 2026".
+    var airs: String {
+        guard let d = day else { return date }
+        let cal = Calendar.current
+        let name = Self.dayName(date)
+        let when = ["Today", "Tomorrow", "Yesterday"].contains(name) ? name.lowercased() : d.formatted(date: .abbreviated, time: .omitted)
+        return cal.isDateInToday(d) || d > Date() ? "Airs \(when)" : "Aired \(when)"
+    }
+
+    /// Episodes grouped by day, in order.
+    static func days(_ eps: [CalendarEpisode]) -> [(date: String, episodes: [CalendarEpisode])] {
+        var out: [(date: String, episodes: [CalendarEpisode])] = []
+        for e in eps {
+            if out.last?.date == e.date { out[out.count - 1].episodes.append(e) } else { out.append((e.date, [e])) }
+        }
+        return out
+    }
+
+    /// Today's date the way the server writes it, for "what's next".
+    static var today: String { parser.string(from: Date()) }
+}
+
+/// Poster sizes the browsing pages can use, per device.
+enum PosterSize: String, CaseIterable, Identifiable {
+    case small, medium, large
+    static let key = "posterSize"
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
+    var scale: CGFloat {
+        switch self {
+        case .small: 0.85
+        case .medium: 1
+        case .large: 1.25
+        }
+    }
+    static var current: PosterSize { PosterSize(rawValue: UserDefaults.standard.string(forKey: key) ?? "") ?? .medium }
+    /// A poster's width at this size, from its medium one.
+    static func width(_ medium: CGFloat) -> CGFloat { medium * current.scale }
+    /// Grids of posters at this size.
+    static var columns: [GridItem] { [GridItem(.adaptive(minimum: width(150), maximum: width(180)), spacing: 22)] }
 }
 
 struct GenreCount: Codable, Hashable, Identifiable {

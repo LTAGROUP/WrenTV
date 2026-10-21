@@ -39,6 +39,11 @@ class AppState(context: Context) {
     var themeMusic: Boolean
         get() = themeMusicOn
         set(v) { themeMusicOn = v; store.setBool("themeMusic", v) }
+    /** How big posters are on browsing pages: "small", "medium" or "large", kept on this TV. */
+    private var posterSizeValue by mutableStateOf(store.string("posterSize", "medium"))
+    var posterSize: String
+        get() = posterSizeValue
+        set(v) { posterSizeValue = v; store.setString("posterSize", v) }
 
     var serverUrl by mutableStateOf<HttpUrl?>(null)
         private set

@@ -62,13 +62,15 @@ private struct AmbientFocus: ViewModifier {
 }
 
 /// Card sizes on cinematic pages: smaller than a grid's, so the hero has room.
+/// The hero is the same height on every row, so the page never jumps.
 enum Cinematic {
-    static let poster: CGFloat = 190
-    static let landscape: CGFloat = 360
+    /// Posters and tiles scale with the Poster Size setting.
+    static var poster: CGFloat { 190 * PosterSize.current.scale }
+    static var landscape: CGFloat { 360 * PosterSize.current.scale }
     static let heroHeight: CGFloat = 480
     static let gridSpacing: CGFloat = 44
     /// Posters across the screen.
-    static let columns = Int((1920 - TV.gutter * 2 + gridSpacing) / (poster + gridSpacing))
+    static var columns: Int { Int((1920 - TV.gutter * 2 + gridSpacing) / (poster + gridSpacing)) }
 }
 
 /// A cinematic page. fallback fills the hero until something takes focus.
@@ -356,39 +358,35 @@ private struct MoreCard<V: Hashable>: View {
 
 // MARK: Collections
 
-/// Every collection the viewer can see.
+/// Every collection the viewer can see, a shelf per kind: the server's own,
+/// franchises, lists, charts and smart collections.
 struct CollectionsView: View {
     @Environment(AppState.self) private var state
     @State private var collections: [WrenCollection]?
     @State private var error: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
-                HStack(alignment: .firstTextBaseline, spacing: 18) {
-                    Text("Collections").font(.title2.bold())
-                    if let c = collections { Text("\(c.count) collection\(c.count == 1 ? "" : "s")").foregroundStyle(.secondary) }
+        let groups = grouped
+        CinematicPage(fallback: collections?.first?.heroEntry(count: nil), label: "Collections") {
+            if let list = collections {
+                if list.isEmpty {
+                    EmptyState(title: "No collections yet",
+                               message: state.isAdmin ? "Create collections in the web app: hand-picked, smart rules, or synced from TMDB."
+                                                      : "Collections the server owner makes show up here.",
+                               symbol: "rectangle.stack")
                 }
-                if let list = collections {
-                    if list.isEmpty {
-                        EmptyState(title: "No collections yet",
-                                   message: state.isAdmin ? "Create collections in the web app: hand-picked, smart rules, or synced from TMDB."
-                                                          : "Collections the server owner makes show up here.",
-                                   symbol: "rectangle.stack")
-                    } else {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: TV.poster, maximum: TV.poster), spacing: 48, alignment: .top)],
-                                  alignment: .leading, spacing: 56) {
-                            ForEach(list) { CollectionCard(collection: $0) }
+                ForEach(groups, id: \.name) { g in
+                    CinematicRow(id: "group:\(g.name)") {
+                        Shelf(title: g.name, subtitle: "\(g.collections.count) collection\(g.collections.count == 1 ? "" : "s")") {
+                            ForEach(g.collections) { CollectionTile(collection: $0) }
                         }
                     }
-                } else if let error {
-                    EmptyState(title: "Couldn't load", message: error, symbol: "wifi.exclamationmark")
-                } else {
-                    ProgressView().frame(maxWidth: .infinity).padding(.top, 200)
                 }
+            } else if let error {
+                EmptyState(title: "Couldn't load", message: error, symbol: "wifi.exclamationmark")
+            } else {
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 120)
             }
-            .padding(.horizontal, TV.gutter)
-            .padding(.vertical, 40)
         }
         .task(id: state.refreshTick) {
             do {
@@ -399,29 +397,126 @@ struct CollectionsView: View {
             }
         }
     }
+
+    /// In the server's order, which already puts the groups in theirs.
+    private var grouped: [(name: String, collections: [WrenCollection])] {
+        var out: [(name: String, collections: [WrenCollection])] = []
+        for c in collections ?? [] {
+            let g = c.group ?? "Collections"
+            if let i = out.firstIndex(where: { $0.name == g }) { out[i].collections.append(c) } else { out.append((g, [c])) }
+        }
+        return out
+    }
 }
 
-private struct CollectionCard: View {
+/// A collection's wide tile: its artwork with the name over it.
+private struct CollectionTile: View {
     @Environment(AppState.self) private var state
     let collection: WrenCollection
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let w = Cinematic.landscape
+        VStack(alignment: .leading, spacing: 10) {
             NavigationLink(value: collection) {
-                RemoteImage(url: state.api?.imageURL(collection.posterPath, size: "w342"))
-                    .frame(width: TV.poster, height: TV.poster * 1.5)
-                    .overlay {
-                        if collection.posterPath == nil {
-                            Text(collection.name).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center).padding()
+                ZStack(alignment: .bottomLeading) {
+                    RemoteImage(url: state.api?.imageURL(collection.backdropPath ?? collection.posterPath, size: "w780"))
+                    LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .center, endPoint: .bottom)
+                    Text(collection.name).font(.headline.bold()).lineLimit(2).padding(20)
+                    if collection.active == false {
+                        Text("OUT OF SEASON").font(.caption2.bold()).padding(.horizontal, 10).padding(.vertical, 4)
+                            .background(.black.opacity(0.7), in: .capsule)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(14)
+                    }
+                }
+                .frame(width: w, height: w * 9 / 16)
+            }
+            .buttonStyle(.card)
+            .ambient { collection.heroEntry(count: collection.itemCount.map { "\($0) titles" }) }
+            Text(collection.itemCount.map { "\($0) titles · \(collection.kindLabel)" } ?? collection.kindLabel)
+                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .frame(width: w)
+    }
+}
+
+// MARK: Calendar
+
+/// When episodes air, a shelf a day: the library's shows still running and the ones being watched.
+struct CalendarView: View {
+    @Environment(AppState.self) private var state
+    @State private var calendar: CalendarResponse?
+    @State private var error: String?
+    @State private var watchingOnly = false
+
+    var body: some View {
+        let eps = (calendar?.episodes ?? []).filter { !watchingOnly || $0.watching }
+        let next = eps.first { $0.date >= CalendarEpisode.today } ?? eps.last
+        CinematicPage(fallback: next?.heroEntry, label: "Calendar") {
+            CinematicRow(id: "filter") {
+                Picker("Shows", selection: $watchingOnly) {
+                    Text("All Shows").tag(false)
+                    Text("Shows I'm Watching").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 720)
+                .padding(.horizontal, TV.gutter)
+                .padding(.vertical, 20)
+                .focusSection()
+            }
+            if calendar != nil {
+                if eps.isEmpty {
+                    EmptyState(title: watchingOnly ? "Nothing coming up for your shows" : "Nothing airing",
+                               message: "Episodes from a week back to a month ahead show here, for shows in the library that are still running.",
+                               symbol: "calendar")
+                }
+                ForEach(CalendarEpisode.days(eps), id: \.date) { day in
+                    CinematicRow(id: "day:\(day.date)") {
+                        Shelf(title: CalendarEpisode.dayName(day.date), subtitle: "\(day.episodes.count) episode\(day.episodes.count == 1 ? "" : "s")") {
+                            ForEach(day.episodes) { CalendarCard(episode: $0) }
+                        }
+                    }
+                }
+            } else if let error {
+                EmptyState(title: "Couldn't load", message: error, symbol: "wifi.exclamationmark")
+            } else {
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 120)
+            }
+        }
+        .task(id: state.refreshTick) {
+            do {
+                calendar = try await state.api?.calendar()
+                error = nil
+            } catch {
+                if calendar == nil { self.error = error.localizedDescription }
+            }
+        }
+    }
+}
+
+private struct CalendarCard: View {
+    @Environment(AppState.self) private var state
+    let episode: CalendarEpisode
+
+    var body: some View {
+        let e = episode, w = Cinematic.landscape
+        VStack(alignment: .leading, spacing: 10) {
+            NavigationLink(value: ItemRoute(id: e.itemId ?? e.show.id, title: e.itemId == nil ? e.show.title : e.name)) {
+                RemoteImage(url: state.api?.imageURL(e.stillPath ?? e.show.backdropPath, size: "w780"))
+                    .frame(width: w, height: w * 9 / 16)
+                    .overlay(alignment: .topLeading) {
+                        if e.upNext || e.watched {
+                            Text(e.upNext ? "UP NEXT" : "WATCHED").font(.caption2.bold()).padding(.horizontal, 10).padding(.vertical, 4)
+                                .background(e.upNext ? Color.wrenEmber : .black.opacity(0.7), in: .capsule)
+                                .padding(14)
                         }
                     }
             }
             .buttonStyle(.card)
-            Text(collection.name).font(.caption).lineLimit(1)
-            Text(collection.itemCount.map { "\($0) titles · \(collection.kindLabel)" } ?? collection.kindLabel)
-                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            .ambient { e.heroEntry }
+            Text(e.show.title).font(.caption).lineLimit(1)
+            Text("\(e.code) · \(e.name)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
         }
-        .frame(width: TV.poster)
+        .frame(width: w)
     }
 }
 
@@ -517,6 +612,16 @@ extension WrenCollection {
         HeroEntry(id: "collection:\(id)", title: name, backdrop: backdropPath,
                   meta: [count, kindLabel].compactMap { $0 }.joined(separator: "  ·  "),
                   overview: description.isEmpty ? nil : description)
+    }
+}
+
+extension CalendarEpisode {
+    var heroEntry: HeroEntry {
+        var meta = ["\(code) · \(name)", airs]
+        if upNext { meta.append("Up next") } else if watched { meta.append("Watched") }
+        if itemId == nil && date <= CalendarEpisode.today { meta.append("Not in the library yet") }
+        return HeroEntry(id: "cal:\(id)", title: show.title, backdrop: show.backdropPath, logo: show.logoPath,
+                         meta: meta.joined(separator: "  ·  "), overview: overview?.isEmpty == false ? overview : show.overview)
     }
 }
 

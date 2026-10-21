@@ -48,7 +48,9 @@ private val Languages = listOf(
 private fun languageChoices(none: String): List<Choice<String>> =
     listOf(Choice("", none)) + Languages.map { Choice(it, languageName(it) ?: it) }.sortedBy { it.label.lowercase(Locale.getDefault()) }
 
-private enum class SettingsPanel { Audio, Subtitles, SignOut }
+private enum class SettingsPanel { Audio, Subtitles, PosterSize, SignOut }
+
+private val posterSizes = listOf(Choice("small", "Small"), Choice("medium", "Medium"), Choice("large", "Large"))
 
 @Composable
 fun SettingsScreen() {
@@ -115,6 +117,9 @@ fun SettingsScreen() {
                         detail = "A click as you move around", value = if (state.uiSounds) "On" else "Off")
                     ListRow("Theme Music", { state.themeMusic = !state.themeMusic }, Modifier.rememberFocus("set:theme"),
                         detail = "Plays a show's theme on its page", value = if (state.themeMusic) "On" else "Off")
+                    ListRow("Poster Size", { panel = SettingsPanel.PosterSize }, Modifier.rememberFocus("set:posters"),
+                        detail = "How big titles are on Home and as you browse",
+                        value = posterSizes.firstOrNull { it.value == state.posterSize }?.label ?: "Medium")
                 }
                 val saved = state.downloads.items
                 if (saved.isNotEmpty() || state.limits?.canDownload == true) {
@@ -156,6 +161,7 @@ fun SettingsScreen() {
         SettingsPanel.Subtitles -> ChoicePanel("Subtitles", languageChoices("Off"), prefs?.subtitleLanguage ?: "", { panel = null }) {
             prefs?.let { p -> save(p.copy(subtitleLanguage = it)) }
         }
+        SettingsPanel.PosterSize -> ChoicePanel("Poster Size", posterSizes, state.posterSize, { panel = null }) { state.posterSize = it }
         SettingsPanel.SignOut -> ConfirmPanel("Sign out?", "You'll need to sign in again to watch from ${server?.name ?: "this server"}.", "Sign Out", { panel = null }, destructive = true) {
             state.signOut()
         }

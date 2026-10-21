@@ -138,6 +138,7 @@ fun RouteScreen(r: Route) {
         is Route.Collection -> CollectionScreen(r.id, r.name)
         is Route.Genre -> GenreScreen(r.genre, r.libraryId)
         Route.Collections -> CollectionsScreen()
+        Route.Calendar -> CalendarScreen()
         is Route.Genres -> GenresScreen(r.libraryId)
         Route.Watchlist -> WatchlistScreen()
         Route.Downloads -> DownloadsScreen()

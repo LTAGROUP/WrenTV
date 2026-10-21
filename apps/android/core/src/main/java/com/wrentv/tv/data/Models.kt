@@ -185,6 +185,8 @@ data class WrenCollection(
     val syncError: String? = null,
     val itemCount: Int? = null,
     val active: Boolean? = null,
+    /** The shelf it sits on with the rest: "Franchises", "Lists", "Charts"… */
+    val group: String? = null,
 ) {
     val kindLabel: String
         get() = when (kind) {
@@ -925,3 +927,28 @@ data class LayoutConfig(
     val hasDefault: Boolean = false,
     val options: List<LayoutEntry> = emptyList(),
 )
+
+/** Episodes airing over a stretch of days, from shows in the library and ones being watched. */
+@Serializable
+data class CalendarResponse(val from: String, val to: String, val episodes: List<CalendarEpisode> = emptyList())
+
+@Serializable
+data class CalendarEpisode(
+    /** YYYY-MM-DD */
+    val date: String,
+    val show: Item,
+    val seasonNumber: Int,
+    val episodeNumber: Int,
+    val title: String = "",
+    val overview: String? = null,
+    val stillPath: String? = null,
+    /** The episode in the library, when it's there. */
+    val itemId: String? = null,
+    val watched: Boolean = false,
+    /** Some of the show has been watched; [upNext] is the episode they're up to. */
+    val watching: Boolean = false,
+    val upNext: Boolean = false,
+) {
+    val id: String get() = "${show.id}:$seasonNumber:$episodeNumber"
+    val code: String get() = "S$seasonNumber E$episodeNumber"
+}

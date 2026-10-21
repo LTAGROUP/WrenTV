@@ -135,6 +135,8 @@ public sealed class WrenTVApi
     public Task<List<WrenCollection>> Collections(string? library = null) =>
         Get<List<WrenCollection>>("/api/collections", library == null ? null : [("libraryId", library)]);
 
+    public Task<CalendarResponse> Calendar() => Get<CalendarResponse>("/api/calendar");
+
     public Task<CollectionDetail> Collection(string id) => Get<CollectionDetail>($"/api/collections/{id}");
 
     public Task<UserPrefs> Prefs() => Get<UserPrefs>("/api/me/prefs");

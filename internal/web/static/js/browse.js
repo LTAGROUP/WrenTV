@@ -1,7 +1,7 @@
 // Browsing beyond libraries: genres, collections, and the viewer's own settings.
 import { api, img } from './api.js';
 import { esc, $, $$, el, toast, modal, confirmDialog, icons } from './ui.js';
-import { go, render, setTitle, isAdmin, getLibraries, posterCard, titleCard, lazyImg, libraryTabs, bd } from './app.js';
+import { go, render, setTitle, isAdmin, getLibraries, posterCard, titleCard, lazyImg, libraryTabs, bd, shelf, bindShelves, posterSize, setPosterSize } from './app.js';
 
 const qs = () => new URLSearchParams(location.search);
 
@@ -76,14 +76,27 @@ const fmtMD = (md) => {
   return new Date(2000, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
 
-function collectionCard(c) {
+// groupShelves is a shelf per kind of collection, in the server's order:
+// its own, franchises, lists, charts, then smart collections.
+function groupShelves(cs) {
+  const groups = new Map();
+  for (const c of cs) {
+    const g = c.group || 'Collections';
+    groups.set(g, [...(groups.get(g) || []), c]);
+  }
+  return [...groups].map(([g, list]) => shelf(g, list.map(collectionTile).join(''), { sub: `${list.length} collection${list.length === 1 ? '' : 's'}` })).join('');
+}
+
+// collectionTile is a collection's wide tile: its artwork with the name over it.
+function collectionTile(c) {
   const tags = [];
   if (!c.active) tags.push(`Hidden until ${fmtMD(c.visibleFrom)}`);
   else if (c.showOnHome && isAdmin()) tags.push('On Home');
   else if (c.showInLibrary && isAdmin()) tags.push('Library row');
-  return `<a class="card coll-card" href="/collection/${c.id}"${bd(c.backdropPath)}><div class="poster"><div class="stack">${c.posterPath ? lazyImg(img(c.posterPath), c.name) : `<div class="ph">${esc(c.name)}</div>`}
-    ${tags.length ? `<span class="tag">${esc(tags[0])}</span>` : ''}</div></div>
-    <div class="t" title="${esc(c.name)}">${esc(c.name)}</div><div class="s">${c.itemCount} title${c.itemCount === 1 ? '' : 's'} · ${esc(kindLabel(c))}</div></a>`;
+  const pic = c.backdropPath || c.posterPath;
+  return `<a class="card wide coll-tile" href="/collection/${c.id}"${bd(c.backdropPath)}><div class="thumb">${pic ? lazyImg(img(pic, 'w780'), c.name) : '<div class="ph"></div>'}
+    ${tags.length ? `<span class="flag">${esc(tags[0])}</span>` : ''}<b>${esc(c.name)}</b></div>
+    <div class="s" style="margin-top:7px">${c.itemCount} title${c.itemCount === 1 ? '' : 's'} · ${esc(kindLabel(c))}</div></a>`;
 }
 
 export async function viewCollections(libId) {
@@ -95,8 +108,9 @@ export async function viewCollections(libId) {
     <div class="page-head"><h1>${libId ? 'Collections' : 'Collections'} <span class="muted small">${cs.length}</span></h1>
     ${admin ? `<div class="toolbar"><button class="btn" id="auto" title="Create a collection for every movie series with two or more films in your library">Auto-create franchises</button>
       <button class="btn primary" id="new">${icons.plus} New collection</button></div>` : ''}</div>
-    ${cs.length ? `<div class="grid">${cs.map(collectionCard).join('')}</div>`
+    ${cs.length ? groupShelves(cs)
       : `<div class="empty"><h2>No collections yet</h2><p>${admin ? 'Group titles by hand, with rules (smart collections), or from TMDB franchises, lists and charts.' : 'The server owner hasn\'t made any collections yet.'}</p></div>`}</div>`);
+  bindShelves(node);
   $('#new', node)?.addEventListener('click', () => editCollection(null, { libraryId: libId }));
   $('#auto', node)?.addEventListener('click', async (e) => {
     e.currentTarget.disabled = true;
@@ -167,6 +181,62 @@ export async function viewCollection(id) {
       await api(`/api/collections/${id}/items/${b.dataset.rm}`, { method: 'DELETE' });
       b.closest('.card').remove();
     };
+  }
+  return node;
+}
+
+// ---------------------------------------------------------------- calendar
+
+const day = (d) => {
+  const [y, m, dd] = d.split('-').map(Number);
+  return new Date(y, m - 1, dd);
+};
+const isoDay = (t) => `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+
+// dayName is "Today", "Tomorrow", "Yesterday", or the weekday and date.
+function dayName(d) {
+  const t = new Date();
+  const off = Math.round((day(d) - day(isoDay(t))) / 864e5);
+  if (off === 0) return 'Today';
+  if (off === 1) return 'Tomorrow';
+  if (off === -1) return 'Yesterday';
+  return day(d).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+}
+
+function calendarCard(e) {
+  const pic = e.stillPath || e.show.backdropPath;
+  const flag = e.upNext ? '<span class="flag next">Up next</span>' : e.watched ? '<span class="flag">Watched</span>' : '';
+  const code = `S${e.seasonNumber} · E${e.episodeNumber}`;
+  return `<a class="card wide" href="/item/${e.itemId || e.show.id}"${bd(e.show.backdropPath)} title="${esc(e.overview || '')}"><div class="thumb">${pic ? lazyImg(img(pic, 'w500')) : ''}${flag}</div>
+    <div class="t">${esc(e.show.title)}</div><div class="s">${esc(`${code} — ${e.title || `Episode ${e.episodeNumber}`}`)}</div></a>`;
+}
+
+// viewCalendar is when episodes air, a shelf a day from a week back to a
+// month ahead: shows in the library that are still running, and the ones
+// being watched.
+export async function viewCalendar() {
+  setTitle('Calendar');
+  const watching = qs().get('watching') === '1';
+  const cal = await api('/api/calendar');
+  const eps = cal.episodes.filter((e) => !watching || e.watching);
+  const days = new Map();
+  for (const e of eps) days.set(e.date, [...(days.get(e.date) || []), e]);
+  const today = isoDay(new Date());
+  const node = el(`<div><div class="page-head"><h1>Calendar</h1>
+    <div class="toolbar"><button class="chip${watching ? ' on' : ''}" id="watching" aria-pressed="${watching}">Shows I'm watching</button></div></div>
+    ${eps.length ? [...days].map(([d, list]) => shelf(dayName(d), list.map(calendarCard).join(''),
+      { sub: `${list.length} episode${list.length === 1 ? '' : 's'}`, id: `day-${d}` })).join('')
+      : `<div class="empty"><h2>${watching ? 'Nothing coming up for your shows' : 'Nothing airing'}</h2>
+        <p>Episodes from a week back to a month ahead show here, for shows in the library that are still running.</p></div>`}</div>`);
+  bindShelves(node);
+  $('#watching', node).onclick = () => go('/calendar' + (watching ? '' : '?watching=1'), true);
+  // Open on what's next to air, with what just aired above it.
+  const next = [...days.keys()].find((d) => d >= today);
+  if (next && next !== [...days.keys()][0]) {
+    requestAnimationFrame(() => {
+      const top = document.getElementById(`day-${next}`)?.getBoundingClientRect().top;
+      if (top != null) window.scrollTo({ top: top + window.scrollY - ($('.topbar')?.offsetHeight || 0) - 12 });
+    });
   }
   return node;
 }
@@ -382,6 +452,11 @@ export async function viewAccount() {
         <select id="continue">${[[10, '10 seconds'], [30, '30 seconds'], [60, '1 minute'], [120, '2 minutes'], [300, '5 minutes'], [600, '10 minutes']].map(([v, l]) => `<option value="${v}" ${v === (prefs.continueAfter || 30) ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       <p class="small muted" style="margin:0">How long you need to watch a movie or episode before it shows on Continue Watching, so trying a few minutes of something doesn't put it there.</p>
     </div>
+    <div class="panel" style="max-width:640px;margin-top:18px"><h2>Browsing</h2>
+      <div class="field"><label for="posters">Poster size</label>
+        <select id="posters">${[['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']].map(([v, l]) => `<option value="${v}" ${v === posterSize() ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <p class="small muted" style="margin:0">How big posters and tiles are in rows and grids, in this browser.</p>
+    </div>
     <div class="panel" style="max-width:640px;margin-top:18px" id="simkl"></div>
     <div class="panel" style="max-width:640px;margin-top:18px"><h2>Sign in a TV</h2>
       <p class="small muted">On the TV, choose “Sign in with your phone”. Scan its QR code, or enter the code it shows here.</p>
@@ -407,6 +482,7 @@ export async function viewAccount() {
       toast('Saved.');
     } catch (err) { toast(err.message); }
   };
+  $('#posters', node).onchange = (e) => setPosterSize(e.target.value);
   simklPanel($('#simkl', node));
   return node;
 }

@@ -221,7 +221,7 @@ struct LibraryView: View {
                 }
                 .padding(.top, 24)
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 180), spacing: 22)], alignment: .leading, spacing: 26) {
+            LazyVGrid(columns: PosterSize.columns, alignment: .leading, spacing: 26) {
                 ForEach(shown) { item in
                     NavigationLink(value: item) { PosterCard(item: item) }
                         .buttonStyle(.plain)
@@ -349,7 +349,7 @@ struct SearchView: View {
     @State private var more: [TitleView] = []
     @State private var searched = ""
 
-    private let columns = [GridItem(.adaptive(minimum: 150, maximum: 180), spacing: 22)]
+    private var columns: [GridItem] { PosterSize.columns }
 
     var body: some View {
         ScrollView {

@@ -6,6 +6,7 @@ import SwiftUI
 struct MainView: View {
     @Environment(AppState.self) private var state
     @State private var tab = "home"
+    @AppStorage(PosterSize.key) private var posterSize = PosterSize.medium.rawValue
 
     var body: some View {
         TabView(selection: $tab) {
@@ -39,6 +40,11 @@ struct MainView: View {
             Tab("Collections", systemImage: "rectangle.stack", value: "collections") {
                 TabStack { CollectionsView() }
             }
+            if state.canStream || state.libraries.contains(where: { $0.type == "shows" }) {
+                Tab("Calendar", systemImage: "calendar", value: "calendar") {
+                    TabStack { CalendarView() }
+                }
+            }
             Tab(value: "search", role: .search) {
                 TabStack { SearchView() }
             }
@@ -46,6 +52,8 @@ struct MainView: View {
                 TabStack { SettingsView() }
             }
         }
+        // Card sizes are read as pages draw, so a new size redraws them.
+        .id(posterSize)
     }
 
     /// Each library gets a tab while they fit; more than four share one.

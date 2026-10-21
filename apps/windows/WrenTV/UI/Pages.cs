@@ -450,7 +450,8 @@ sealed class WatchlistPage : Page
     }
 }
 
-/// Every collection on the server.
+/// Every collection on the server, a shelf per kind: the server's own,
+/// franchises, lists, charts and smart collections.
 sealed class CollectionsPage : Page
 {
     protected override bool HasAmbient => true;
@@ -458,10 +459,13 @@ sealed class CollectionsPage : Page
     protected override async Task<UIElement> Build()
     {
         var cols = await App.State.Api!.Collections();
-        return Titled("Collections", cols.Count == 1 ? "1 collection" : $"{cols.Count} collections", cols.Count == 0
-            ? Ui.Empty("\uE8F1", "No collections", "Collections from TMDB and ones you make show up here.")
-            : Cards.Tiles(cols.Select(c => Cards.Tile(c.Name, c.ItemCount is { } n ? $"{n} titles" : "", c.BackdropPath ?? c.PosterPath,
-                () => App.Shell?.Push(new CollectionPage(c.Id, c.Name))))));
+        if (cols.Count == 0) return Titled("Collections", "", Ui.Empty("\uE8F1", "No collections", "Collections from TMDB and ones you make show up here."));
+        // The server's order already puts the groups in theirs.
+        var shelves = cols.GroupBy(c => c.Group ?? "Collections").Select(g => Cards.Shelf(g.Key,
+            g.Select(c => (UIElement)Cards.Tile(c.Name, c.ItemCount is { } n ? $"{n} titles" : "", c.BackdropPath ?? c.PosterPath,
+                () => App.Shell?.Push(new CollectionPage(c.Id, c.Name)), margin: 0)),
+            subtitle: g.Count() == 1 ? "1 collection" : $"{g.Count()} collections"));
+        return Scroll("Collections", shelves.ToArray());
     }
 
     internal static UIElement Titled(string title, string subtitle, UIElement content)
@@ -473,6 +477,63 @@ sealed class CollectionsPage : Page
         Grid.SetRow((FrameworkElement)content, 1);
         g.Children.Add(content);
         return g;
+    }
+}
+
+/// When episodes air: a shelf a day from a week back to a month ahead, of the
+/// library's shows that are still running and the ones being watched.
+sealed class CalendarPage : Page
+{
+    protected override bool HasAmbient => true;
+    bool watchingOnly;
+
+    protected override async Task<UIElement> Build()
+    {
+        var cal = await App.State.Api!.Calendar();
+        var eps = cal.Episodes.Where(e => !watchingOnly || e.Watching).ToList();
+        var today = DateTime.Today.ToString("yyyy-MM-dd");
+        var toggle = new ToggleButton { Content = "Shows I'm Watching", IsChecked = watchingOnly, Margin = new Thickness(Gutter, 0, Gutter, 0) };
+        toggle.Click += (_, _) => { watchingOnly = toggle.IsChecked == true; Reload(quiet: true); };
+        var sections = new List<UIElement> { toggle };
+        UIElement? next = null;
+        foreach (var day in eps.GroupBy(e => e.Date))
+        {
+            var shelf = Cards.Shelf(DayName(day.Key), day.Select(e => (UIElement)Card(e)),
+                subtitle: day.Count() == 1 ? "1 episode" : $"{day.Count()} episodes");
+            if (next == null && string.CompareOrdinal(day.Key, today) >= 0) next = shelf;
+            sections.Add(shelf);
+        }
+        if (eps.Count == 0)
+            sections.Add(Ui.Empty("\uE787", watchingOnly ? "Nothing coming up for your shows" : "Nothing airing",
+                "Episodes from a week back to a month ahead show here, for shows in the library that are still running."));
+        var page = Scroll("Calendar", sections.ToArray());
+        // Open on what's next to air, with what just aired above it.
+        if (next is FrameworkElement target && sections.IndexOf(target) > 1)
+            page.Loaded += (_, _) => target.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 0, AnimationDesired = false });
+        return page;
+    }
+
+    /// "Today", "Tomorrow", "Yesterday", or the weekday and date.
+    static string DayName(string date)
+    {
+        if (!DateTime.TryParse(date, out var d)) return date;
+        return (d.Date - DateTime.Today).Days switch
+        {
+            0 => "Today",
+            1 => "Tomorrow",
+            -1 => "Yesterday",
+            _ => d.ToString("dddd, MMM d"),
+        };
+    }
+
+    static Button Card(CalendarEpisode e)
+    {
+        var flag = e.UpNext ? "Up next" : e.Watched ? "Watched" : null;
+        var b = Cards.Tile(e.Show.Title, $"{e.Code} · {e.Name}", e.StillPath ?? e.Show.BackdropPath,
+            () => Nav.Item(e.ItemId ?? e.Show.Id), margin: 0, flag: flag, accent: e.UpNext);
+        b.PointerEntered += (_, _) => Ambient.Hover(e.Show.BackdropPath);
+        if (!string.IsNullOrEmpty(e.Overview)) ToolTipService.SetToolTip(b, e.Overview);
+        return b;
     }
 }
 

@@ -14,8 +14,8 @@ extension Color {
 /// Sizes for the 1920×1080 point TV screen.
 enum TV {
     static let gutter: CGFloat = 80
-    static let poster: CGFloat = 220
-    static let landscape: CGFloat = 400
+    static var poster: CGFloat { 220 * PosterSize.current.scale }
+    static var landscape: CGFloat { 400 * PosterSize.current.scale }
     static let shelfSpacing: CGFloat = 40
 }
 

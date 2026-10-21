@@ -45,12 +45,24 @@ type UserList struct {
 	Description string  `json:"description"`
 	PosterPath  string  `json:"poster_path"`
 	Items       []Title `json:"items"`
+	TotalPages  int     `json:"total_pages"`
 }
 
-func (c *Client) List(ctx context.Context, id int) (*UserList, error) {
+// List reads a public list, up to maxItems titles (0 for all of it).
+func (c *Client) List(ctx context.Context, id, maxItems int) (*UserList, error) {
 	var l UserList
 	if err := c.get(ctx, fmt.Sprintf("/list/%d", id), nil, 6*time.Hour, &l); err != nil {
 		return nil, err
+	}
+	for p := 2; p <= l.TotalPages && (maxItems <= 0 || len(l.Items) < maxItems); p++ {
+		var more UserList
+		if err := c.get(ctx, fmt.Sprintf("/list/%d", id), url.Values{"page": {fmt.Sprint(p)}}, 6*time.Hour, &more); err != nil || len(more.Items) == 0 {
+			break
+		}
+		l.Items = append(l.Items, more.Items...)
+	}
+	if maxItems > 0 && len(l.Items) > maxItems {
+		l.Items = l.Items[:maxItems]
 	}
 	return &l, nil
 }

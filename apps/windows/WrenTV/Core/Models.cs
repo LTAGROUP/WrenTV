@@ -184,6 +184,36 @@ public sealed class WrenCollection
     public string Sort { get; set; } = "";
     public bool ShowOnHome { get; set; }
     public int? ItemCount { get; set; }
+    /// Collections, Franchises, Lists, Charts or Smart Collections.
+    public string? Group { get; set; }
+}
+
+/// Episodes airing from a week back to a month ahead (GET /api/calendar).
+public sealed class CalendarResponse
+{
+    public string From { get; set; } = "";
+    public string To { get; set; } = "";
+    public List<CalendarEpisode> Episodes { get; set; } = [];
+}
+
+public sealed class CalendarEpisode
+{
+    public string Date { get; set; } = ""; // YYYY-MM-DD
+    public Item Show { get; set; } = new();
+    public int SeasonNumber { get; set; }
+    public int EpisodeNumber { get; set; }
+    public string Title { get; set; } = "";
+    public string? Overview { get; set; }
+    public string? StillPath { get; set; }
+    /// The episode in the library, when it's there.
+    public string? ItemId { get; set; }
+    public bool Watched { get; set; }
+    /// The viewer has watched some of the show; UpNext is the episode they're up to.
+    public bool Watching { get; set; }
+    public bool UpNext { get; set; }
+
+    public string Code => $"S{SeasonNumber} · E{EpisodeNumber}";
+    public string Name => Title.Length > 0 ? Title : $"Episode {EpisodeNumber}";
 }
 
 public sealed class CollectionDetail

@@ -1,5 +1,9 @@
 package com.wrentv.tv.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
@@ -24,6 +28,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
@@ -41,10 +46,12 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.focusGroup
+import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -57,6 +64,7 @@ import com.wrentv.tv.data.AppState
 import com.wrentv.tv.player.LivePlayerScreen
 import com.wrentv.tv.player.PlayerScreen
 import com.wrentv.tv.ui.screens.CollectionDetailScreen
+import com.wrentv.tv.ui.screens.CalendarScreen
 import com.wrentv.tv.ui.screens.CollectionsScreen
 import com.wrentv.tv.ui.screens.ConnectScreen
 import com.wrentv.tv.ui.screens.DetailScreen
@@ -168,6 +176,44 @@ private fun OpenLinks(state: AppState, nav: Navigator) {
     }
 }
 
+/**
+ * On Home with nowhere left to go back to, Back twice within two seconds
+ * asks whether to leave the app. Everywhere else Back goes back as usual.
+ */
+@Composable
+private fun ExitOnDoubleBack(nav: Navigator) {
+    val notices = LocalNotices.current
+    val context = LocalContext.current
+    var last by remember { mutableLongStateOf(0L) }
+    var asking by remember { mutableStateOf(false) }
+    BackHandler(enabled = nav.atTop && nav.tab == Route.Home && !asking) {
+        val now = SystemClock.uptimeMillis()
+        if (now - last < 2000) {
+            last = 0L
+            asking = true
+        } else {
+            last = now
+            notices.show("Press Back again to exit")
+        }
+    }
+    if (asking) {
+        Panel({ asking = false }, "Do you want to exit Wren TV?", width = 520.dp) {
+            val no = remember { FocusRequester() }
+            LaunchedEffect(Unit) { awaitFrame(); runCatching { no.requestFocus() } }
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                PillButton("No", { asking = false }, Modifier.focusRequester(no))
+                PillButton("Yes", { asking = false; context.findActivity()?.finish() }, primary = true)
+            }
+        }
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 @Composable
 private fun Main(state: AppState, nav: Navigator) {
     val holder = rememberSaveableStateHolder()
@@ -175,6 +221,7 @@ private fun Main(state: AppState, nav: Navigator) {
     val ambient = remember { AmbientState() }
     val route = nav.current
     BackHandler(enabled = nav.stack.isNotEmpty() || nav.tab != Route.Home) { nav.back() }
+    ExitOnDoubleBack(nav)
     OpenLinks(state, nav)
     // A new page starts with the bar showing.
     LaunchedEffect(route) { bar.atTop = true }
@@ -191,7 +238,7 @@ private fun Main(state: AppState, nav: Navigator) {
     CompositionLocalProvider(LocalTopBar provides bar, LocalRouteKey provides route.key, LocalAmbient provides ambient) {
         Box(Modifier.fillMaxSize().onFocusChanged { anyFocus = it.hasFocus }) {
             // Browsing pages take on the focused title's artwork.
-            if (route == Route.Home || route == Route.Collections || route == Route.Movies || route == Route.Shows || route is Route.Library ||
+            if (route == Route.Home || route == Route.Collections || route == Route.Calendar || route == Route.Movies || route == Route.Shows || route is Route.Library ||
                 route is Route.Hub || route is Route.Collection) {
                 AmbientBackdrop(route.key)
             }
@@ -219,6 +266,7 @@ private fun Page(route: Route) {
         Route.Movies -> KindScreen("movie")
         Route.Shows -> KindScreen("show")
         Route.Collections -> CollectionsScreen()
+        Route.Calendar -> CalendarScreen()
         Route.Search -> SearchScreen()
         Route.LiveTv -> LiveTvScreen()
         Route.Downloads -> DownloadsScreen()
@@ -253,9 +301,11 @@ private fun TopBar(state: AppState, nav: Navigator, page: FocusRequester) {
             add(Route.Movies to "Movies")
             add(Route.Shows to "TV Shows")
             add(Route.Collections to "Collections")
+            add(Route.Calendar to "Calendar")
         } else {
             state.libraries.forEach { add(Route.Library(it.id) to it.name) }
             add(Route.Collections to "Collections")
+            if (state.libraries.any { it.type == "shows" }) add(Route.Calendar to "Calendar")
         }
         if (state.downloads.items.isNotEmpty() || state.limits?.canDownload == true) add(Route.Downloads to "Downloads")
     }

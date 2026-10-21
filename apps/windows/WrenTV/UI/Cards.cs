@@ -53,8 +53,13 @@ static class Nav
 
 static class Cards
 {
-    public const double PosterWidth = 150, PosterHeight = 225;
-    public const double WideWidth = 300, WideHeight = 169;
+    /// Posters and tiles scale with the Poster size setting.
+    public static double Scale => Store.GetString(PosterSizeKey) switch { "small" => 0.85, "large" => 1.25, _ => 1 };
+    public const string PosterSizeKey = "posterSize";
+    public static double PosterWidth => 150 * Scale;
+    public static double PosterHeight => PosterWidth * 1.5;
+    public static double WideWidth => 300 * Scale;
+    public static double WideHeight => WideWidth * 9 / 16;
 
     static Button Plain(UIElement content) => new()
     {
@@ -106,8 +111,9 @@ static class Cards
     }
 
     /// A poster with its title underneath; opens the item.
-    public static Button Poster(Item item, double width = PosterWidth)
+    public static Button Poster(Item item, double? size = null)
     {
+        var width = size ?? PosterWidth;
         var height = width * 1.5;
         var api = App.State.Api;
         var stack = Ui.Column(6,
@@ -123,8 +129,9 @@ static class Cards
     }
 
     /// A wide still or backdrop: continue watching and episodes. Plays on click.
-    public static Button Wide(Item item, bool episodeTitle = false, double width = WideWidth)
+    public static Button Wide(Item item, bool episodeTitle = false, double? size = null)
     {
+        var width = size ?? WideWidth;
         var height = width * 9 / 16;
         var api = App.State.Api;
         var image = item.Kind == "episode" ? item.StillPath ?? item.BackdropPath : item.BackdropPath ?? item.StillPath;
@@ -155,17 +162,18 @@ static class Cards
     }
 
     /// A TMDB title (trending, more like this, discover).
-    public static Button Title(TitleView t, double width = PosterWidth, int? rank = null)
+    public static Button Title(TitleView t, double? size = null, int? rank = null)
     {
-        var b = Plain(TitleCell(t, width, rank));
+        var b = Plain(TitleCell(t, size ?? PosterWidth, rank));
         b.Click += (_, _) => Nav.Title(t);
         b.PointerEntered += (_, _) => Ambient.Hover(t.BackdropPath);
         if (t.Item is { } item) AttachMenu(b, item);
         return b;
     }
 
-    static StackPanel TitleCell(TitleView t, double width = PosterWidth, int? rank = null)
+    static StackPanel TitleCell(TitleView t, double? size = null, int? rank = null)
     {
+        var width = size ?? PosterWidth;
         var api = App.State.Api;
         var image = Ui.Image(api?.ImageUrl(t.PosterPath, "w342"), 300);
         var frame = Overlaid(image, t.Item, width, width * 1.5, true);
@@ -367,12 +375,12 @@ static class Cards
     /// Wide image tiles for collections and genres.
     public static UIElement Tiles(IEnumerable<UIElement> tiles)
     {
-        var wrap = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, ItemWidth = 296, ItemHeight = 186, Margin = new Thickness(Page.Gutter - 8, 0, Page.Gutter, 40) };
+        var wrap = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, ItemWidth = 296 * Scale, ItemHeight = 186 * Scale, Margin = new Thickness(Page.Gutter - 8, 0, Page.Gutter, 40) };
         foreach (var t in tiles) wrap.Children.Add(t);
         return new ScrollViewer { Content = wrap };
     }
 
-    public static UIElement Tile(string title, string sub, string? image, Action open)
+    public static Button Tile(string title, string sub, string? image, Action open, double margin = 8, string? flag = null, bool accent = false)
     {
         var g = new Grid();
         g.Children.Add(Ui.Image(App.State.Api?.ImageUrl(image, "w780"), 560));
@@ -393,11 +401,12 @@ static class Cards
         text.VerticalAlignment = VerticalAlignment.Bottom;
         text.Margin = new Thickness(14);
         g.Children.Add(text);
+        if (flag != null) g.Children.Add(Flag(flag, accent));
         var b = new Button
         {
-            Content = Ui.Frame(g, 280, 158),
+            Content = Ui.Frame(g, 280 * Scale, 158 * Scale),
             Padding = new Thickness(0),
-            Margin = new Thickness(8),
+            Margin = new Thickness(margin),
             BorderThickness = new Thickness(0),
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             CornerRadius = new CornerRadius(10),
@@ -406,4 +415,16 @@ static class Cards
         b.PointerEntered += (_, _) => Ambient.Hover(image);
         return b;
     }
+
+    /// A small label in a card's corner, like UP NEXT.
+    public static Border Flag(string text, bool accent = false) => new()
+    {
+        Background = accent ? Theme.EmberBrush : new SolidColorBrush(Color.FromArgb(0xD0, 0x12, 0x10, 0x16)),
+        CornerRadius = new CornerRadius(5),
+        Padding = new Thickness(7, 3, 7, 3),
+        Margin = new Thickness(10),
+        HorizontalAlignment = HorizontalAlignment.Left,
+        VerticalAlignment = VerticalAlignment.Top,
+        Child = new TextBlock { Text = text.ToUpperInvariant(), FontSize = 10.5, FontWeight = FontWeights.Bold },
+    };
 }

@@ -19,6 +19,19 @@ struct CollectionsView: View {
                     ContentUnavailableView("No collections yet", systemImage: "square.stack",
                                            description: Text(state.isAdmin ? "Create collections in the web app: hand-picked, smart rules, or synced from TMDB." : "Collections the server owner makes show up here."))
                         .padding(.top, 100)
+                } else if !embedded {
+                    // A shelf per kind: the server's own, franchises, lists, charts and smart collections.
+                    LazyVStack(alignment: .leading, spacing: 30) {
+                        ForEach(grouped(collections), id: \.name) { g in
+                            Shelf(title: g.name, subtitle: "\(g.collections.count) collection\(g.collections.count == 1 ? "" : "s")") {
+                                ForEach(g.collections) { c in
+                                    NavigationLink(value: c) { CollectionTile(collection: c) }
+                                        .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 20)
                 } else {
                     LazyVGrid(columns: m.columns, alignment: .leading, spacing: m.rowSpacing) {
                         ForEach(collections) { c in
@@ -39,6 +52,48 @@ struct CollectionsView: View {
         .task(id: "\(libraryId ?? "")|\(state.refreshTick)") {
             do { collections = try await state.api?.collections(library: libraryId) } catch { self.error = error.localizedDescription }
         }
+    }
+}
+
+/// In the server's order, which already puts the groups in theirs.
+private func grouped(_ list: [WrenCollection]) -> [(name: String, collections: [WrenCollection])] {
+    var out: [(name: String, collections: [WrenCollection])] = []
+    for c in list {
+        let g = c.group ?? "Collections"
+        if let i = out.firstIndex(where: { $0.name == g }) { out[i].collections.append(c) } else { out.append((g, [c])) }
+    }
+    return out
+}
+
+/// A collection's wide tile: its artwork with the name over it.
+struct CollectionTile: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.metrics) private var m
+    let collection: WrenCollection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .bottomLeading) {
+                RemoteImage(url: state.api?.imageURL(collection.backdropPath ?? collection.posterPath, size: "w780"))
+                LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .center, endPoint: .bottom)
+                Text(collection.name).font(.headline.bold()).foregroundStyle(.white).lineLimit(2).padding(12)
+            }
+            .frame(width: m.landscape, height: m.landscape * 9 / 16)
+            .overlay(alignment: .topLeading) {
+                if collection.active == false {
+                    Text("OUT OF SEASON")
+                        .font(.system(size: 9, weight: .bold)).kerning(0.6).foregroundStyle(.white)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(.black.opacity(0.7), in: Capsule())
+                        .padding(8)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            Text("\(collection.itemCount ?? 0) title\(collection.itemCount == 1 ? "" : "s") · \(collection.kindLabel)")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(width: m.landscape)
+        .contentShape(Rectangle())
     }
 }
 

@@ -1,6 +1,8 @@
 package com.wrentv.tv.ui.screens
 
 import com.wrentv.tv.ui.CinematicPoster
+import com.wrentv.tv.ui.CinematicLandscape
+import com.wrentv.tv.ui.posterScale
 import com.wrentv.tv.ui.CinematicBrowse
 import com.wrentv.tv.data.DiscoverHome
 import androidx.compose.material.icons.rounded.History
@@ -42,6 +44,7 @@ import androidx.compose.material.icons.rounded.ViewCarousel
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -62,6 +65,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -105,8 +109,14 @@ import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private const val Columns = 6
-private val CardWidth = 132.dp
+/** Posters across a grid, and how wide each is: six at the usual size, fewer when they're bigger. */
+private val Columns: Int
+    @Composable @ReadOnlyComposable get() = when (LocalAppState.current.posterSize) {
+        "small" -> 7
+        "large" -> 5
+        else -> 6
+    }
+private val CardWidth: Dp @Composable @ReadOnlyComposable get() = 132.dp * posterScale
 
 val SortOptions = listOf(
     Choice("title", "Title"), Choice("added", "Recently Added"), Choice("year", "Year (newest)"),
@@ -198,9 +208,10 @@ fun CatalogScreen(type: String) {
 
     LaunchedEffect(type, sort, genre) { loadMore() }
     // Load the next page as the last rows come into view.
+    val columns = Columns
     LaunchedEffect(grid, type, sort, genre) {
         snapshotFlow { grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }.collect { last ->
-            if (titles.isNotEmpty() && last >= titles.size - Columns * 2) loadMore()
+            if (titles.isNotEmpty() && last >= titles.size - columns * 2) loadMore()
         }
     }
 
@@ -365,60 +376,58 @@ private fun LetterRail(items: List<Item>, jump: (Int) -> Unit) {
 // Collections
 
 @Composable
-fun CollectionsScreen() = CollectionsGrid(null, "Collections")
-
-@Composable
-private fun CollectionsGrid(libraryId: String?, title: String) {
+fun CollectionsScreen() {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
-    val collections = rememberLoaded<List<WrenCollection>>("collections:$libraryId", state.refreshTick) { state.api?.collections(libraryId) }
-    PosterGrid {
-        header(title, collections.value?.let { "${it.size} collection${if (it.size == 1) "" else "s"}" })
-        val list = collections.value
+    val collections = rememberLoaded<List<WrenCollection>>("collections:null", state.refreshTick) { state.api?.collections(null) }
+    val list = rememberLazyListState()
+    val all = collections.value
+    // Shelves the way home has them: one per kind of collection, in the server's order.
+    val shelves = all.orEmpty().groupBy { it.group ?: "Collections" }
+    CinematicBrowse(list, fallback = all?.firstOrNull()?.heroEntry(), label = "Collections") {
         when {
-            list == null && collections.error != null -> fullWidth("error") { EmptyState("Couldn't load", collections.error, icon = Icons.Rounded.WifiOff) }
-            list == null -> fullWidth("loading") { Loading() }
-            list.isEmpty() -> fullWidth("none") {
+            all == null && collections.error != null -> extra("error") { EmptyState("Couldn't load", collections.error, icon = Icons.Rounded.WifiOff) }
+            all == null -> extra("loading") { Loading() }
+            all.isEmpty() -> extra("none") {
                 EmptyState("No collections yet",
                     if (state.isAdmin) "Create collections in the web app: hand-picked, smart rules, or synced from TMDB." else "Collections the server owner makes show up here.",
                     icon = Icons.Rounded.ViewCarousel)
             }
-            else -> items(list, key = { it.id }) { c ->
-                CollectionCard(c, { nav.push(Route.Collection(c)) }, Modifier.rememberFocus("c:${c.id}", default = c == list.first()))
+            else -> shelves.forEach { (group, cs) ->
+                row("group:$group") {
+                    Shelf(group, subtitle = "${cs.size} collection${if (cs.size == 1) "" else "s"}") {
+                        items(cs, key = { it.id }) { c ->
+                            CollectionTile(c, Modifier.rememberFocus("c:${c.id}", default = c == all.first())) { nav.push(Route.Collection(c)) }
+                        }
+                    }
+                }
             }
         }
     }
 }
 
+fun WrenCollection.heroEntry() = HeroEntry(
+    id = "collection:$id", title = name, backdrop = backdropPath, logo = null,
+    meta = listOfNotNull(itemCount?.let { "$it title${if (it == 1) "" else "s"}" }, group ?: kindLabel,
+        if (active == false) "Out of season" else null, if (showOnHome) "On Home" else null),
+    badges = emptyList(), overview = description.ifEmpty { null }, item = null,
+)
+
+/** A collection's tile: its artwork with the name over it, like a hub's. */
 @Composable
-private fun CollectionCard(c: WrenCollection, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun CollectionTile(c: WrenCollection, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val api = LocalAppState.current.api
-    var focused by remember { mutableStateOf(false) }
-    Column(modifier.width(CardWidth)) {
-        // Two offset cards behind the poster read as a stack.
-        Box(Modifier.padding(top = 8.dp)) {
-            Box(Modifier.align(Alignment.TopCenter).offset(y = (-8).dp).width(CardWidth - 16.dp).aspectRatio(2f / 3f)
-                .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(10.dp)))
-            Box(Modifier.align(Alignment.TopCenter).offset(y = (-4).dp).width(CardWidth - 8.dp).aspectRatio(2f / 3f)
-                .background(Color.White.copy(alpha = 0.09f), RoundedCornerShape(10.dp)))
-            ArtCard(onClick, Modifier.width(CardWidth).aspectRatio(2f / 3f).onFocusChanged { focused = it.hasFocus }.ambient(c.backdropPath)) {
-                RemoteImage(api?.imageUrl(c.posterPath), Modifier.fillMaxSize())
-                if (c.posterPath == null) {
-                    Text(c.name, style = MaterialTheme.typography.titleMedium, color = Wren.secondary, textAlign = TextAlign.Center,
-                        modifier = Modifier.align(Alignment.Center).padding(12.dp))
-                }
-                if (c.showOnHome || c.active == false) {
-                    Text(
-                        if (c.active == false) "OUT OF SEASON" else "ON HOME", style = MaterialTheme.typography.labelSmall, color = Color.White,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.7f)).padding(vertical = 4.dp),
-                    )
-                }
-            }
-        }
-        Column(Modifier.padding(top = 10.dp).alpha(if (focused) 1f else 0.75f)) {
-            Text(c.name, style = MaterialTheme.typography.titleSmall, color = Wren.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("${c.itemCount ?: 0} title${if (c.itemCount == 1) "" else "s"} · ${c.kindLabel}", style = MaterialTheme.typography.bodySmall, color = Wren.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    ArtCard(onClick, modifier.width(CinematicLandscape).aspectRatio(16f / 9f).ambient(c.backdropPath) { c.heroEntry() }) {
+        RemoteImage(api?.imageUrl(c.backdropPath ?: c.posterPath, "w780"), Modifier.fillMaxSize())
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.35f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.85f))))
+        Text(
+            c.name, style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = Color.White, maxLines = 2,
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.align(Alignment.BottomStart).padding(14.dp),
+        )
+        if (c.active == false) {
+            Text("OUT OF SEASON", style = MaterialTheme.typography.labelSmall, color = Color.White,
+                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp))
         }
     }
 }

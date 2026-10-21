@@ -43,7 +43,7 @@ type Client struct {
 	sf       singleflight.Group
 
 	mu  sync.Mutex
-	mem map[string][]byte // hot cache for the current scan (seasons shared by many episodes)
+	mem map[string]memEntry // hot cache for the current scan (seasons shared by many episodes)
 }
 
 func New(apiKey, language string, cache Cache) *Client {
@@ -54,7 +54,7 @@ func New(apiKey, language string, cache Cache) *Client {
 		// TMDB allows ~50 req/s; stay comfortably under it.
 		limiter: rate.NewLimiter(rate.Limit(35), 20),
 		cache:   cache,
-		mem:     map[string][]byte{},
+		mem:     map[string]memEntry{},
 	}
 }
 
@@ -71,9 +71,9 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, maxAge
 	key := path + "?" + params.Encode()
 
 	c.mu.Lock()
-	if b, ok := c.mem[key]; ok {
+	if m, ok := c.mem[key]; ok && time.Since(m.at) < maxAge {
 		c.mu.Unlock()
-		return json.Unmarshal(b, out)
+		return json.Unmarshal(m.body, out)
 	}
 	c.mu.Unlock()
 	if b, ok := c.cache.CacheGet(ctx, "tmdb:"+key, int64(maxAge.Seconds())); ok {
@@ -122,12 +122,18 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, maxAge
 	return json.Unmarshal(v.([]byte), out)
 }
 
+// memEntry is a response held in memory, and when it was put there.
+type memEntry struct {
+	body []byte
+	at   time.Time
+}
+
 func (c *Client) remember(key string, b []byte) {
 	c.mu.Lock()
 	if len(c.mem) > 5000 {
-		c.mem = map[string][]byte{}
+		c.mem = map[string]memEntry{}
 	}
-	c.mem[key] = b
+	c.mem[key] = memEntry{b, time.Now()}
 	c.mu.Unlock()
 }
 
@@ -332,6 +338,26 @@ func (c *Client) Show(ctx context.Context, id int) (*Show, error) {
 	p := url.Values{"append_to_response": {"external_ids,content_ratings,images"}, "include_image_language": {"en,null"}}
 	err := c.get(ctx, "/tv/"+strconv.Itoa(id), p, detailTTL, &s)
 	return &s, err
+}
+
+// Airing is a show's schedule: whether it's still running, and the
+// episodes either side of today. It's kept fresher than Show.
+type Airing struct {
+	Status      string `json:"status"`
+	LastAirDate string `json:"last_air_date"`
+	LastEpisode *struct {
+		SeasonNumber int `json:"season_number"`
+	} `json:"last_episode_to_air"`
+	NextEpisode *struct {
+		SeasonNumber int    `json:"season_number"`
+		AirDate      string `json:"air_date"`
+	} `json:"next_episode_to_air"`
+}
+
+func (c *Client) Airing(ctx context.Context, showID int) (*Airing, error) {
+	var a Airing
+	err := c.get(ctx, "/tv/"+strconv.Itoa(showID), nil, seasonTTL, &a)
+	return &a, err
 }
 
 func (c *Client) Season(ctx context.Context, showID, season int) (*Season, error) {

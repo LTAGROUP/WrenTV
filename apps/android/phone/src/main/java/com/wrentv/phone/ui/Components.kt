@@ -66,17 +66,25 @@ import com.wrentv.tv.ui.playTarget
 import kotlinx.coroutines.launch
 
 /** Sizes that change between phones and tablets. */
-class Metrics(val compact: Boolean) {
+class Metrics(val compact: Boolean, private val scale: Float = 1f) {
     val gutter: Dp get() = if (compact) 16.dp else 28.dp
-    val poster: Dp get() = if (compact) 112.dp else 150.dp
-    val landscape: Dp get() = if (compact) 250.dp else 280.dp
+    /** Posters and tiles scale with the Poster Size setting. */
+    val poster: Dp get() = (if (compact) 112.dp else 150.dp) * scale
+    val landscape: Dp get() = (if (compact) 250.dp else 280.dp) * scale
     val heroHeight: Dp get() = if (compact) 500.dp else 560.dp
     val cardSpacing: Dp get() = if (compact) 12.dp else 16.dp
-    val gridMin: Dp get() = if (compact) 100.dp else 150.dp
+    val gridMin: Dp get() = (if (compact) 100.dp else 150.dp) * scale
 }
 
 @Composable
-fun metrics(): Metrics = Metrics(LocalConfiguration.current.screenWidthDp < 600)
+fun metrics(): Metrics = Metrics(
+    LocalConfiguration.current.screenWidthDp < 600,
+    when (LocalAppState.current.posterSize) {
+        "small" -> 0.85f
+        "large" -> 1.25f
+        else -> 1f
+    },
+)
 
 @Composable
 fun RemoteImage(url: String?, modifier: Modifier = Modifier, contentScale: ContentScale = ContentScale.Crop) {

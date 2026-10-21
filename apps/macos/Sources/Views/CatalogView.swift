@@ -19,7 +19,7 @@ struct CatalogView: View {
 
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 180), spacing: 22)], alignment: .leading, spacing: 26) {
+            LazyVGrid(columns: PosterSize.columns, alignment: .leading, spacing: 26) {
                 ForEach(titles) { v in
                     TitleCard(title: v)
                         .onAppear { if v.id == titles.last?.id { Task { await loadMore() } } }

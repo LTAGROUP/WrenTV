@@ -19,6 +19,7 @@ sealed interface Route {
     data class Collection(val id: String, val name: String) : Route
     data class Genre(val genre: String, val libraryId: String? = null) : Route
     data object Collections : Route
+    data object Calendar : Route
     data class Genres(val libraryId: String? = null) : Route
     data object Watchlist : Route
     data object Downloads : Route

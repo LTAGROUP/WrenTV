@@ -143,6 +143,38 @@ type Collection struct {
 	// Filled by handlers.
 	ItemCount int  `json:"itemCount"`
 	Active    bool `json:"active"`
+	// Group is the shelf the collection sits on: "Collections",
+	// "Franchises", "Lists", "Charts" or "Smart Collections".
+	Group string `json:"group,omitempty"`
+}
+
+// collectionGroups is the order shelves of collections are shown in.
+var collectionGroups = []string{"Collections", "Franchises", "Lists", "Charts", "Smart Collections"}
+
+// GroupOf names the shelf a collection belongs on.
+func (c *Collection) GroupOf() string {
+	switch {
+	case c.Kind == "smart":
+		return "Smart Collections"
+	case c.Kind != "tmdb":
+		return "Collections"
+	case c.Rules.Source == "collection":
+		return "Franchises"
+	case c.Rules.Source == "list" || c.Rules.Source == "mdblist",
+		c.Rules.Source == "simkl" && strings.HasPrefix(c.Rules.SourceRef, "watchlist"):
+		return "Lists"
+	}
+	return "Charts"
+}
+
+// GroupRank orders collections by their shelf.
+func GroupRank(group string) int {
+	for i, g := range collectionGroups {
+		if g == group {
+			return i
+		}
+	}
+	return len(collectionGroups)
 }
 
 // ActiveOn reports whether the visibility window (which may wrap the new

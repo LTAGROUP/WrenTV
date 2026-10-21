@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Collections
 import androidx.compose.material.icons.rounded.Dashboard
@@ -51,8 +52,9 @@ fun MoreScreen() {
             NavRow(Icons.Rounded.Bookmark, "Watchlist") { nav.push(Route.Watchlist) }
             NavRow(Icons.Rounded.Download, "Downloads", state.downloads.items.size.takeIf { it > 0 }?.toString()) { nav.push(Route.Downloads) }
             NavRow(Icons.Rounded.Collections, "Collections") { nav.push(Route.Collections) }
+            if (state.canStream || state.libraries.any { it.type == "shows" }) NavRow(Icons.Rounded.CalendarMonth, "Calendar") { nav.push(Route.Calendar) }
             NavRow(Icons.Rounded.Dashboard, "Layouts") { nav.push(Route.Layouts) }
-            NavRow(Icons.Rounded.Tune, "Playback") { nav.push(Route.Preferences) }
+            NavRow(Icons.Rounded.Tune, "Settings") { nav.push(Route.Preferences) }
             SectionHeader("Account")
             state.accountEmail?.let { NavRow(Icons.Rounded.Person, it, onClick = null) }
             state.user?.let { u -> if (state.accountEmail == null) NavRow(Icons.Rounded.Person, u.username, onClick = null) }
@@ -87,7 +89,7 @@ fun PreferencesScreen() {
         prefs = p
         scope.launch { runCatching { state.api?.setPrefs(p) }.onFailure { prefs = old; error = it.message } }
     }
-    Page("Playback") {
+    Page("Settings") {
         val p = prefs
         if (p == null) { if (error != null) EmptyState(Icons.Rounded.Tune, "Couldn't load", error) else Loading(); return@Page }
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -97,6 +99,24 @@ fun PreferencesScreen() {
             Text("These apply on every device signed in to your account. You can still change tracks while watching.",
                 Modifier.fillMaxWidth().padding(horizontal = metrics().gutter, vertical = 8.dp), color = Wren.secondary, style = MaterialTheme.typography.bodySmall)
             error?.let { Text(it, Modifier.padding(horizontal = metrics().gutter), color = Wren.ember, style = MaterialTheme.typography.bodySmall) }
+            SectionHeader("Browsing")
+            PosterSizePicker()
+        }
+    }
+}
+
+/** How big posters and tiles are, on this phone. */
+@Composable
+private fun PosterSizePicker() {
+    val state = LocalAppState.current
+    var open by remember { mutableStateOf(false) }
+    val sizes = listOf("small" to "Small", "medium" to "Medium", "large" to "Large")
+    androidx.compose.foundation.layout.Box {
+        NavRow(null, "Poster size", sizes.firstOrNull { it.first == state.posterSize }?.second ?: "Medium") { open = true }
+        DropdownMenu(open, { open = false }) {
+            sizes.forEach { (v, label) ->
+                DropdownMenuItem({ Text(label) }, { open = false; state.posterSize = v }, trailingIcon = { if (state.posterSize == v) Icon(Icons.Rounded.Check, null) })
+            }
         }
     }
 }

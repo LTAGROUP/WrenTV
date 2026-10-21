@@ -1,6 +1,6 @@
 import SwiftUI
 
-private let gridColumns = [GridItem(.adaptive(minimum: 150, maximum: 180), spacing: 22)]
+private var gridColumns: [GridItem] { PosterSize.columns }
 
 // MARK: Collections
 
@@ -13,6 +13,52 @@ struct CollectionsView: View {
     @State private var error: String?
 
     var body: some View {
+        if embedded { grid } else { shelves }
+    }
+
+    /// The Collections page: a shelf per kind, under the hovered one's details.
+    private var shelves: some View {
+        CinematicPage(fallback: collections?.first?.heroEntry, fallbackBackdrop: collections?.first?.backdropPath, label: "Collections") {
+            if let collections {
+                if collections.isEmpty {
+                    ContentUnavailableView("No collections yet", systemImage: "square.stack",
+                                           description: Text(state.isAdmin ? "Create collections in the web app: hand-picked, smart rules, or synced from TMDB." : "Collections the server owner makes show up here."))
+                        .padding(.top, 60)
+                }
+                ForEach(grouped(collections), id: \.name) { g in
+                    Shelf(title: g.name, subtitle: "\(g.collections.count) collection\(g.collections.count == 1 ? "" : "s")") {
+                        ForEach(g.collections) { c in
+                            NavigationLink(value: c) { CollectionTile(collection: c) }
+                                .buttonStyle(.plain)
+                        }
+                    }
+                }
+            } else if let error {
+                ContentUnavailableView("Couldn't load", systemImage: "exclamationmark.triangle", description: Text(error)).padding(.top, 60)
+            } else {
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 80)
+            }
+        }
+        .navigationTitle("Collections")
+        .task(id: "\(libraryId ?? "")|\(state.refreshTick)") { await load() }
+    }
+
+    private func load() async {
+        do { collections = try await state.api?.collections(library: libraryId) } catch { self.error = error.localizedDescription }
+    }
+
+    /// In the server's order, which already puts the groups in theirs.
+    private func grouped(_ list: [WrenCollection]) -> [(name: String, collections: [WrenCollection])] {
+        var out: [(name: String, collections: [WrenCollection])] = []
+        for c in list {
+            let g = c.group ?? "Collections"
+            if let i = out.firstIndex(where: { $0.name == g }) { out[i].collections.append(c) } else { out.append((g, [c])) }
+        }
+        return out
+    }
+
+    /// A library's collections, on its page.
+    private var grid: some View {
         ScrollView {
             if let collections {
                 if collections.isEmpty {
@@ -35,19 +81,56 @@ struct CollectionsView: View {
                 ProgressView().frame(maxWidth: .infinity).padding(.top, 160)
             }
         }
-        .modifier(TitleIfStandalone(title: "Collections", standalone: !embedded))
-        // A library's page already has one.
-        .modifier(AmbientIfStandalone(standalone: !embedded))
-        .task(id: "\(libraryId ?? "")|\(state.refreshTick)") {
-            do { collections = try await state.api?.collections(library: libraryId) } catch { self.error = error.localizedDescription }
+        .task(id: "\(libraryId ?? "")|\(state.refreshTick)") { await load() }
+    }
+}
+
+/// A collection's wide tile: its artwork with the name over it.
+struct CollectionTile: View {
+    @Environment(AppState.self) private var state
+    let collection: WrenCollection
+    var width: CGFloat = PosterSize.width(280)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .bottomLeading) {
+                RemoteImage(url: state.api?.imageURL(collection.backdropPath ?? collection.posterPath, size: "w780"))
+                LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .center, endPoint: .bottom)
+                Text(collection.name).font(.title3.bold()).lineLimit(2).padding(14)
+            }
+            .frame(width: width, height: width * 9 / 16)
+            .overlay(alignment: .topLeading) {
+                if collection.showOnHome || collection.active == false {
+                    Text(collection.active == false ? "OUT OF SEASON" : "ON HOME")
+                        .font(.system(size: 9, weight: .bold)).kerning(0.6)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(.black.opacity(0.7), in: Capsule())
+                        .padding(10)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .hoverLift(cornerRadius: 10)
+            .ambient(collection.backdropPath) { collection.heroEntry }
+            Text("\(collection.itemCount ?? 0) title\(collection.itemCount == 1 ? "" : "s") · \(collection.kindLabel)")
+                .font(.caption).foregroundStyle(.secondary)
         }
+        .frame(width: width)
+        .contentShape(Rectangle())
+    }
+}
+
+extension WrenCollection {
+    var heroEntry: HeroEntry {
+        HeroEntry(id: "collection:\(id)", title: name,
+                  meta: [itemCount.map { "\($0) title\($0 == 1 ? "" : "s")" }, kindLabel].compactMap { $0 }.joined(separator: "  ·  "),
+                  overview: description.isEmpty ? nil : description)
     }
 }
 
 struct CollectionCard: View {
     @Environment(AppState.self) private var state
     let collection: WrenCollection
-    var width: CGFloat = 150
+    var width: CGFloat = PosterSize.width(150)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

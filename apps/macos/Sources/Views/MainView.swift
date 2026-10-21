@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum SidebarItem: Hashable {
-    case home, watchlist, liveTV, collections, movies, shows, layouts
+    case home, watchlist, liveTV, collections, calendar, movies, shows, layouts
     case library(String)
     case downloads
     case stats, serverDownloads, users, manageLibraries, settings
@@ -12,6 +12,7 @@ struct MainView: View {
     @State private var selection: SidebarItem? = .home
     @State private var path = NavigationPath()
     @State private var search = ""
+    @AppStorage(PosterSize.key) private var posterSize = PosterSize.medium.rawValue
 
     var body: some View {
         NavigationSplitView {
@@ -30,6 +31,9 @@ struct MainView: View {
                         Label("Collections", systemImage: "square.stack").tag(SidebarItem.collections)
                     } else {
                         Label("Collections", systemImage: "square.stack").tag(SidebarItem.collections)
+                    }
+                    if state.canStream || state.libraries.contains(where: { $0.type == "shows" }) {
+                        Label("Calendar", systemImage: "calendar").tag(SidebarItem.calendar)
                     }
                 }
                 if !state.canStream {
@@ -95,6 +99,8 @@ struct MainView: View {
                     .navigationDestination(for: Library.self) { LibraryView(library: $0).searchBar($search) }
                     .navigationDestination(for: CatalogRoute.self) { CatalogView(type: $0.type).searchBar($search) }
             }
+            // Card sizes are read as pages draw, so a new size redraws them.
+            .id(posterSize)
         }
         .onChange(of: selection) {
             path = NavigationPath()
@@ -119,6 +125,7 @@ struct MainView: View {
         case .watchlist: WatchlistView()
         case .liveTV: LiveTVView()
         case .collections: CollectionsView()
+        case .calendar: CalendarView()
         case .movies:
             LayoutPageView(scope: "movies", title: "Movies", label: "Movies", browseAll: CatalogRoute(type: "movie")) { CatalogView(type: "movie") }
         case .shows:

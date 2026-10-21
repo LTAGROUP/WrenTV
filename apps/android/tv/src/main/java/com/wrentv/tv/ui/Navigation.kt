@@ -18,6 +18,7 @@ sealed interface Route {
     data object Movies : Route { override val key = "movies" }
     data object Shows : Route { override val key = "shows" }
     data object Collections : Route { override val key = "collections" }
+    data object Calendar : Route { override val key = "calendar" }
     data object Search : Route { override val key = "search" }
     data object LiveTv : Route { override val key = "livetv" }
     data object Downloads : Route { override val key = "downloads" }

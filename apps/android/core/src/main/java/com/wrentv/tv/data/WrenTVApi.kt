@@ -252,6 +252,10 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     suspend fun setWatchlist(id: String, on: Boolean) { send(if (on) "PUT" else "DELETE", "/api/items/$id/watchlist") }
     suspend fun watchlist(): List<Item> = get("/api/watchlist")
 
+    /** Episodes airing from..to (YYYY-MM-DD; the server picks a week back to a month ahead when null). */
+    suspend fun calendar(from: String? = null, to: String? = null): CalendarResponse =
+        get("/api/calendar", buildMap { from?.let { put("from", it) }; to?.let { put("to", it) } })
+
     suspend fun liveChannels(): List<LiveChannel> = get<LiveChannelsResponse>("/api/livetv/channels").channels
     suspend fun liveGuide(hours: Int): List<LiveGuideChannel> =
         get<LiveGuideResponse>("/api/livetv/guide", mapOf("hours" to hours.toString())).channels

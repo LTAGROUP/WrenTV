@@ -255,7 +255,7 @@ fun ArtCard(
 
 /** Card text that brightens with focus. */
 @Composable
-private fun CardCaption(title: String, subtitle: String?, focused: Boolean, width: Dp) {
+fun CardCaption(title: String, subtitle: String?, focused: Boolean, width: Dp) {
     val a by animateFloatAsState(if (focused) 1f else 0.75f, label = "caption")
     Column(Modifier.width(width).padding(top = 10.dp).alpha(a)) {
         Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Wren.text)

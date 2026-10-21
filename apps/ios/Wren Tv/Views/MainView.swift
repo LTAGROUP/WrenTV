@@ -9,6 +9,7 @@ struct MainView: View {
     @Environment(AppState.self) private var state
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var tab: AppTab = .home
+    @AppStorage(PosterSize.key) private var posterSize = PosterSize.medium.rawValue
 
     /// Live TV gets a tab unless the iPhone's bar is already full (Movies
     /// and TV Shows); then it's the first row under More.
@@ -51,6 +52,8 @@ struct MainView: View {
         }
         .tabViewStyle(.sidebarAdaptable)
         .minimizesTabBarOnScroll()
+        // Card sizes are read as pages draw, so a new size redraws them.
+        .id(posterSize)
     }
 }
 
@@ -69,7 +72,7 @@ struct TabStack<Root: View>: View {
 /// since a stack that mixes value links with view links pops the view-linked
 /// page as soon as something is pushed from it.
 enum PageRoute: Hashable {
-    case liveTV, watchlist, downloads, collections, preferences, linkTV
+    case liveTV, watchlist, downloads, collections, calendar, preferences, linkTV
     case stats, libraries, users, serverDownloads, serverSettings
 
     @ViewBuilder var page: some View {
@@ -78,6 +81,7 @@ enum PageRoute: Hashable {
         case .watchlist: WatchlistView()
         case .downloads: DownloadsView()
         case .collections: CollectionsView()
+        case .calendar: CalendarView()
         case .preferences: PreferencesView()
         case .linkTV: LinkTVView()
         case .stats: StatsView()
@@ -126,6 +130,9 @@ struct LibrariesView: View {
             Section {
                 NavigationLink(value: PageRoute.watchlist) { Label("Watchlist", systemImage: "bookmark") }
                 NavigationLink(value: PageRoute.collections) { Label("Collections", systemImage: "square.stack") }
+                if state.libraries.contains(where: { $0.type == "shows" }) {
+                    NavigationLink(value: PageRoute.calendar) { Label("Calendar", systemImage: "calendar") }
+                }
             }
             Section("Libraries") {
                 ForEach(state.libraries) { lib in
@@ -160,11 +167,12 @@ struct MoreView: View {
                     }
                     if state.canStream {
                         NavigationLink(value: PageRoute.collections) { Label("Collections", systemImage: "square.stack") }
+                        NavigationLink(value: PageRoute.calendar) { Label("Calendar", systemImage: "calendar") }
                     }
                 }
             }
             Section {
-                NavigationLink(value: PageRoute.preferences) { Label("Playback Settings", systemImage: "slider.horizontal.3") }
+                NavigationLink(value: PageRoute.preferences) { Label("Settings", systemImage: "slider.horizontal.3") }
                 NavigationLink(value: LayoutsRoute()) { Label("Layouts", systemImage: "rectangle.3.group") }
                 NavigationLink(value: PageRoute.linkTV) { Label("Link a TV", systemImage: "tv.badge.wifi") }
             }

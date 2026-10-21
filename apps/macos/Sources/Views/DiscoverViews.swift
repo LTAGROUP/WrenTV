@@ -6,7 +6,7 @@ struct TitleCard: View {
     @Environment(AppState.self) private var state
     let title: TitleView
     var rank: Int?
-    var width: CGFloat = 150
+    var width: CGFloat = PosterSize.width(150)
 
     var body: some View {
         if let item = title.item {

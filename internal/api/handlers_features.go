@@ -295,6 +295,9 @@ func (s *Server) handleCollections(w http.ResponseWriter, r *http.Request) {
 		c.ItemCount = len(items)
 		if c.Kind == "tmdb" && s.canStream(r) {
 			c.ItemCount = len(c.Titles)
+			if c.ItemLimit > 0 {
+				c.ItemCount = min(c.ItemCount, c.ItemLimit)
+			}
 		}
 		c.Active = c.ActiveOn(time.Now())
 		if c.PosterPath == "" && len(items) > 0 {
@@ -306,8 +309,11 @@ func (s *Server) handleCollections(w http.ResponseWriter, r *http.Request) {
 		if c.ItemCount == 0 && !principal(r).IsAdmin() {
 			continue
 		}
+		c.Group = c.GroupOf()
 		out = append(out, c)
 	}
+	// Grouped into shelves, each in the usual order.
+	sort.SliceStable(out, func(i, j int) bool { return db.GroupRank(out[i].Group) < db.GroupRank(out[j].Group) })
 	writeJSON(w, 200, out)
 }
 
@@ -337,8 +343,12 @@ func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"collection": c, "items": items, "missing": missing}
 	// When streaming, a TMDB collection is everything in it, in its order.
 	if c.Kind == "tmdb" && s.canStream(r) {
-		resp["titles"] = s.collectionTitles(r.Context(), r, c)
-		c.ItemCount = len(c.Titles)
+		titles := s.collectionTitles(r.Context(), r, c)
+		if c.ItemLimit > 0 && len(titles) > c.ItemLimit {
+			titles = titles[:c.ItemLimit]
+		}
+		resp["titles"] = titles
+		c.ItemCount = len(titles)
 	}
 	c.Active = c.ActiveOn(time.Now())
 	if c.BackdropPath == "" {
@@ -599,7 +609,7 @@ func (s *Server) syncCollection(ctx context.Context, c *db.Collection) error {
 	if !s.TMDB.Enabled() {
 		return errors.New("TMDB collections need a TMDB key (Settings)")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	ru := c.Rules
 	mt := "movie"
@@ -620,8 +630,8 @@ func (s *Server) syncCollection(ctx context.Context, c *db.Collection) error {
 		if err != nil {
 			return err
 		}
-		if len(ts) > maxExternal {
-			ts = ts[:maxExternal]
+		if n := titleCap(c, maxExternal); len(ts) > n {
+			ts = ts[:n]
 		}
 		s.withPosters(ctx, ts)
 		if c.Name == "" {
@@ -652,7 +662,7 @@ func (s *Server) syncCollection(ctx context.Context, c *db.Collection) error {
 			c.BackdropPath = f.BackdropPath
 		}
 	case "list":
-		l, err := s.TMDB.List(ctx, ru.SourceID)
+		l, err := s.TMDB.List(ctx, ru.SourceID, titleCap(c, maxExternal))
 		if err != nil {
 			return err
 		}
@@ -664,9 +674,13 @@ func (s *Server) syncCollection(ctx context.Context, c *db.Collection) error {
 			c.Description = l.Description
 		}
 	default:
-		ts, err := s.TMDB.Chart(ctx, ru.Source, mt, 5)
+		n := titleCap(c, chartDefault)
+		ts, err := s.TMDB.Chart(ctx, ru.Source, mt, (n+19)/20)
 		if err != nil {
 			return err
+		}
+		if len(ts) > n {
+			ts = ts[:n]
 		}
 		titles = ts
 		if c.Name == "" {

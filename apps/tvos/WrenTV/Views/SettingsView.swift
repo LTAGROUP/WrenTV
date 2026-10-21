@@ -7,6 +7,7 @@ struct SettingsView: View {
     @State private var subtitleLanguage = ""
     @State private var loaded = false
     @State private var status: String?
+    @AppStorage(PosterSize.key) private var posterSize = PosterSize.medium.rawValue
 
     /// ISO 639-1 codes the server understands, shown in the user's language.
     private static let languages = ["en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "hi", "ru", "ar", "nl", "sv", "no", "da", "fi",
@@ -41,10 +42,13 @@ struct SettingsView: View {
                 }
                 Section {
                     NavigationLink("Layouts", value: LayoutsRoute())
+                    Picker("Poster size", selection: $posterSize) {
+                        ForEach(PosterSize.allCases) { Text($0.label).tag($0.rawValue) }
+                    }
                 } header: {
                     Text("Pages")
                 } footer: {
-                    Text("Choose which rows Home, Movies, TV Shows and each library show, and in what order.")
+                    Text("Choose which rows Home, Movies, TV Shows and each library show, and in what order. Poster size applies to this Apple TV.")
                 }
                 Section {
                     Picker("Audio language", selection: $audioLanguage) {

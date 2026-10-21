@@ -171,6 +171,7 @@ func (s *Server) Router() http.Handler {
 		r.Put("/api/items/{id}/watchlist", s.handleWatchlistAdd)
 		r.Delete("/api/items/{id}/watchlist", s.handleWatchlistRemove)
 		r.Get("/api/watchlist", s.handleWatchlist)
+		r.Get("/api/calendar", s.handleCalendar)
 		r.Post("/api/items/{id}/play", s.handlePlay)
 		r.Get("/api/items/{id}/versions", s.handleVersions)
 		r.Delete("/api/sessions/{sid}", s.handleStopSession)

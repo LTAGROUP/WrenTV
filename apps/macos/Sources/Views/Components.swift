@@ -336,7 +336,7 @@ struct PageScroll<Content: View>: View {
 struct PosterCard: View {
     @Environment(AppState.self) private var state
     let item: Item
-    var width: CGFloat = 150
+    var width: CGFloat = PosterSize.width(150)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -382,7 +382,7 @@ struct PosterCard: View {
 struct LandscapeCard: View {
     @Environment(AppState.self) private var state
     let item: Item
-    var width: CGFloat = 280
+    var width: CGFloat = PosterSize.width(280)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

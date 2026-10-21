@@ -121,6 +121,14 @@ struct WrenTVAPI: Sendable {
         try await get("/api/collections", query: library.map { [.init(name: "libraryId", value: $0)] } ?? [])
     }
 
+    /// Episodes airing from..to (YYYY-MM-DD); a week back to a month ahead by default.
+    func calendar(from: String? = nil, to: String? = nil) async throws -> CalendarResponse {
+        var q: [URLQueryItem] = []
+        if let from { q.append(.init(name: "from", value: from)) }
+        if let to { q.append(.init(name: "to", value: to)) }
+        return try await get("/api/calendar", query: q)
+    }
+
     func collection(_ id: String, sort: String? = nil) async throws -> CollectionDetail {
         try await get("/api/collections/\(id)", query: sort.map { [.init(name: "sort", value: $0)] } ?? [])
     }

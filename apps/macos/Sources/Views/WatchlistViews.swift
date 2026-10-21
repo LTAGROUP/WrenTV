@@ -1,6 +1,6 @@
 import SwiftUI
 
-private let gridColumns = [GridItem(.adaptive(minimum: 150, maximum: 180), spacing: 22)]
+private var gridColumns: [GridItem] { PosterSize.columns }
 
 /// Movies and shows saved for later, newest added first.
 struct WatchlistView: View {

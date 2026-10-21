@@ -66,6 +66,13 @@ import com.wrentv.tv.data.Library
 import com.wrentv.tv.data.TitleView
 import com.wrentv.tv.data.WrenCollection
 import kotlinx.coroutines.CancellationException
+import java.time.format.DateTimeFormatter
+import java.time.LocalDate
+import com.wrentv.tv.data.CalendarResponse
+import com.wrentv.tv.data.CalendarEpisode
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.width
 
 /** A grid of cards filling the width, iPhone-style. */
 @Composable
@@ -165,6 +172,7 @@ fun LibrariesScreen() {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 8.dp)) {
             item { NavRow(Icons.Rounded.Bookmark, "Watchlist") { nav.push(Route.Watchlist) } }
             item { NavRow(Icons.Rounded.CollectionsBookmark, "Collections") { nav.push(Route.Collections) } }
+            if (state.libraries.any { it.type == "shows" }) item { NavRow(Icons.Rounded.CalendarMonth, "Calendar") { nav.push(Route.Calendar) } }
             item { SectionHeader("Libraries") }
             items(state.libraries, { it.id }) { lib ->
                 NavRow(if (lib.type == "shows") Icons.Rounded.Tv else Icons.Rounded.Movie, lib.name, lib.itemCount?.toString()) { nav.push(Route.LibraryPage(lib)) }
@@ -250,25 +258,119 @@ fun WatchlistScreen() {
     }
 }
 
+/** Every collection, a shelf per kind: the server's own, franchises, lists, charts and smart collections. */
 @Composable
 fun CollectionsScreen() {
     val state = LocalAppState.current
-    val nav = LocalNavigator.current
     var list by remember { mutableStateOf<List<WrenCollection>?>(null) }
     LaunchedEffect(state.refreshTick, state.api) { list = runCatching { state.api?.collections() }.getOrNull().orEmpty() }
     Page("Collections") {
         val l = list
         if (l == null) Loading()
-        else CardGrid {
-            items(l, { it.id }) { c ->
-                Column(Modifier.clickable { nav.push(Route.Collection(c.id, c.name)) }, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    RemoteImage(state.api?.imageUrl(c.posterPath), Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)))
-                    Text(c.name, maxLines = 1, style = MaterialTheme.typography.bodyMedium)
-                    c.itemCount?.let { Text("$it titles", color = Wren.secondary, style = MaterialTheme.typography.bodySmall) }
+        else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
+            // The server's order already puts the groups in theirs.
+            l.groupBy { it.group ?: "Collections" }.forEach { (group, cs) ->
+                item(group) {
+                    Shelf(group, "${cs.size} collection${if (cs.size == 1) "" else "s"}") {
+                        items(cs, { it.id }) { CollectionTile(it) }
+                    }
                 }
             }
-            if (l.isEmpty()) fullWidth { EmptyState(Icons.Rounded.CollectionsBookmark, "No collections yet") }
+            if (l.isEmpty()) item { EmptyState(Icons.Rounded.CollectionsBookmark, "No collections yet") }
         }
+    }
+}
+
+/** A collection's wide tile: its artwork with the name over it. */
+@Composable
+private fun CollectionTile(c: WrenCollection) {
+    val state = LocalAppState.current
+    val nav = LocalNavigator.current
+    val m = metrics()
+    Column(Modifier.width(m.landscape).clickable { nav.push(Route.Collection(c.id, c.name)) }, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp))) {
+            RemoteImage(state.api?.imageUrl(c.backdropPath ?: c.posterPath, "w780"), Modifier.fillMaxSize())
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.4f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.8f))))
+            Text(c.name, Modifier.align(Alignment.BottomStart).padding(12.dp), fontWeight = FontWeight.Bold, maxLines = 2,
+                style = MaterialTheme.typography.titleMedium)
+            if (c.active == false) Badge("OUT OF SEASON", Color.Black.copy(alpha = 0.7f), Modifier.align(Alignment.TopStart))
+        }
+        Text("${c.itemCount ?: 0} title${if (c.itemCount == 1) "" else "s"}", color = Wren.secondary, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun Badge(text: String, color: Color, modifier: Modifier = Modifier) {
+    Text(text, modifier.padding(8.dp).clip(RoundedCornerShape(6.dp)).background(color).padding(horizontal = 8.dp, vertical = 3.dp),
+        fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, color = Color.White)
+}
+
+/** When episodes air, a shelf a day from a week back to a month ahead: the library's shows still running and the ones being watched. */
+@Composable
+fun CalendarScreen() {
+    val state = LocalAppState.current
+    var cal by remember { mutableStateOf<CalendarResponse?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var watchingOnly by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state.refreshTick, state.api) {
+        runCatching { state.api?.calendar() }.onSuccess { cal = it; error = null }.onFailure { if (it !is CancellationException) error = it.message }
+    }
+    Page("Calendar", actions = {
+        IconButton({ watchingOnly = !watchingOnly }) {
+            Icon(if (watchingOnly) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
+                if (watchingOnly) "Showing shows you're watching" else "Showing all shows", tint = if (watchingOnly) Wren.ember else Color.White)
+        }
+    }) {
+        val c = cal
+        if (c == null) { if (error != null) EmptyState(Icons.Rounded.Warning, "Couldn't load", error) else Loading(); return@Page }
+        val eps = c.episodes.filter { !watchingOnly || it.watching }
+        val days = eps.groupBy { it.date }.toList()
+        val today = remember { LocalDate.now().toString() }
+        // Open on what's next to air, with what just aired above it.
+        val list = rememberLazyListState(days.indexOfFirst { it.first >= today }.coerceAtLeast(0))
+        LazyColumn(Modifier.fillMaxSize(), list, contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
+            if (watchingOnly) item("filter") {
+                Text("Shows you're watching", Modifier.padding(horizontal = metrics().gutter), color = Wren.secondary, style = MaterialTheme.typography.bodyMedium)
+            }
+            items(days, { it.first }) { (date, dayEps) ->
+                Shelf(dayName(date), "${dayEps.size} episode${if (dayEps.size == 1) "" else "s"}") {
+                    items(dayEps, { it.id }) { CalendarCard(it) }
+                }
+            }
+            if (eps.isEmpty()) item {
+                EmptyState(Icons.Rounded.Tv, if (watchingOnly) "Nothing coming up for your shows" else "Nothing airing",
+                    "Episodes from a week back to a month ahead show here, for shows in the library that are still running.")
+            }
+        }
+    }
+}
+
+/** "Today", "Tomorrow", "Yesterday", or the weekday and date. */
+private fun dayName(date: String): String {
+    val d = runCatching { LocalDate.parse(date) }.getOrNull() ?: return date
+    val today = LocalDate.now()
+    return when (d) {
+        today -> "Today"
+        today.plusDays(1) -> "Tomorrow"
+        today.minusDays(1) -> "Yesterday"
+        else -> d.format(DateTimeFormatter.ofPattern("EEEE, MMM d"))
+    }
+}
+
+@Composable
+private fun CalendarCard(e: CalendarEpisode) {
+    val state = LocalAppState.current
+    val nav = LocalNavigator.current
+    val m = metrics()
+    Column(Modifier.width(m.landscape).clickable { nav.push(Route.Detail(e.itemId ?: e.show.id, if (e.itemId == null) e.show else null)) },
+        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp))) {
+            RemoteImage(state.api?.imageUrl(e.stillPath ?: e.show.backdropPath, "w500"), Modifier.fillMaxSize())
+            if (e.upNext) Badge("UP NEXT", Wren.ember, Modifier.align(Alignment.TopStart))
+            else if (e.watched) Badge("WATCHED", Color.Black.copy(alpha = 0.7f), Modifier.align(Alignment.TopStart))
+        }
+        Text(e.show.title, maxLines = 1, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
+        Text("${e.code} · ${e.title.ifEmpty { "Episode ${e.episodeNumber}" }}", maxLines = 1, color = Wren.secondary, style = MaterialTheme.typography.bodySmall)
     }
 }
 

@@ -7,15 +7,17 @@ struct Metrics {
 
     /// Space between the screen edge and content.
     var gutter: CGFloat { compact ? 16 : 28 }
-    var poster: CGFloat { compact ? 112 : 150 }
-    var landscape: CGFloat { compact ? 250 : 280 }
+    /// Posters and tiles scale with the Poster Size setting.
+    var poster: CGFloat { (compact ? 112 : 150) * PosterSize.current.scale }
+    var landscape: CGFloat { (compact ? 250 : 280) * PosterSize.current.scale }
     var heroHeight: CGFloat { compact ? 500 : 560 }
     var heroTitle: CGFloat { compact ? 32 : 44 }
     var cardSpacing: CGFloat { compact ? 12 : 16 }
     /// Columns for grids of posters.
     var columns: [GridItem] {
-        compact ? [GridItem(.adaptive(minimum: 100, maximum: 160), spacing: 12)]
-                : [GridItem(.adaptive(minimum: 150, maximum: 180), spacing: 22)]
+        let k = PosterSize.current.scale
+        return compact ? [GridItem(.adaptive(minimum: 100 * k, maximum: 160 * k), spacing: 12)]
+                       : [GridItem(.adaptive(minimum: 150 * k, maximum: 180 * k), spacing: 22)]
     }
     var rowSpacing: CGFloat { compact ? 18 : 26 }
 }

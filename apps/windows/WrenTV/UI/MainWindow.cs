@@ -225,10 +225,12 @@ sealed class MainWindow : Window
             nav.MenuItems.Add(Item("Movies", "\uE8B2", "movies"));
             nav.MenuItems.Add(Item("TV Shows", "\uE7F4", "shows"));
             nav.MenuItems.Add(Item("Collections", "\uE8F1", "collections"));
+            nav.MenuItems.Add(Item("Calendar", "\uE787", "calendar"));
         }
         else
         {
             nav.MenuItems.Add(Item("Collections", "\uE8F1", "collections"));
+            if (libs.Any(l => l.Type == "shows")) nav.MenuItems.Add(Item("Calendar", "\uE787", "calendar"));
             if (libs.Count > 0)
             {
                 nav.MenuItems.Add(new NavigationViewItemHeader { Content = "Libraries" });
@@ -265,6 +267,7 @@ sealed class MainWindow : Window
             "movies" => new RowsPage("movies", "Movies", () => new BrowsePage("movie"), () => new BrowsePage("movie")),
             "shows" => new RowsPage("shows", "TV Shows", () => new BrowsePage("show"), () => new BrowsePage("show")),
             "collections" => new CollectionsPage(),
+            "calendar" => new CalendarPage(),
             "layouts" => new LayoutsPage(),
             "live" => new LiveTvPage(),
             "admin" => new AdminPage(),

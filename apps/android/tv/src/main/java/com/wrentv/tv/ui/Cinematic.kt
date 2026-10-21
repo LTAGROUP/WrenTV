@@ -27,10 +27,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableIntState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -52,7 +52,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.lerp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
@@ -63,20 +62,27 @@ import com.wrentv.tv.ui.screens.MetaLine
  * Home, libraries, hubs and collections share one cinematic layout: the
  * focused title's details in a hero at the top, over its artwork, and rows
  * of titles below. The hero is not part of the list; the list scrolls so
- * the focused row always settles on the same line, and the hero shrinks
- * as the first row leaves, driven by that same scroll, so they move as one.
+ * the focused row always settles on the same line, just under the hero,
+ * which stays the same size whichever row is focused.
  */
 
-/** The hero's height, as a share of the screen, with the first row focused and with any other. */
-private const val Expanded = 0.48f
-private const val Collapsed = 0.34f
+/** The hero's height, as a share of the screen. */
+private const val HeroHeight = 0.48f
 
 /** From a shelf's top to its cards: the title line and the row's own padding. */
 private val ShelfHeader = 48.dp
 
+/** How much bigger or smaller than usual posters are, from the Poster Size setting. */
+val posterScale: Float
+    @Composable @ReadOnlyComposable get() = when (LocalAppState.current.posterSize) {
+        "small" -> 0.85f
+        "large" -> 1.25f
+        else -> 1f
+    }
+
 /** Card sizes on cinematic pages: smaller than a grid's, so the hero has room. */
-val CinematicPoster = 130.dp
-val CinematicLandscape = 240.dp
+val CinematicPoster: Dp @Composable @ReadOnlyComposable get() = 130.dp * posterScale
+val CinematicLandscape: Dp @Composable @ReadOnlyComposable get() = 240.dp * posterScale
 private val PosterGap = 20.dp
 
 /**
@@ -88,7 +94,7 @@ private class FocusLine(val focusedRow: MutableIntState, val list: LazyListState
         if (focusedRow.intValue <= 0) {
             return if (list.firstVisibleItemIndex == 0) -list.firstVisibleItemScrollOffset.toFloat() else -containerSize * 4
         }
-        return offset - (Collapsed * containerSize + headerPx)
+        return offset - (HeroHeight * containerSize + headerPx)
     }
 }
 
@@ -162,6 +168,7 @@ fun CinematicBrowse(
     }
     val entry = ambient.entry.takeIf { ambient.route == routeKey } ?: fallback
 
+    val poster = CinematicPoster
     BoxWithConstraints(
         Modifier.fillMaxSize().onPreviewKeyEvent { ev ->
             // Play on the remote plays the focused title.
@@ -173,15 +180,8 @@ fun CinematicBrowse(
         },
     ) {
         val screen = maxHeight
-        val gapPx = with(LocalDensity.current) { (screen * (Expanded - Collapsed)).toPx() }
-        // How far the hero has shrunk: the list's scroll, up to the gap between the two heights.
-        val collapse by remember(list, gapPx) {
-            derivedStateOf {
-                if (list.firstVisibleItemIndex > 0) 1f else (list.firstVisibleItemScrollOffset / gapPx).coerceIn(0f, 1f)
-            }
-        }
-        val pillsHeight = if (pills != null) 56.dp else 0.dp
-        CinematicHero(entry, label, collapse, screen * Expanded, screen * Collapsed, pillsHeight)
+        // The pills sit under the hero, above the first row.
+        CinematicHero(entry, label, screen * HeroHeight - if (pills != null) 56.dp else 0.dp)
         CompositionLocalProvider(LocalBringIntoViewSpec provides spec) {
             LazyColumn(
                 Modifier.fillMaxSize(), state = list,
@@ -189,7 +189,7 @@ fun CinematicBrowse(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 item("cinematic:top") {
-                    Box(Modifier.fillMaxWidth().height(screen * Expanded).onFocusChanged { if (it.hasFocus) focusedRow.intValue = 0 }) {
+                    Box(Modifier.fillMaxWidth().height(screen * HeroHeight).onFocusChanged { if (it.hasFocus) focusedRow.intValue = 0 }) {
                         if (pills != null) {
                             val alpha by animateFloatAsState(if (focusedRow.intValue > 0) 0f else 1f, tween(280), label = "pills")
                             Row(
@@ -201,7 +201,7 @@ fun CinematicBrowse(
                         }
                     }
                 }
-                val columns = ((maxWidth - PageGutter * 2 + PosterGap) / (CinematicPoster + PosterGap)).toInt().coerceAtLeast(1)
+                val columns = ((maxWidth - PageGutter * 2 + PosterGap) / (poster + PosterGap)).toInt().coerceAtLeast(1)
                 CinematicScope(this, focusedRow, rowSpec, columns).content()
             }
         }
@@ -210,20 +210,19 @@ fun CinematicBrowse(
 
 /** The focused title's name, details and summary, low on the hero so it sits just above the rows. */
 @Composable
-private fun CinematicHero(entry: HeroEntry?, label: String?, collapse: Float, expanded: Dp, collapsed: Dp, pills: Dp) {
+private fun CinematicHero(entry: HeroEntry?, label: String?, height: Dp) {
     val api = LocalAppState.current.api
-    val height = lerp(expanded, collapsed, collapse)
-    Box(Modifier.fillMaxWidth().height(height - pills * (1 - collapse))) {
+    Box(Modifier.fillMaxWidth().height(height)) {
         AnimatedContent(entry, transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) }, contentKey = { it?.id }, label = "hero",
             modifier = Modifier.align(Alignment.BottomStart).padding(start = PageGutter, bottom = 10.dp).widthIn(max = 640.dp)) { e ->
             if (e == null) return@AnimatedContent
             Column {
-                if (label != null && collapse < 0.5f) {
+                if (label != null) {
                     Text(label.uppercase(), style = MaterialTheme.typography.labelMedium, color = Wren.ember)
                     Spacer(Modifier.height(6.dp))
                 }
                 if (e.logo != null) {
-                    AsyncImage(api?.imageUrl(e.logo, "w500"), e.title, Modifier.width(320.dp).height(lerp(84.dp, 60.dp, collapse)),
+                    AsyncImage(api?.imageUrl(e.logo, "w500"), e.title, Modifier.width(320.dp).height(84.dp),
                         contentScale = ContentScale.Fit, alignment = Alignment.BottomStart)
                 } else {
                     Text(e.title, style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold), color = Wren.text,
@@ -234,7 +233,7 @@ private fun CinematicHero(entry: HeroEntry?, label: String?, collapse: Float, ex
                 e.overview?.takeIf { it.isNotEmpty() }?.let {
                     Spacer(Modifier.height(8.dp))
                     Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.85f),
-                        maxLines = if (collapse > 0.5f) 2 else 3, overflow = TextOverflow.Ellipsis)
+                        maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

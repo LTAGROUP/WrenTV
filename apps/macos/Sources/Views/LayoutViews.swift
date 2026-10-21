@@ -242,7 +242,7 @@ struct HubTile: View {
     @Environment(AppState.self) private var state
     let hub: HubCard
     var logos = false
-    var width: CGFloat = 280
+    var width: CGFloat = PosterSize.width(280)
 
     var body: some View {
         NavigationLink(value: HubRoute(id: hub.id, name: hub.name)) {

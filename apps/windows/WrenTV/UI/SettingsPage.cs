@@ -56,6 +56,16 @@ sealed class SettingsPage : Page
         if (!Player.Mpv.Available)
             playback.Children.Add(Ui.Error(Player.Mpv.LoadError!));
 
+        var browsing = Ui.Column(14, Section("Browsing"));
+        var sizes = new ComboBox { Header = "Poster size", Width = 220 };
+        foreach (var (tag, label) in new[] { ("small", "Small"), ("medium", "Medium"), ("large", "Large") })
+            sizes.Items.Add(new ComboBoxItem { Content = label, Tag = tag });
+        var size = Store.GetString(Cards.PosterSizeKey) ?? "medium";
+        sizes.SelectedItem = sizes.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == size);
+        sizes.SelectionChanged += (_, _) => Store.Set(Cards.PosterSizeKey, Code(sizes) is "medium" or "" ? null : Code(sizes));
+        browsing.Children.Add(sizes);
+        browsing.Children.Add(Ui.Secondary("How big posters and tiles are in rows and grids, on this PC.", 13, 3));
+
         var about = Ui.Column(14, Section("Wren TV for Windows"));
         about.Children.Add(Line("Version", Updates.CurrentLabel));
         var status = Ui.Secondary(Updates.Available is { } u ? $"Version {u.Version} is available." : "");
@@ -71,7 +81,7 @@ sealed class SettingsPage : Page
         if (Updates.Available is { } avail)
             about.Children.Add(Ui.Button($"Download {avail.Version}", () => Ui.Open(avail.Download), "", accent: true));
 
-        var col = Ui.Column(20, Ui.Card(account), Ui.Card(playback), Ui.Card(about));
+        var col = Ui.Column(20, Ui.Card(account), Ui.Card(playback), Ui.Card(browsing), Ui.Card(about));
         col.MaxWidth = 720;
         col.HorizontalAlignment = HorizontalAlignment.Left;
         return Scroll("Settings", Padded(col));

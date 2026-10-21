@@ -44,6 +44,7 @@ const routes = [
   [/^\/genre$/, browse.viewGenre],
   [/^\/collections$/, () => browse.viewCollections()],
   [/^\/collection\/([^/]+)$/, browse.viewCollection],
+  [/^\/calendar$/, browse.viewCalendar],
   [/^\/account$/, browse.viewAccount],
   [/^\/manage\/stats$/, viewStats, true],
   [/^\/item\/([^/]+)$/, viewItem],
@@ -88,6 +89,7 @@ async function boot() {
     return;
   }
   document.title = state.server.name ? `${state.server.name} · Wren TV` : 'Wren TV';
+  setPosterSize(posterSize());
   // A session from another server or auth mode is useless here.
   const s = state.session;
   if (s && !s.token && !(isSupabase() && s.access_token)) saveSession(null);
@@ -333,8 +335,10 @@ async function shell(view, seq) {
         <a class="nav" href="/watchlist" data-path="/watchlist">${icons.bookmark}<span>Watchlist</span></a>
         ${canStream() ? `<a class="nav" href="/movies" data-path="/movies">${icons.movies}<span>Movies</span></a>
           <a class="nav" href="/shows" data-path="/shows">${icons.shows}<span>TV Shows</span></a>
-          <a class="nav" href="/collections" data-path="/collections">${icons.stack}<span>Collections</span></a>`
+          <a class="nav" href="/collections" data-path="/collections">${icons.stack}<span>Collections</span></a>
+          <a class="nav" href="/calendar" data-path="/calendar">${icons.calendar}<span>Calendar</span></a>`
         : `<a class="nav" href="/collections" data-path="/collections">${icons.stack}<span>Collections</span></a>
+          ${libraries.some((l) => l.type === 'shows') ? `<a class="nav" href="/calendar" data-path="/calendar">${icons.calendar}<span>Calendar</span></a>` : ''}
           <div class="nav-title">Libraries</div>
           <div id="lib-nav">${libNav()}</div>`}
         ${admin ? `<div class="nav-title">Manage</div>
@@ -406,6 +410,13 @@ export function progressBar(it) {
 
 // Images fade in once loaded instead of popping.
 export const lazyImg = (src, alt = '') => `<img loading="lazy" class="loading" onload="this.classList.remove('loading')" onerror="this.remove()" src="${src}" alt="${esc(alt)}">`;
+
+// setPosterSize scales posters and tiles on this browser: small, medium or large.
+export const posterSize = () => { try { return localStorage.getItem('wren.posterSize') || 'medium'; } catch { return 'medium'; } };
+export function setPosterSize(size) {
+  try { size && size !== 'medium' ? localStorage.setItem('wren.posterSize', size) : localStorage.removeItem('wren.posterSize'); } catch {}
+  document.documentElement.style.setProperty('--ps', { small: '.85', large: '1.25' }[size] || '1');
+}
 
 // bd marks a card's backdrop for the page's ambient artwork.
 export const bd = (path) => path ? ` data-bd="${esc(path)}"` : '';

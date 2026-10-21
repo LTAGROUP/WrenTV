@@ -4,7 +4,7 @@ private let sortOptions: [(String, String)] = [
     ("title", "Title"), ("added", "Recently Added"), ("year", "Newest"), ("year_asc", "Oldest"), ("rating", "Rating"),
 ]
 
-private let posterColumns = [GridItem(.adaptive(minimum: TV.poster, maximum: TV.poster), spacing: 48, alignment: .top)]
+private var posterColumns: [GridItem] { [GridItem(.adaptive(minimum: TV.poster, maximum: TV.poster), spacing: 48, alignment: .top)] }
 
 /// A library's titles as a poster grid, with sort and genre filters.
 struct LibraryView: View {
