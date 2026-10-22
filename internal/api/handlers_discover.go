@@ -24,6 +24,9 @@ type titleView struct {
 	BackdropPath string   `json:"backdropPath,omitempty"`
 	Rating       float64  `json:"rating,omitempty"`
 	Item         *db.Item `json:"item,omitempty"`
+	// Watched: the user watched it elsewhere (a Simkl import) and the
+	// server doesn't have it. Titles it has carry Item.Progress instead.
+	Watched bool `json:"watched,omitempty"`
 }
 
 func viewOf(t tmdb.Title, mediaType string) titleView {
@@ -64,9 +67,14 @@ func (s *Server) linkLibrary(ctx context.Context, r *http.Request, views []title
 			found[key] = it
 		}
 	}
+	elsewhere := map[string]map[int]bool{}
+	for kind, tids := range byKind {
+		elsewhere[kind], _ = s.DB.ExternalWatched(ctx, principal(r).User.ID, kind, tids)
+	}
 	var in, out []titleView
 	for _, v := range views {
 		v.Item = found[v.MediaType+":"+strconv.Itoa(v.TMDBID)]
+		v.Watched = v.Item == nil && elsewhere[v.MediaType][v.TMDBID]
 		if v.Item != nil || !inLibraryFirst {
 			in = append(in, v)
 		} else {

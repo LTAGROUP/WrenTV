@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/LTAGROUP/wrentv/internal/db"
+	"github.com/LTAGROUP/wrentv/internal/library"
 	"github.com/LTAGROUP/wrentv/internal/simkl"
 	"github.com/LTAGROUP/wrentv/internal/webhook"
 )
@@ -42,10 +43,6 @@ type Service struct {
 	Simkl  *simkl.Client
 	Hooks  *webhook.Sender
 	Server func() webhook.Server
-	// AddTitle adds a movie or show by TMDB id to the streaming library and
-	// returns its item id, so imported history the library lacks can show
-	// in Continue Watching. Nil (or an error) when streaming is off.
-	AddTitle func(ctx context.Context, kind string, tmdbID int) (string, error)
 
 	mu      sync.Mutex
 	plays   map[string]*play
@@ -63,6 +60,41 @@ func New(d *db.DB, sk *simkl.Client, hooks *webhook.Sender, server func() webhoo
 }
 
 // Start runs the watchdog that pauses and stops plays that went quiet.
+// ApplyMarksOn marks titles watched elsewhere once they're added: after a
+// scan or a title being added, a few seconds later so bursts run once.
+func (s *Service) ApplyMarksOn(ctx context.Context, events <-chan library.Event) {
+	go func() {
+		var t *time.Timer
+		apply := make(chan struct{}, 1)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case e, ok := <-events:
+				if !ok {
+					return
+				}
+				if e.Type != "item.added" && e.Type != "scan.finished" {
+					continue
+				}
+				if t == nil {
+					t = time.AfterFunc(5*time.Second, func() {
+						select {
+						case apply <- struct{}{}:
+						default:
+						}
+					})
+				}
+			case <-apply:
+				t = nil
+				if err := s.DB.ApplyExternalWatched(ctx); err != nil {
+					slog.Warn("apply watched marks", "err", err)
+				}
+			}
+		}
+	}()
+}
+
 func (s *Service) Start(ctx context.Context) {
 	go func() {
 		t := time.NewTicker(10 * time.Second)

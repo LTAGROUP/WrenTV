@@ -41,6 +41,14 @@ struct TitleCard: View {
                             .padding(6)
                     }
                 }
+                .overlay(alignment: .topTrailing) {
+                    if title.item == nil && title.watched == true {
+                        Image(systemName: "checkmark.circle.fill")
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, Color.wrenEmber)
+                            .padding(6)
+                    }
+                }
                 .overlay(alignment: .bottom) {
                     if title.item == nil && !state.canStream {
                         Text("NOT IN LIBRARY")

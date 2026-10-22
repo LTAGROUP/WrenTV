@@ -282,6 +282,8 @@ data class TitleView(
     val item: Item? = null,
     /** On a person's page, who they play or what they did. */
     val role: String? = null,
+    /** Marked watched on Simkl while the server doesn't have it. */
+    val watched: Boolean = false,
 ) {
     val id: String get() = "$mediaType:$tmdbId"
 }

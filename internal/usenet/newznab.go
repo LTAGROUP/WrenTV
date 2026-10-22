@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // Indexer is a Newznab indexer account (NZBGeek, DrunkenSlug, …).
@@ -199,7 +200,7 @@ func (ix Indexer) Search(ctx context.Context, q Query) ([]Result, error) {
 		if c.tvIMDB && imdb != "" {
 			p.Set("imdbid", imdb)
 		} else {
-			p.Set("q", q.Title)
+			p.Set("q", searchText(q.Title))
 		}
 		p.Set("cat", "5000")
 	} else {
@@ -210,7 +211,7 @@ func (ix Indexer) Search(ctx context.Context, q Query) ([]Result, error) {
 		if c.movieIMDB && imdb != "" {
 			p.Set("imdbid", imdb)
 		} else {
-			p.Set("q", strings.TrimSpace(fmt.Sprintf("%s %d", q.Title, q.Year)))
+			p.Set("q", strings.TrimSpace(fmt.Sprintf("%s %d", searchText(q.Title), q.Year)))
 		}
 		p.Set("cat", "2000")
 	}
@@ -222,6 +223,14 @@ func (ix Indexer) Search(ctx context.Context, q Query) ([]Result, error) {
 		return nil, err
 	}
 	return ix.parse(b)
+}
+
+// searchText is a title as posts are named: indexers find nothing for
+// "Wonka's" when the posts say "Wonkas", so apostrophes are dropped and
+// other punctuation becomes spaces.
+func searchText(title string) string {
+	title = strings.NewReplacer("'", "", "\u2019", "", "&", " and ").Replace(title)
+	return strings.Join(strings.FieldsFunc(title, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }), " ")
 }
 
 func (ix Indexer) parse(b []byte) ([]Result, error) {

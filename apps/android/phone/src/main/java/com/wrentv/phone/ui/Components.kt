@@ -327,6 +327,9 @@ fun TitleCard(title: TitleView, modifier: Modifier = Modifier, width: Dp? = null
             } else if (item?.inProgress == true) {
                 item.progress?.let { ProgressStrip(it.fraction) }
             }
+            if (item == null && title.watched) {
+                Icon(Icons.Rounded.CheckCircle, "Watched", Modifier.align(Alignment.TopEnd).padding(6.dp).size(22.dp).clip(CircleShape).background(Color.White), tint = Wren.ember)
+            }
             if (item != null) ItemMenu(item, menu, { menu = false })
         }
         Text(title.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)

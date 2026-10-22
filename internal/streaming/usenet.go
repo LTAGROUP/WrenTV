@@ -302,7 +302,7 @@ var (
 // and spelling "&" as "and".
 func titleWords(s string) []string {
 	s = strings.ToLower(strings.ReplaceAll(s, "&", " and "))
-	s = strings.ReplaceAll(s, "'", "")
+	s = strings.NewReplacer("'", "", "\u2019", "").Replace(s)
 	return strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 }
 

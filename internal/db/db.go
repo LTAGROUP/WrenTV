@@ -392,6 +392,19 @@ var migrations = []string{
 	ALTER TABLE play_history ADD COLUMN stream_height INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE play_history ADD COLUMN reasons TEXT NOT NULL DEFAULT '';
 	CREATE INDEX play_history_item ON play_history(item_id);`,
+	// What a tracker (Simkl) says a user watched that the server doesn't
+	// have, by TMDB id: a movie, a finished show, or a show's episode. A
+	// mark becomes watch state once the title is added, and is then dropped.
+	`CREATE TABLE external_watched (
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		kind TEXT NOT NULL CHECK (kind IN ('movie','show','episode')),
+		tmdb_id INTEGER NOT NULL,
+		season INTEGER NOT NULL DEFAULT -1,
+		episode INTEGER NOT NULL DEFAULT -1,
+		watched_at INTEGER NOT NULL,
+		PRIMARY KEY (user_id, kind, tmdb_id, season, episode)
+	);
+	CREATE INDEX items_tmdb ON items(kind, tmdb_id);`,
 }
 
 // fkOff lists migrations (1-based) that rebuild tables. They run with

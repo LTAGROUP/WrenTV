@@ -455,6 +455,8 @@ struct TitleView: Codable, Hashable, Identifiable {
     var item: Item?
     /// On a person's page: who they played, or their job.
     var role: String?
+    /// Marked watched on Simkl while the server doesn't have it.
+    var watched: Bool?
 
     var id: String { "\(mediaType):\(tmdbId)" }
     var tmdbURL: URL { URL(string: "https://www.themoviedb.org/\(mediaType == "show" ? "tv" : "movie")/\(tmdbId)")! }

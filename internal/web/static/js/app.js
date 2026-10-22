@@ -428,12 +428,12 @@ export function titleCard(v, rank) {
   if (v.item) return posterCard(v.item, r);
   if (canStream()) {
     return `<a class="card" href="/item/stream" data-stream-title="${v.tmdbId}" data-media="${esc(v.mediaType)}"${bd(v.backdropPath)}>
-      <div class="poster">${v.posterPath ? lazyImg(img(v.posterPath), v.title) : `<div class="ph">${esc(v.title)}</div>`}${r}</div>
+      <div class="poster">${v.posterPath ? lazyImg(img(v.posterPath), v.title) : `<div class="ph">${esc(v.title)}</div>`}${v.watched ? '<div class="watched"></div>' : ''}${r}</div>
       <div class="t">${esc(v.title)}</div><div class="s">${esc(v.year || '')}</div></a>`;
   }
   const href = `https://www.themoviedb.org/${v.mediaType === 'show' ? 'tv' : 'movie'}/${v.tmdbId}`;
   return `<a class="card ext" href="${href}" target="_blank" rel="noopener" title="Not in your library — open on TMDB"${bd(v.backdropPath)}>
-    <div class="poster">${v.posterPath ? lazyImg(img(v.posterPath), v.title) : `<div class="ph">${esc(v.title)}</div>`}${r}<span class="tag">Not in library</span></div>
+    <div class="poster">${v.posterPath ? lazyImg(img(v.posterPath), v.title) : `<div class="ph">${esc(v.title)}</div>`}${v.watched ? '<div class="watched"></div>' : ''}${r}<span class="tag">Not in library</span></div>
     <div class="t">${esc(v.title)}</div><div class="s">${esc(v.year || '')}</div></a>`;
 }
 

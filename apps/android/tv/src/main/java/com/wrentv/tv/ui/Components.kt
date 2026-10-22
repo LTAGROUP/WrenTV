@@ -342,6 +342,7 @@ fun TitleCard(title: TitleView, modifier: Modifier = Modifier, rank: Int? = null
                 val p = title.item?.progress
                 if (p != null && title.item?.inProgress == true) ProgressStrip(p.fraction, Modifier.align(Alignment.BottomCenter))
             }
+            if (title.item == null && title.watched) WatchedMark(Modifier.align(Alignment.TopEnd))
         }
         CardCaption(title.title, title.roleLine ?: title.year?.toString(), focused, width)
     }

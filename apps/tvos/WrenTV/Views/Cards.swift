@@ -183,6 +183,14 @@ struct TitleCard: View {
                         .padding(.leading, 12)
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                if title.item == nil && title.watched == true {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.white, Color.wrenEmber)
+                        .padding(12)
+                }
+            }
     }
 }
 

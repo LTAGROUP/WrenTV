@@ -262,21 +262,11 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 		})
 		return out, err
 	}
-	// find matches a title, adding it to the streaming library when asked
-	// and it isn't here yet.
-	find := func(kind string, md *simkl.Media, add bool) string {
-		if id := m.find(kind, md); id != "" || !add || s.AddTitle == nil {
-			return id
-		}
-		tmdbID, _ := strconv.Atoi(md.ID("tmdb"))
-		if tmdbID <= 0 {
-			return ""
-		}
-		id, err := s.AddTitle(ctx, kind, tmdbID)
-		if err != nil {
-			return ""
-		}
-		m.tmdb[kind+":"+strconv.Itoa(tmdbID)] = id
+	// Titles the server doesn't have are kept by TMDB id, so they show as
+	// watched and are marked once added.
+	var missing []db.ExternalMark
+	tmdbOf := func(md *simkl.Media) int {
+		id, _ := strconv.Atoi(md.ID("tmdb"))
 		return id
 	}
 	episodesOf := map[string]map[[2]int]string{}
@@ -298,16 +288,17 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 		return 0, 0, err
 	}
 	for _, li := range got.Movies {
-		if id := find("movie", li.Movie, false); id != "" {
+		if id := m.find("movie", li.Movie); id != "" {
 			marks[id] = when(li.LastWatchedAt)
+		} else if t := tmdbOf(li.Movie); t > 0 {
+			missing = append(missing, db.ExternalMark{Kind: "movie", TMDBID: t, Season: -1, Episode: -1, WatchedAt: when(li.LastWatchedAt)})
 		}
 	}
 	if movies, err = s.DB.ImportWatched(ctx, userID, marks); err != nil {
 		return movies, 0, err
 	}
 
-	// Episodes watched, in every list a show can be in. Shows still being
-	// watched are added to the library so their next episode is offered.
+	// Episodes watched, in every list a show can be in.
 	marks = map[string]int64{}
 	for _, kind := range []string{"shows", "anime"} {
 		for _, status := range []string{"watching", "completed", "hold", "dropped"} {
@@ -316,8 +307,20 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 				return movies, 0, err
 			}
 			for _, li := range append(got.Shows, got.Anime...) {
-				showID := find("show", li.Show, status == "watching")
+				showID := m.find("show", li.Show)
 				if showID == "" {
+					t := tmdbOf(li.Show)
+					if t <= 0 {
+						continue
+					}
+					if status == "completed" {
+						missing = append(missing, db.ExternalMark{Kind: "show", TMDBID: t, Season: -1, Episode: -1, WatchedAt: when(li.LastWatchedAt)})
+					}
+					for _, se := range li.Seasons {
+						for _, ep := range se.Episodes {
+							missing = append(missing, db.ExternalMark{Kind: "episode", TMDBID: t, Season: se.Number, Episode: ep.Number, WatchedAt: when(ep.WatchedAt)})
+						}
+					}
 					continue
 				}
 				eps, err := episodeIDs(showID)
@@ -337,9 +340,16 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 	if episodes, err = s.DB.ImportWatched(ctx, userID, marks); err != nil {
 		return movies, episodes, err
 	}
+	if err := s.DB.ImportExternalWatched(ctx, userID, missing); err != nil {
+		return movies, episodes, err
+	}
+	// Anything added while this ran picks its marks up now.
+	if err := s.DB.ApplyExternalWatched(ctx); err != nil {
+		return movies, episodes, err
+	}
 
-	// Where the user paused, for Continue Watching. Older Simkl apps may
-	// not offer this, so a failure here doesn't fail the import.
+	// Where the user paused, for Continue Watching (titles the server has).
+	// A failure here doesn't fail the import.
 	var paused []simkl.Playback
 	if err := withToken(func(access string) (err error) {
 		paused, err = s.Simkl.Playbacks(ctx, access)
@@ -355,9 +365,9 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 		}
 		var id string
 		if pb.Movie != nil {
-			id = find("movie", pb.Movie, true)
+			id = m.find("movie", pb.Movie)
 		} else if show := cmp.Or(pb.Show, pb.Anime); show != nil {
-			if showID := find("show", show, true); showID != "" {
+			if showID := m.find("show", show); showID != "" {
 				eps, err := episodeIDs(showID)
 				if err != nil {
 					return movies, episodes, err

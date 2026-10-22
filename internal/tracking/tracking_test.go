@@ -69,7 +69,11 @@ func (f *fakeSimkl) handler(t *testing.T) http.HandlerFunc {
 				"show":{"title":"Severance","year":2022,"ids":{"imdb":"tt11280740"}}},
 				{"progress":25,"paused_at":"2024-03-02T00:00:00Z","type":"movie","movie":{"title":"Not Here","year":2001,"ids":{"tmdb":"5"}}}]`)
 			return
-		case "/sync/all-items/shows/completed", "/sync/all-items/shows/hold", "/sync/all-items/shows/dropped",
+		case "/sync/all-items/shows/completed":
+			io.WriteString(w, `{"shows":[{"status":"completed","last_watched_at":"2024-04-01T00:00:00Z","show":{"title":"Elsewhere","year":2010,"ids":{"tmdb":"777"}},
+				"seasons":[{"number":1,"episodes":[{"number":1,"watched_at":"2024-03-30T00:00:00Z"},{"number":2,"watched_at":"2024-04-01T00:00:00Z"}]}]}]}`)
+			return
+		case "/sync/all-items/shows/hold", "/sync/all-items/shows/dropped",
 			"/sync/all-items/anime/watching", "/sync/all-items/anime/completed", "/sync/all-items/anime/hold", "/sync/all-items/anime/dropped":
 			io.WriteString(w, `{}`)
 			return
@@ -245,12 +249,6 @@ func TestLinkAndImport(t *testing.T) {
 func TestImportPausedAndMissingTitles(t *testing.T) {
 	s, _, d, u, items := setup(t)
 	ctx := context.Background()
-	var added []int
-	s.AddTitle = func(ctx context.Context, kind string, tmdbID int) (string, error) {
-		added = append(added, tmdbID)
-		it := &db.Item{LibraryID: items["movie"].LibraryID, Kind: kind, Title: "Not Here", TMDBID: tmdbID, MatchKey: "nh", RuntimeMin: 100}
-		return it.ID, d.InsertItem(ctx, it)
-	}
 	if _, err := s.LinkSimkl(ctx, u.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -258,19 +256,42 @@ func TestImportPausedAndMissingTitles(t *testing.T) {
 		a, _ := d.GetSimkl(ctx, u.ID)
 		return a != nil && a.ImportStatus == "done"
 	})
-	// Only the paused movie is added; a finished one the library lacks isn't.
-	if len(added) != 1 || added[0] != 5 {
-		t.Fatalf("added %v", added)
-	}
+	// Where an episode the server has was paused.
 	ws, _ := d.GetWatchState(ctx, u.ID, items["e3"].ID)
 	if ws == nil || ws.Watched || ws.Position != 1200 || ws.Duration != 3000 || ws.UpdatedAt != 1709251200 {
 		t.Fatalf("e3 progress %+v", ws)
 	}
-	cont, err := d.ContinueWatching(ctx, u.ID, []string{items["movie"].LibraryID}, 60, 20)
-	if err != nil {
+	// Titles the server lacks aren't added, but show as watched.
+	if got, _ := d.ExternalWatched(ctx, u.ID, "movie", []int{5, 949}); !got[5] || got[949] {
+		t.Fatalf("movies watched elsewhere %v", got)
+	}
+	if got, _ := d.ExternalWatched(ctx, u.ID, "show", []int{777}); !got[777] {
+		t.Fatalf("shows watched elsewhere %v", got)
+	}
+	// Once added, they're marked watched and the marks are dropped.
+	lib := items["movie"].LibraryID
+	movie := &db.Item{LibraryID: lib, Kind: "movie", Title: "Not Here", TMDBID: 5, MatchKey: "nh"}
+	show := &db.Item{LibraryID: lib, Kind: "show", Title: "Elsewhere", TMDBID: 777, MatchKey: "el"}
+	for _, it := range []*db.Item{movie, show} {
+		if err := d.InsertItem(ctx, it); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ep := &db.Item{LibraryID: lib, Kind: "episode", ShowID: show.ID, ParentID: show.ID, Title: "Pilot", SeasonNumber: 1, EpisodeNumber: 1, MatchKey: "el1"}
+	if err := d.InsertItem(ctx, ep); err != nil {
 		t.Fatal(err)
 	}
-	if len(cont) != 2 || cont[0].Title != "Not Here" || cont[0].Progress.Position != 1500 || cont[1].ID != items["e3"].ID {
-		t.Fatalf("continue watching %+v", cont)
+	if err := d.ApplyExternalWatched(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range []*db.Item{movie, ep} {
+		if ws, _ := d.GetWatchState(ctx, u.ID, it.ID); ws == nil || !ws.Watched {
+			t.Errorf("%s not marked watched: %+v", it.Title, ws)
+		}
+	}
+	var left int
+	_ = d.QueryRowContext(ctx, `SELECT COUNT(*) FROM external_watched`).Scan(&left)
+	if left != 1 { // episode 2 isn't on the server yet
+		t.Fatalf("%d marks left", left)
 	}
 }

@@ -42,7 +42,7 @@ import (
 
 var (
 	ErrDisabled    = errors.New("streaming isn't set up on this server")
-	ErrNoStreams   = errors.New("no cached stream is available for this title right now")
+	ErrNoStreams   = errors.New("no stream was found for this title right now")
 	ErrUnavailable = errors.New("this stream is no longer available")
 	ErrBusy        = errors.New("the server is already playing as many streams as it allows")
 )

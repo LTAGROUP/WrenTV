@@ -166,3 +166,95 @@ func (d *DB) ImportProgress(ctx context.Context, userID, itemID string, pos, dur
 	n, _ := res.RowsAffected()
 	return n > 0, nil
 }
+
+// ExternalMark is something a tracker says a user watched, by TMDB id (the
+// show's, for an episode). Season and Episode are -1 for a movie or show.
+type ExternalMark struct {
+	Kind      string
+	TMDBID    int
+	Season    int
+	Episode   int
+	WatchedAt int64
+}
+
+// ImportExternalWatched keeps marks for titles the server doesn't have.
+func (d *DB) ImportExternalWatched(ctx context.Context, userID string, marks []ExternalMark) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	st, err := tx.PrepareContext(ctx, `INSERT INTO external_watched (user_id, kind, tmdb_id, season, episode, watched_at) VALUES (?,?,?,?,?,?)
+		ON CONFLICT DO UPDATE SET watched_at=excluded.watched_at`)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	for _, m := range marks {
+		if m.WatchedAt <= 0 {
+			m.WatchedAt = Now()
+		}
+		if _, err := st.ExecContext(ctx, userID, m.Kind, m.TMDBID, m.Season, m.Episode, m.WatchedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ApplyExternalWatched turns marks for titles the server now has into
+// watch state, then drops them, so unmarking a title later sticks.
+// Episodes not added yet keep their marks.
+func (d *DB) ApplyExternalWatched(ctx context.Context) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`INSERT INTO watch_state (user_id, item_id, position, duration, watched, updated_at)
+			SELECT x.user_id, i.id, 0, 0, 1, x.watched_at FROM external_watched x
+			JOIN items i ON i.kind='movie' AND i.tmdb_id=x.tmdb_id WHERE x.kind='movie'
+			ON CONFLICT(user_id, item_id) DO UPDATE SET watched=1, position=0 WHERE watch_state.watched=0`,
+		`INSERT INTO watch_state (user_id, item_id, position, duration, watched, updated_at)
+			SELECT x.user_id, e.id, 0, 0, 1, x.watched_at FROM external_watched x
+			JOIN items s ON s.kind='show' AND s.tmdb_id=x.tmdb_id
+			JOIN items e ON e.show_id=s.id AND e.kind='episode' AND e.season_number=x.season AND e.episode_number=x.episode
+			WHERE x.kind='episode'
+			ON CONFLICT(user_id, item_id) DO UPDATE SET watched=1, position=0 WHERE watch_state.watched=0`,
+		`DELETE FROM external_watched WHERE
+			(kind IN ('movie','show') AND EXISTS (SELECT 1 FROM items i WHERE i.kind=external_watched.kind AND i.tmdb_id=external_watched.tmdb_id))
+			OR (kind='episode' AND EXISTS (SELECT 1 FROM items s JOIN items e ON e.show_id=s.id AND e.kind='episode'
+				WHERE s.kind='show' AND s.tmdb_id=external_watched.tmdb_id AND e.season_number=external_watched.season AND e.episode_number=external_watched.episode))`,
+	} {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ExternalWatched reports which of these movies or shows (by TMDB id) a
+// user watched elsewhere; a show counts once it's finished.
+func (d *DB) ExternalWatched(ctx context.Context, userID, kind string, tmdbIDs []int) (map[int]bool, error) {
+	out := map[int]bool{}
+	if len(tmdbIDs) == 0 {
+		return out, nil
+	}
+	args := []any{userID, kind}
+	for _, id := range tmdbIDs {
+		args = append(args, id)
+	}
+	rows, err := d.QueryContext(ctx, `SELECT tmdb_id FROM external_watched WHERE user_id=? AND kind=? AND tmdb_id IN (`+placeholders(len(tmdbIDs))+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}

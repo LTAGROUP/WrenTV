@@ -743,3 +743,16 @@ func TestAliveAsksOneFirst(t *testing.T) {
 		t.Fatalf("asked about %d articles, want at most 3", n)
 	}
 }
+
+func TestSearchText(t *testing.T) {
+	for in, want := range map[string]string{
+		"Wonka's The Golden Ticket": "Wonkas The Golden Ticket",
+		"Marvel’s Daredevil":        "Marvels Daredevil",
+		"Mission: Impossible":       "Mission Impossible",
+		"Law & Order":               "Law and Order",
+	} {
+		if got := searchText(in); got != want {
+			t.Errorf("searchText(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

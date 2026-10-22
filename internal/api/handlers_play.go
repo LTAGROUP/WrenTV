@@ -678,7 +678,7 @@ func (s *Server) admitPlayback(u *db.User, itemID string) error {
 func streamErrMessage(err error) string {
 	switch {
 	case errors.Is(err, streaming.ErrNoStreams):
-		return "No cached stream is available for this title right now."
+		return "No stream was found for this title right now."
 	case errors.Is(err, streaming.ErrDisabled):
 		return "Streaming isn't set up on this server."
 	}

@@ -74,6 +74,8 @@ public sealed class User
     public string DisplayName { get; set; } = "";
     public bool IsAdmin { get; set; }
     public string? Role { get; set; }
+    /// Marked watched on Simkl while the server doesn't have it.
+    public bool Watched { get; set; }
 }
 
 public sealed class SupabaseInfo
