@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import UIKit
 
 struct WrenTVError: LocalizedError {
@@ -136,6 +137,12 @@ struct WrenTVAPI: Sendable {
 
     func collection(_ id: String, sort: String? = nil) async throws -> CollectionDetail {
         try await get("/api/collections/\(id)", query: sort.map { [.init(name: "sort", value: $0)] } ?? [])
+    }
+
+    func collectionPage(_ id: String, sort: String, offset: Int, limit: Int = 40) async throws -> CollectionPage {
+        var q: [URLQueryItem] = [.init(name: "offset", value: "\(offset)"), .init(name: "limit", value: "\(limit)")]
+        if !sort.isEmpty { q.append(.init(name: "sort", value: sort)) }
+        return try await get("/api/collections/\(id)", query: q)
     }
 
     func addToCollection(_ id: String, items: [String]) async throws {
@@ -334,4 +341,79 @@ struct AnyEncodable: Encodable {
     let value: any Encodable
     init(_ value: any Encodable) { self.value = value }
     func encode(to encoder: Encoder) throws { try value.encode(to: encoder) }
+}
+
+/// A collection's one shelf, loaded a page at a time as it's browsed toward
+/// the end. Pagers live while the app runs (`of`), so coming back to a
+/// collection finds the pages it had.
+@MainActor @Observable
+final class CollectionPager {
+    let id: String
+    let sort: String
+    private(set) var collection: WrenCollection?
+    /// Loaded so far; only ever appended to.
+    private(set) var entries: [TitleView] = []
+    private(set) var total = -1
+    private(set) var countLabel = ""
+    private(set) var loading = false
+    /// Why the last page didn't load; the retry card loads it again.
+    private(set) var error: String?
+    private var tick = -1
+
+    static let ahead = 15
+    private static var pagers: [String: CollectionPager] = [:]
+
+    static func of(_ id: String, sort: String) -> CollectionPager {
+        if let p = pagers["\(id):\(sort)"] { return p }
+        let p = CollectionPager(id: id, sort: sort)
+        pagers["\(id):\(sort)"] = p
+        return p
+    }
+
+    private init(id: String, sort: String) {
+        self.id = id
+        self.sort = sort
+    }
+
+    var done: Bool { total >= 0 && entries.count >= total }
+
+    /// Loads the first page, again after `refresh` changes.
+    func start(_ api: WrenTVAPI, refresh: Int) async {
+        if tick == refresh && (total >= 0 || loading) { return }
+        tick = refresh
+        entries = []
+        total = -1
+        error = nil
+        await load(api)
+    }
+
+    /// Loads the next page when entry `index` is within `ahead` of the end.
+    func appeared(_ index: Int, _ api: WrenTVAPI) {
+        guard index >= entries.count - Self.ahead, error == nil else { return }
+        Task { await load(api) }
+    }
+
+    func retry(_ api: WrenTVAPI) {
+        error = nil
+        Task { await load(api) }
+    }
+
+    private func load(_ api: WrenTVAPI) async {
+        guard !loading, !done else { return }
+        loading = true
+        defer { loading = false }
+        let from = entries.count
+        do {
+            let p = try await api.collectionPage(id, sort: sort, offset: from)
+            guard entries.count == from else { return }
+            collection = p.collection
+            countLabel = p.countLabel
+            var seen = Set(entries.map(\.entryKey))
+            entries += p.entries.filter { seen.insert($0.entryKey).inserted }
+            total = p.entries.isEmpty ? entries.count : p.total
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
 }

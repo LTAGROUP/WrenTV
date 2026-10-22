@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Movies and shows saved for later, newest added first.
+/// Movies and shows saved for later, newest added first: a banner over
+/// them, then a row of each.
 struct WatchlistView: View {
     @Environment(AppState.self) private var state
     @Environment(\.metrics) private var m
@@ -13,29 +14,35 @@ struct WatchlistView: View {
     }
 
     var body: some View {
+        let shown = shown
         ScrollView {
-            if items != nil {
-                LazyVGrid(columns: m.columns, alignment: .leading, spacing: m.rowSpacing) {
-                    ForEach(shown) { item in
-                        NavigationLink(value: item) { PosterCard(item: item, fill: true) }
-                            .buttonStyle(.plain)
-                            .contextMenu { ItemContextMenu(item: item, onWatchlist: true) }
+            VStack(alignment: .leading, spacing: 0) {
+                PageBanner(label: "WATCHLIST", title: "Watchlist", overview: "Movies and shows you saved for later, newest first.",
+                           meta: items == nil ? [] : ["\(shown.count) title\(shown.count == 1 ? "" : "s")"],
+                           backdrop: shown.first { $0.backdropPath != nil }?.backdropPath)
+                if items != nil {
+                    VStack(alignment: .leading, spacing: 30) {
+                        shelf("Movies", shown.filter { $0.kind == "movie" })
+                        shelf("TV Shows", shown.filter { $0.kind != "movie" })
                     }
+                    .padding(.vertical, 20)
+                    if shown.isEmpty {
+                        ContentUnavailableView(items?.isEmpty ?? true ? "Your watchlist is empty" : "All watched", systemImage: "bookmark",
+                                               description: Text(items?.isEmpty ?? true ? "Add movies and shows from their pages to find them here." : "Turn off Hide Watched to see them."))
+                            .padding(.top, 20)
+                    }
+                } else if let error {
+                    ContentUnavailableView("Couldn't load", systemImage: "exclamationmark.triangle", description: Text(error))
+                        .padding(.top, 40)
+                } else {
+                    ProgressView().frame(maxWidth: .infinity).padding(.top, 60)
                 }
-                .padding(m.gutter)
-                if shown.isEmpty {
-                    ContentUnavailableView("Your watchlist is empty", systemImage: "bookmark",
-                                           description: Text("Add movies and shows from their pages to find them here."))
-                        .padding(.top, 60)
-                }
-            } else if let error {
-                ContentUnavailableView("Couldn't load", systemImage: "exclamationmark.triangle", description: Text(error))
-                    .padding(.top, 120)
-            } else {
-                ProgressView().frame(maxWidth: .infinity).padding(.top, 160)
             }
         }
+        .ignoresSafeArea(edges: .top)
         .navigationTitle("Watchlist")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Toggle(isOn: $hideWatched) { Label("Hide Watched", systemImage: "eye.slash") }
@@ -43,6 +50,19 @@ struct WatchlistView: View {
         }
         .refreshable { await load() }
         .task(id: state.refreshTick) { await load() }
+    }
+
+    @ViewBuilder
+    private func shelf(_ title: String, _ list: [Item]) -> some View {
+        if !list.isEmpty {
+            Shelf(title: title, subtitle: "\(list.count)") {
+                ForEach(list) { item in
+                    NavigationLink(value: item) { PosterCard(item: item) }
+                        .buttonStyle(.plain)
+                        .contextMenu { ItemContextMenu(item: item, onWatchlist: true) }
+                }
+            }
+        }
     }
 
     private func load() async {

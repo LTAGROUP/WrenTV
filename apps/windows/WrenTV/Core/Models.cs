@@ -45,7 +45,9 @@ public sealed class Item
     public int? UnwatchedCount { get; set; }
 
     public bool IsPlayable => Kind is "movie" or "episode";
-    public bool IsWatched => Progress?.Watched ?? false;
+    /// A show or season counts as watched once every episode is, so one that
+    /// gains episodes after being marked comes back.
+    public bool IsWatched => Kind is "show" or "season" ? ChildCount > 0 && UnwatchedCount == 0 : Progress?.Watched ?? false;
     public bool InProgress => Progress is { Watched: false, Position: > 30 };
     /// "S1 · E4" for episodes.
     public string EpisodeLabel => $"S{SeasonNumber} · E{EpisodeNumber}";
@@ -228,6 +230,16 @@ public sealed class CollectionDetail
     public List<CollectionRow>? Rows { get; set; }
 }
 
+/// One page of a collection in its order, for a shelf that loads as it scrolls.
+public sealed class CollectionPageData
+{
+    public WrenCollection Collection { get; set; } = new();
+    public List<TitleView> Entries { get; set; } = [];
+    public int Total { get; set; }
+    public int Offset { get; set; }
+    public string CountLabel { get; set; } = "";
+}
+
 public sealed class CollectionRow
 {
     public string Title { get; set; } = "";
@@ -317,6 +329,12 @@ public sealed class TitleView
     public string? Role { get; set; }
 
     /// "Role · 2019" on a person's page, else the year.
+    public static TitleView Of(Item i) => new()
+    {
+        TmdbId = i.TmdbId ?? 0, MediaType = i.Kind == "show" ? "show" : "movie", Title = i.Title, Year = i.Year,
+        Overview = i.Overview, PosterPath = i.PosterPath, BackdropPath = i.BackdropPath, Rating = i.Rating, Item = i,
+    };
+
     public string Caption => Role is { } r ? string.Join(" · ", new[] { r, Year?.ToString() }.Where(x => !string.IsNullOrEmpty(x))) : Year?.ToString() ?? "";
 }
 

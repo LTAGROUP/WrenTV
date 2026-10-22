@@ -45,6 +45,7 @@ import androidx.compose.material.icons.rounded.Sell
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -59,6 +60,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -68,7 +70,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.wrentv.tv.data.CatalogPage
-import com.wrentv.tv.data.CollectionDetail
+import com.wrentv.tv.data.CollectionPager
+import com.wrentv.tv.data.key
 import com.wrentv.tv.data.GenreCount
 import com.wrentv.tv.data.Item
 import com.wrentv.tv.data.Library
@@ -238,32 +241,46 @@ fun LibraryScreen(library: Library) {
     }
 }
 
+/** The movies and shows saved for later, newest added first: a banner of them, then a row of each. */
 @Composable
 fun WatchlistScreen() {
     val state = LocalAppState.current
+    val m = metrics()
     var items by remember { mutableStateOf<List<Item>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var hideWatched by remember { mutableStateOf(state.store.bool("watchlistHideWatched", true)) }
     LaunchedEffect(state.refreshTick, state.api) {
         try { items = state.api?.watchlist().orEmpty(); error = null } catch (e: CancellationException) { throw e } catch (e: Exception) { if (items == null) error = e.message }
     }
-    Page("Watchlist", actions = {
-        IconButton({ hideWatched = !hideWatched; state.store.setBool("watchlistHideWatched", hideWatched) }) {
-            Icon(if (hideWatched) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility, "Hide watched")
-        }
-    }) {
-        val list = items
-        when {
-            list != null -> {
-                val shown = list.filter { !hideWatched || !it.isWatched }
-                CardGrid {
-                    items(shown, { it.id }) { PosterCard(it, onWatchlist = true) }
-                    if (shown.isEmpty()) fullWidth { EmptyState(Icons.Rounded.BookmarkBorder, "Your watchlist is empty", "Add movies and shows from their pages to find them here.", Modifier.fillMaxWidth().padding(top = 60.dp)) }
+    val shown = items?.filter { !hideWatched || !it.isWatched }
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(bottom = 32.dp)) {
+            item("hero") {
+                val withArt = shown.orEmpty().filter { it.backdropPath != null }.take(10)
+                val count = shown?.let { "${it.size} title${if (it.size == 1) "" else "s"}" } ?: ""
+                val slides = withArt.map { Slide(it.id, it.backdropPath, null, it.displayTitle, listOfNotNull(it.year?.toString(), if (it.kind == "movie") "Movie" else "TV Show").joinToString(" · "), it.overview) }
+                    .ifEmpty { listOf(Slide("watchlist", null, null, "Watchlist", count, "Movies and shows you saved for later.")) }
+                Hero("ON YOUR WATCHLIST", slides) {
+                    GlassButton(if (hideWatched) "Show watched" else "Hide watched", if (hideWatched) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff, {
+                        hideWatched = !hideWatched; state.store.setBool("watchlistHideWatched", hideWatched)
+                    })
                 }
             }
-            error != null -> EmptyState(Icons.Rounded.Warning, "Couldn't load", error)
-            else -> Loading()
+            when {
+                shown == null && error != null -> item { EmptyState(Icons.Rounded.Warning, "Couldn't load", error) }
+                shown == null -> item { Loading(Modifier.fillMaxWidth().padding(top = 60.dp)) }
+                shown.isEmpty() -> item {
+                    if (items.isNullOrEmpty()) EmptyState(Icons.Rounded.BookmarkBorder, "Your watchlist is empty", "Add movies and shows from their pages to find them here.", Modifier.fillMaxWidth().padding(top = 60.dp))
+                    else EmptyState(Icons.Rounded.BookmarkBorder, "All watched", "Show watched to see them.", Modifier.fillMaxWidth().padding(top = 60.dp))
+                }
+                else -> listOf("Movies" to shown.filter { it.kind == "movie" }, "TV Shows" to shown.filter { it.kind != "movie" }).forEach { (title, list) ->
+                    if (list.isNotEmpty()) item(title) {
+                        Shelf(title, "${list.size}") { items(list, { it.id }) { PosterCard(it, width = m.poster, onWatchlist = true) } }
+                    }
+                }
+            }
         }
+        FloatingBack()
     }
 }
 
@@ -453,71 +470,46 @@ private fun CalendarCard(e: CalendarEpisode) {
 }
 
 /**
- * A collection under its artwork, like the other pages. A big one shows as
- * rows, like Home (the server picks them); choosing an order shows a grid.
+ * A collection under its artwork, like the other pages: one shelf in its
+ * order, loaded a page at a time as it scrolls toward the end.
  */
 @Composable
 fun CollectionScreen(id: String, name: String) {
     val state = LocalAppState.current
     val m = metrics()
     var sort by rememberSaveable { mutableStateOf("") }
-    var detail by remember { mutableStateOf<CollectionDetail?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var hasRows by rememberSaveable { mutableStateOf(false) }
-    // "order" is the collection's own order as a grid, for one shown as rows.
-    val serverSort = sort.takeIf { it.isNotEmpty() && it != "order" }
-    LaunchedEffect(id, serverSort, state.refreshTick) {
-        runCatching { state.api?.collection(id, serverSort) }
-            .onSuccess { detail = it; error = null; if (!it?.rows.isNullOrEmpty()) hasRows = true }
-            .onFailure { if (detail == null) error = it.message }
+    val pager = remember(id, sort) { CollectionPager.of(id, sort) }
+    val api = state.api
+    LaunchedEffect(pager, state.refreshTick, api) { api?.let { pager.start(it, state.scope, state.refreshTick) } }
+    val shelf = rememberLazyListState()
+    LaunchedEffect(pager, api) {
+        snapshotFlow { shelf.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }.collect { last ->
+            if (last >= 0 && api != null) pager.near(last, api, state.scope)
+        }
     }
-    val d = detail
-    val c = d?.collection
-    val sorts = if (hasRows) listOf("" to "Rows", "order" to "Collection order") + CollectionSorts.drop(1) else CollectionSorts
-    val rows = if (sort.isEmpty()) d?.rows?.takeIf { it.isNotEmpty() } else null
-    val titles = d?.titles?.takeIf { state.canStream }
+    val c = pager.collection
+    val entries = pager.entries
     Box(Modifier.fillMaxSize()) {
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            val cols = ((maxWidth - m.gutter * 2 + 12.dp) / (m.gridMin + 12.dp)).toInt().coerceAtLeast(2)
-            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(bottom = 32.dp)) {
-                item("hero") {
-                    val count = titles?.let { "${it.size} titles" } ?: d?.let { "${it.items.size} in your library" }
-                    val meta = listOfNotNull(count, c?.kindLabel).joinToString(" · ")
-                    val about = c?.syncError?.takeIf { it.isNotEmpty() && state.isAdmin } ?: c?.description?.ifEmpty { null }
-                    Hero("COLLECTION", listOf(Slide(id, c?.backdropPath, null, c?.name ?: name, meta, about))) {
-                        SortButton(sorts, sort) { sort = it }
-                    }
-                }
-                when {
-                    d == null && error != null -> item { EmptyState(Icons.Rounded.Warning, "Couldn't load", error) }
-                    d == null -> item { Loading(Modifier.fillMaxWidth().padding(top = 60.dp)) }
-                    rows != null -> rows.forEachIndexed { n, r ->
-                        item("row:$n") {
-                            Shelf(r.title) {
-                                if (titles != null) {
-                                    itemsIndexed(r.index.mapNotNull { titles.getOrNull(it) }.distinctBy { it.id }, { _, t -> t.id }) { i, t ->
-                                        TitleCard(t, width = m.poster, rank = if (r.title == "Top 20" && i < 10) i + 1 else null)
-                                    }
-                                } else {
-                                    items(r.index.mapNotNull { d.items.getOrNull(it) }.distinctBy { it.id }, { it.id }) { PosterCard(it, width = m.poster) }
+        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(bottom = 32.dp)) {
+            item("hero") {
+                val meta = listOfNotNull(pager.countLabel.ifEmpty { null }, c?.kindLabel).joinToString(" · ")
+                val about = c?.syncError?.takeIf { it.isNotEmpty() && state.isAdmin } ?: c?.description?.ifEmpty { null }
+                val slides = listOf(Slide(id, c?.backdropPath ?: entries.firstOrNull { it.backdropPath != null }?.backdropPath, null, c?.name ?: name, meta, about))
+                Hero("COLLECTION", slides) { SortButton(CollectionSorts, sort) { sort = it } }
+            }
+            when {
+                entries.isEmpty() && pager.error != null -> item { EmptyState(Icons.Rounded.Warning, "Couldn't load", pager.error) }
+                entries.isEmpty() && !pager.done -> item { Loading(Modifier.fillMaxWidth().padding(top = 60.dp)) }
+                entries.isEmpty() -> item { EmptyState(Icons.Rounded.Warning, "Nothing in this collection yet") }
+                else -> item("shelf:$sort") {
+                    Shelf(c?.name ?: name, pager.total.takeIf { it > 0 }?.toString(), state = shelf) {
+                        items(entries, { it.key }) { t -> TitleCard(t, width = m.poster) }
+                        if (pager.error != null && api != null) item("retry") {
+                            Column(Modifier.width(m.poster).clickable { pager.retry(api, state.scope) }) {
+                                Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)).background(Wren.surface), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Rounded.Refresh, "Retry", tint = Wren.secondary)
                                 }
-                            }
-                        }
-                    }
-                    else -> {
-                        val cards = mutableListOf<Pair<String, @Composable (Modifier) -> Unit>>()
-                        if (titles != null) sortedTitles(titles, sort).distinctBy { it.id }.forEach { t -> cards += t.id to @Composable { mod: Modifier -> TitleCard(t, mod) } }
-                        else {
-                            d.items.distinctBy { it.id }.forEach { i -> cards += i.id to @Composable { mod: Modifier -> PosterCard(i, mod) } }
-                            d.missing.orEmpty().distinctBy { it.id }.forEach { t -> cards += "m" + t.id to @Composable { mod: Modifier -> TitleCard(t, mod) } }
-                        }
-                        if (cards.isEmpty()) item { EmptyState(Icons.Rounded.Warning, "Nothing in this collection yet") }
-                        cards.chunked(cols).forEachIndexed { n, line ->
-                            item("line:$n:${line.first().first}") {
-                                Row(Modifier.padding(horizontal = m.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    line.forEach { (_, card) -> card(Modifier.weight(1f)) }
-                                    repeat(cols - line.size) { Spacer(Modifier.weight(1f)) }
-                                }
+                                Text("Couldn't load more", color = Wren.secondary, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
                             }
                         }
                     }
@@ -532,15 +524,6 @@ private val CollectionSorts = listOf(
     "" to "Collection order", "title" to "Title", "year" to "Year (newest)",
     "year_asc" to "Year (oldest)", "rating" to "Rating", "added" to "Recently added",
 )
-
-/** The server orders library items; full TMDB title lists are ordered here. */
-private fun sortedTitles(titles: List<TitleView>, sort: String): List<TitleView> = when (sort) {
-    "title" -> titles.sortedBy { it.title.lowercase() }
-    "year" -> titles.sortedByDescending { it.year ?: 0 }
-    "year_asc" -> titles.sortedBy { it.year ?: 9999 }
-    "rating" -> titles.sortedByDescending { it.item?.rating ?: it.rating ?: 0.0 }
-    else -> titles
-}
 
 /** The hero's button for how a collection is shown. */
 @Composable

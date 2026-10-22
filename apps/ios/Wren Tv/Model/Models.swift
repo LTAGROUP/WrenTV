@@ -197,6 +197,30 @@ struct WrenCollection: Codable, Hashable, Identifiable {
     }
 }
 
+/// A page of a collection's one shelf, in its order (offset of total).
+struct CollectionPage: Codable {
+    var collection: WrenCollection
+    var entries: [TitleView]
+    var total: Int
+    var offset: Int
+    /// "12 in your library", "40 titles", "8 in your library · 4 not".
+    var countLabel: String
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        collection = try c.decode(WrenCollection.self, forKey: .collection)
+        entries = try c.decodeIfPresent([TitleView].self, forKey: .entries) ?? []
+        total = try c.decodeIfPresent(Int.self, forKey: .total) ?? 0
+        offset = try c.decodeIfPresent(Int.self, forKey: .offset) ?? 0
+        countLabel = try c.decodeIfPresent(String.self, forKey: .countLabel) ?? ""
+    }
+}
+
+extension TitleView {
+    /// A collection entry's identity: the library item, else the TMDB title.
+    var entryKey: String { item?.id ?? id }
+}
+
 struct CollectionDetail: Codable {
     var collection: WrenCollection
     var items: [Item]

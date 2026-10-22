@@ -406,6 +406,9 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	p := principal(r)
 	if ws, _ := s.DB.GetWatchState(ctx, p.User.ID, it.ID); ws != nil {
+		if it.Kind == "show" || it.Kind == "season" {
+			ws.Watched = s.DB.EpisodesWatched(ctx, p.User.ID, it.ID)
+		}
 		it.Progress = ws
 	}
 	resp := map[string]any{"item": it}

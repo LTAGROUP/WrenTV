@@ -37,6 +37,7 @@ sealed interface Route {
     // Pushed pages.
     data class Detail(val itemId: String, val seed: Item? = null) : Route { override val key = "item:$itemId" }
     data class Collection(val collection: WrenCollection) : Route { override val key = "collection:${collection.id}" }
+    data object Watchlist : Route { override val key = "watchlist" }
     data class GenreItems(val genre: String, val libraryId: String? = null) : Route { override val key = "genre:$genre:$libraryId" }
     data class Hub(val id: String, val name: String) : Route { override val key = "hub:$id" }
     data class Person(val id: Int, val name: String) : Route { override val key = "person:$id" }

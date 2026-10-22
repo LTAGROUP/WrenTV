@@ -555,19 +555,31 @@ async function viewDiscoverHome() {
 const watchlistShelf = (items) => items?.length ? shelf('My Watchlist', items.map((it) => posterCard(it)).join(''), { see: '/watchlist' }) : '';
 
 // viewWatchlist is the movies and shows the viewer saved for later, newest
-// added first.
+// added first: a banner of them, then a row of each.
 async function viewWatchlist() {
   setTitle('Watchlist');
   const all = await api('/api/watchlist');
   const showWatched = new URLSearchParams(location.search).get('watched') === '1';
   const items = showWatched ? all : all.filter((it) => !isWatched(it));
-  const node = el(`<div><div class="page-head"><h1>Watchlist <span class="muted small">${items.length} title${items.length === 1 ? '' : 's'}</span></h1>
-    <div class="toolbar"><button class="chip${showWatched ? ' on' : ''}" id="show-watched" aria-pressed="${showWatched}">Show watched</button></div></div>
-    ${items.length ? `<div class="grid">${items.map((it) => posterCard(it)).join('')}</div>`
-      : `<div class="empty"><h2>${all.length ? 'All watched' : 'Your watchlist is empty'}</h2><p>${all.length ? 'Turn on Show watched to see them.' : 'Add movies and shows from their pages to find them here.'}</p></div>`}</div>`);
+  const movies = items.filter((it) => it.kind === 'movie');
+  const shows = items.filter((it) => it.kind !== 'movie');
+  const hero = items.filter((it) => it.backdropPath).slice(0, 10).map(itemTitle);
+  const chip = `<button class="chip${showWatched ? ' on' : ''}" id="show-watched" aria-pressed="${showWatched}">Show watched</button>`;
+  const count = `${items.length} title${items.length === 1 ? '' : 's'}`;
+  const node = el(`<div>${hero.length ? discoverHero(hero, 'On your watchlist') : `<div class="page-head"><h1>Watchlist</h1></div>`}
+    <div class="page-head"><h2>Watchlist <span class="muted small">${count}</span></h2><div class="toolbar">${chip}</div></div>
+    ${movies.length ? shelf('Movies', movies.map((it) => posterCard(it)).join(''), { sub: `${movies.length}` }) : ''}
+    ${shows.length ? shelf('TV Shows', shows.map((it) => posterCard(it)).join(''), { sub: `${shows.length}` }) : ''}
+    ${items.length ? '' : `<div class="empty"><h2>${all.length ? 'All watched' : 'Your watchlist is empty'}</h2><p>${all.length ? 'Turn on Show watched to see them.' : 'Add movies and shows from their pages to find them here.'}</p></div>`}</div>`);
   $('#show-watched', node).onclick = () => go('/watchlist' + (showWatched ? '' : '?watched=1'), true);
+  if (hero.length) bindHero(node, hero, 'On your watchlist');
+  bindShelves(node);
   return node;
 }
+
+// itemTitle is a library item as the banner shows TMDB titles.
+const itemTitle = (it) => ({ tmdbId: it.tmdbId, mediaType: it.kind, title: it.title, year: it.year, overview: it.overview,
+  rating: it.rating, posterPath: it.posterPath, backdropPath: it.backdropPath, item: it });
 
 const catalogSorts = [['popular', 'Popular'], ['top_rated', 'Top rated'], ['new', 'Newest']];
 
@@ -627,12 +639,12 @@ async function viewCatalog(type) {
 }
 
 // The rotating banner of this week's trending titles, like the apps.
-export function discoverHero(titles) {
+export function discoverHero(titles, eyebrow) {
   return `<section class="feature carousel">${titles.map((v, i) => `<div class="bg${i ? '' : ' on'}" data-bg="${img(v.backdropPath, 'w1280')}"></div>`).join('')}
-    <div class="content">${heroContent(titles, 0)}</div></section>`;
+    <div class="content">${heroContent(titles, 0, eyebrow)}</div></section>`;
 }
 
-function heroContent(titles, i) {
+function heroContent(titles, i, eyebrow = 'Trending this week') {
   const v = titles[i];
   const it = v.item;
   const meta = [v.year, v.mediaType === 'show' ? 'Series' : 'Film', v.rating && `★ ${v.rating.toFixed(1)}`].filter(Boolean);
@@ -647,7 +659,7 @@ function heroContent(titles, i) {
     actions = it ? `<a class="btn primary lg" href="/item/${it.id}">▶ Watch Now</a>` : `<a class="btn primary lg" href="/item/stream" ${stream}>▶ Watch Now</a>`;
   }
   const dots = titles.length > 1 ? `<div class="dots">${titles.map((t, n) => `<button type="button" data-dot="${n}" class="${n === i ? 'on' : ''}" title="${esc(t.title)}" aria-label="${esc(t.title)}"></button>`).join('')}</div>` : '';
-  return `<div class="eyebrow">Trending this week</div>
+  return `<div class="eyebrow">${esc(eyebrow)}</div>
     ${it?.logoPath ? `<img class="logo-img" src="${img(it.logoPath, 'w500')}" alt="${esc(v.title)}">` : `<h1>${esc(v.title)}</h1>`}
     <div class="meta">${meta.join('<span class="muted">·</span>')}</div>
     <p class="overview">${esc(v.overview || '')}</p>
@@ -656,7 +668,7 @@ function heroContent(titles, i) {
 
 // bindHero plays from the banner and, with several titles, moves to the next
 // one every 8 seconds unless the pointer is over it.
-export function bindHero(node, titles) {
+export function bindHero(node, titles, eyebrow) {
   const sec = $('.feature', node);
   if (!sec) return;
   sec.addEventListener('click', (e) => {
@@ -676,7 +688,7 @@ export function bindHero(node, titles) {
     load(i);
     load(i + 1);
     bgs.forEach((b, k) => b.classList.toggle('on', k === i));
-    const c = el(`<div class="content">${heroContent(titles, i)}</div>`);
+    const c = el(`<div class="content">${heroContent(titles, i, eyebrow)}</div>`);
     $('.content', sec).replaceWith(c);
   };
   if (titles.length < 2) return;
@@ -858,7 +870,7 @@ function openTrailer(t) {
 const langNames = (() => { try { return new Intl.DisplayNames([navigator.language], { type: 'language' }); } catch { return null; } })();
 const langName = (c) => (c ? langNames?.of(c) || c : '');
 
-const isWatched = (it) => it.progress?.watched || ((it.kind === 'show' || it.kind === 'season') && it.childCount > 0 && !it.unwatchedCount);
+const isWatched = (it) => (it.kind === 'show' || it.kind === 'season') ? it.childCount > 0 && !it.unwatchedCount : !!it.progress?.watched;
 
 function episodeRows(eps) {
   if (!eps.length) return '<div class="empty small"><p>No episodes yet.</p></div>';

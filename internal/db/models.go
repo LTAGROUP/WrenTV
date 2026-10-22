@@ -589,6 +589,11 @@ func (d *DB) QueryItems(ctx context.Context, q ItemQuery) ([]*Item, int, error) 
 		if pos.Valid {
 			it.Progress = &WatchState{Position: pos.Float64, Duration: dur.Float64, Watched: watched.Int64 == 1, UpdatedAt: upd.Int64}
 		}
+		// A show or season is watched when its episodes are: a mark made
+		// mid-season goes stale once new episodes arrive.
+		if q.UserID != "" && it.Progress != nil && (it.Kind == "show" || it.Kind == "season") {
+			it.Progress.Watched = childCount > 0 && unwatched == 0
+		}
 		out = append(out, it)
 	}
 	return out, total, rows.Err()
@@ -829,6 +834,16 @@ func (d *DB) SetWatched(ctx context.Context, userID, itemID string, watched bool
 		ON CONFLICT(user_id, item_id) DO UPDATE SET watched=excluded.watched, position=0, updated_at=excluded.updated_at`,
 		userID, watched, Now(), itemID, itemID, itemID)
 	return err
+}
+
+// EpisodesWatched reports whether a show or season has episodes and the user
+// has watched all of them.
+func (d *DB) EpisodesWatched(ctx context.Context, userID, itemID string) bool {
+	var total, unwatched int
+	d.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(NOT EXISTS (SELECT 1 FROM watch_state ws
+		WHERE ws.item_id=e.id AND ws.user_id=? AND ws.watched=1)), 0)
+		FROM items e WHERE e.kind='episode' AND (e.parent_id=? OR e.show_id=?)`, userID, itemID, itemID).Scan(&total, &unwatched)
+	return total > 0 && unwatched == 0
 }
 
 // ContinueWatching returns movies and episodes watched for more than after

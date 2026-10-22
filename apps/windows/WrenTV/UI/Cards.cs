@@ -233,7 +233,9 @@ static class Cards
 
     /// A titled horizontal row of cards. The row scrolls with its arrows, a
     /// sideways swipe or Shift+wheel; a plain wheel scrolls the page, never the row.
-    public static UIElement Shelf(string title, IEnumerable<UIElement> cards, Action? seeAll = null, string? subtitle = null)
+    /// attach gets the row and its scroller, for a shelf that grows as it scrolls.
+    public static UIElement Shelf(string title, IEnumerable<UIElement> cards, Action? seeAll = null, string? subtitle = null,
+        Action<StackPanel, ScrollViewer>? attach = null)
     {
         var list = cards.ToList();
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16, Padding = new Thickness(Page.Gutter, 0, Page.Gutter, 4) };
@@ -298,6 +300,7 @@ static class Cards
             link.Click += (_, _) => seeAll();
             header.Children.Add(link);
         }
+        attach?.Invoke(row, scroll);
         return Ui.Column(12, header, strip);
     }
 

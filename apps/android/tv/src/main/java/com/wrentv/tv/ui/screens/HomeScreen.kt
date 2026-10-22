@@ -41,6 +41,7 @@ import com.wrentv.tv.ui.Loading
 import com.wrentv.tv.ui.LocalAppState
 import com.wrentv.tv.ui.LocalNavigator
 import com.wrentv.tv.ui.PosterCard
+import com.wrentv.tv.ui.SeeAllCard
 import com.wrentv.tv.ui.ReportScroll
 import com.wrentv.tv.ui.Route
 import com.wrentv.tv.ui.Shelf
@@ -191,6 +192,7 @@ private fun LazyListScope.watchlist(items: List<Item>?, menu: ItemMenuState) {
             items(items, key = { it.id }) { item ->
                 PosterCard(item, { nav.push(Route.Detail(item.id, item)) }, Modifier.rememberFocus("wl:${item.id}"), onLongClick = { menu.open(item, onWatchlist = true) })
             }
+            item("wl:all") { SeeAllCard({ nav.push(Route.Watchlist) }, Modifier.rememberFocus("wl:all")) }
         }
     }
 }

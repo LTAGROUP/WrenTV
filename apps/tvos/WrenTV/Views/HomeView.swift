@@ -20,7 +20,10 @@ struct HomeView: View {
                         }
                     }
                     if let w = h.watchlist, !w.isEmpty {
-                        Shelf(title: "My Watchlist") { ForEach(w) { PosterCard(item: $0) } }
+                        Shelf(title: "My Watchlist") {
+                            ForEach(w) { PosterCard(item: $0) }
+                            SeeAllCard(route: WatchlistRoute())
+                        }
                     }
                     if let t = trending, t.enabled, !t.items.isEmpty {
                         Shelf(title: "Trending This Week", subtitle: "\(t.items.count { $0.item != nil }) in your library") {

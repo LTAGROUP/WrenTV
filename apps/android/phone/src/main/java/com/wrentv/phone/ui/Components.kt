@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -204,7 +206,7 @@ fun Page(title: String, subtitle: String? = null, actions: @Composable RowScope.
 
 /** A titled row of cards that scrolls sideways. */
 @Composable
-fun Shelf(title: String, subtitle: String? = null, onOpen: (() -> Unit)? = null, content: LazyListScope.() -> Unit) {
+fun Shelf(title: String, subtitle: String? = null, onOpen: (() -> Unit)? = null, state: LazyListState? = null, content: LazyListScope.() -> Unit) {
     val m = metrics()
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(
@@ -216,7 +218,7 @@ fun Shelf(title: String, subtitle: String? = null, onOpen: (() -> Unit)? = null,
             // The title opens the rest of it.
             if (onOpen != null) Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Wren.secondary)
         }
-        LazyRow(contentPadding = PaddingValues(horizontal = m.gutter), horizontalArrangement = Arrangement.spacedBy(m.cardSpacing), content = content)
+        LazyRow(state = state ?: rememberLazyListState(), contentPadding = PaddingValues(horizontal = m.gutter), horizontalArrangement = Arrangement.spacedBy(m.cardSpacing), content = content)
     }
 }
 

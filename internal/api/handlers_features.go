@@ -145,9 +145,24 @@ func (s *Server) handleGenreItems(w http.ResponseWriter, r *http.Request) {
 // collectionItems resolves a collection to the library items the caller can
 // see, plus (for TMDB sources) the titles the server doesn't have.
 func (s *Server) collectionItems(ctx context.Context, r *http.Request, c *db.Collection, limit int) ([]*db.Item, []titleView, error) {
-	_, ids, err := s.visibleLibraries(r)
+	q, err := s.collectionQuery(r, c, limit)
 	if err != nil {
 		return nil, nil, err
+	}
+	if c.Kind == "tmdb" {
+		return s.tmdbCollectionItems(ctx, r, c, q)
+	}
+	items, _, err := s.DB.QueryItems(ctx, q)
+	return nonNil(items), []titleView{}, err
+}
+
+// collectionQuery is the library query for a collection's items, up to
+// limit (or the collection's own limit). A TMDB collection's has only its
+// libraries, sort and limit: its titles say which items.
+func (s *Server) collectionQuery(r *http.Request, c *db.Collection, limit int) (db.ItemQuery, error) {
+	_, ids, err := s.visibleLibraries(r)
+	if err != nil {
+		return db.ItemQuery{}, err
 	}
 	if c.LibraryID != "" {
 		scoped := []string{}
@@ -181,16 +196,19 @@ func (s *Server) collectionItems(ctx context.Context, r *http.Request, c *db.Col
 		if ru.AddedDays > 0 {
 			q.AddedSince = time.Now().AddDate(0, 0, -ru.AddedDays).Unix()
 		}
-	case "tmdb":
-		return s.tmdbCollectionItems(ctx, r, c, q)
 	}
-	items, _, err := s.DB.QueryItems(ctx, q)
-	return nonNil(items), []titleView{}, err
+	return q, nil
 }
 
 // collectionTitles is every title of a TMDB collection in its own order,
 // linked to the library items the caller can see.
 func (s *Server) collectionTitles(ctx context.Context, r *http.Request, c *db.Collection) []titleView {
+	return nonNil(s.linkLibrary(ctx, r, uniqueTitles(c), false))
+}
+
+// uniqueTitles is a TMDB collection's titles in order, not yet linked to
+// the library.
+func uniqueTitles(c *db.Collection) []titleView {
 	views := make([]titleView, 0, len(c.Titles))
 	seen := map[string]bool{}
 	for _, t := range c.Titles {
@@ -202,7 +220,7 @@ func (s *Server) collectionTitles(ctx context.Context, r *http.Request, c *db.Co
 		seen[k] = true
 		views = append(views, titleView{TMDBID: t.TMDBID, MediaType: t.MediaType, Title: t.Title, Year: t.Year, PosterPath: t.PosterPath, BackdropPath: t.BackdropPath})
 	}
-	return nonNil(s.linkLibrary(ctx, r, views, false))
+	return views
 }
 
 // canStream reports whether the caller can play titles the server doesn't
@@ -350,6 +368,34 @@ func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
 	if srt := r.URL.Query().Get("sort"); srt != "" {
 		c.Sort = srt
 	}
+	// Apps that page ask for a limit; older ones get everything at once.
+	if r.URL.Query().Get("limit") == "" {
+		s.writeWholeCollection(w, r, c)
+		return
+	}
+	offset := max(queryInt(r, "offset", 0), 0)
+	limit := min(max(queryInt(r, "limit", 40), 1), collectionPageMax)
+	entries, total, label, err := s.collectionEntries(r.Context(), r, c, offset, limit)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	c.ItemCount = total
+	c.Active = c.ActiveOn(time.Now())
+	if c.BackdropPath == "" {
+		for _, e := range entries {
+			if e.BackdropPath != "" {
+				c.BackdropPath = e.BackdropPath
+				break
+			}
+		}
+	}
+	writeJSON(w, 200, map[string]any{"collection": c, "entries": entries, "total": total, "offset": offset, "countLabel": label})
+}
+
+// writeWholeCollection is a collection's items, and its titles when
+// streaming, all at once.
+func (s *Server) writeWholeCollection(w http.ResponseWriter, r *http.Request, c *db.Collection) {
 	items, missing, err := s.collectionItems(r.Context(), r, c, 0)
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -365,27 +411,11 @@ func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
 		}
 		resp["titles"] = titles
 		c.ItemCount = len(titles)
-		if r.URL.Query().Get("sort") == "" {
-			resp["rows"] = s.titleShelves(r.Context(), c, titles)
-		}
 		for _, t := range titles {
 			if c.BackdropPath == "" && t.BackdropPath != "" {
 				c.BackdropPath = t.BackdropPath
 			}
 		}
-	} else if r.URL.Query().Get("sort") == "" {
-		genres := make([][]string, len(items))
-		for i, it := range items {
-			genres[i] = it.Genres
-		}
-		first, label := recentFirst(items), "Recently added"
-		if c.Kind == "tmdb" {
-			first, label = first[:0], "Top 20"
-			for i := range items {
-				first = append(first, i)
-			}
-		}
-		resp["rows"] = collectionShelves(len(items), genres, first, label)
 	}
 	c.Active = c.ActiveOn(time.Now())
 	if c.BackdropPath == "" {
@@ -399,96 +429,143 @@ func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, resp)
 }
 
-// shelvesFrom is how big a collection is before it shows as rows, like a
-// home page, rather than one grid. Franchises are smaller.
-const shelvesFrom = 25
+// collectionPageMax is the most entries a collection page sends at once.
+const collectionPageMax = 200
 
-// collectionShelf is one row of a big collection: indexes into its titles
-// (or items, when it has no titles).
-type collectionShelf struct {
-	Title string `json:"title"`
-	Index []int  `json:"index"`
+// collectionEntries is one page of a collection's shelf, from offset: its
+// titles in order when streaming (a TMDB collection is all of them then),
+// else its library items followed by the titles the server doesn't have.
+// Library items come as views carrying the item. A first page that's most
+// of the collection is all of it, so a small one loads at once. It also
+// returns how many there are, and that count as the page shows it.
+func (s *Server) collectionEntries(ctx context.Context, r *http.Request, c *db.Collection, offset, limit int) ([]titleView, int, string, error) {
+	window := func(total int) (int, int) {
+		from := min(offset, total)
+		to := min(from+limit, total)
+		if offset == 0 && total <= limit*3/2 {
+			to = total
+		}
+		return from, to
+	}
+	plural := func(n int, one string) string {
+		if n == 1 {
+			return "1 " + one
+		}
+		return strconv.Itoa(n) + " " + one + "s"
+	}
+	switch {
+	case c.Kind == "tmdb" && s.canStream(r):
+		views := uniqueTitles(c)
+		if c.ItemLimit > 0 && len(views) > c.ItemLimit {
+			views = views[:c.ItemLimit]
+		}
+		// Titles and years are known without the library; other orders
+		// need every title linked first.
+		linked := false
+		switch c.Sort {
+		case "", "custom":
+		case "title", "year", "year_asc":
+			sortViews(views, c.Sort)
+		default:
+			views = s.linkLibrary(ctx, r, views, false)
+			sortViews(views, c.Sort)
+			linked = true
+		}
+		from, to := window(len(views))
+		page := views[from:to]
+		if !linked {
+			page = s.linkLibrary(ctx, r, page, false)
+		}
+		return nonNil(page), len(views), plural(len(views), "title"), nil
+	case c.Kind == "tmdb":
+		items, missing, err := s.collectionItems(ctx, r, c, 0)
+		if err != nil {
+			return nil, 0, "", err
+		}
+		all := make([]titleView, 0, len(items)+len(missing))
+		for _, it := range items {
+			all = append(all, itemView(it))
+		}
+		all = append(all, missing...)
+		label := strconv.Itoa(len(items)) + " in your library"
+		if len(missing) > 0 {
+			label += " · " + strconv.Itoa(len(missing)) + " not"
+		}
+		from, to := window(len(all))
+		return all[from:to], len(all), label, nil
+	}
+	q, err := s.collectionQuery(r, c, 0)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	q.Offset, q.Limit = offset, limit
+	if offset == 0 {
+		q.Limit = limit * 3 / 2
+	}
+	if c.ItemLimit > 0 {
+		q.Limit = max(min(q.Limit, c.ItemLimit-offset), 0)
+	}
+	var items []*db.Item
+	total := 0
+	if q.Limit > 0 {
+		if items, total, err = s.DB.QueryItems(ctx, q); err != nil {
+			return nil, 0, "", err
+		}
+	}
+	if c.ItemLimit > 0 {
+		total = min(total, c.ItemLimit)
+	}
+	if !(offset == 0 && total <= limit*3/2) && len(items) > limit {
+		items = items[:limit]
+	}
+	out := make([]titleView, 0, len(items))
+	for _, it := range items {
+		out = append(out, itemView(it))
+	}
+	return out, total, strconv.Itoa(total) + " in your library", nil
 }
 
-// collectionShelves splits n entries into rows: the first 20 in the given
-// order, then a row per genre with four or more, the biggest first. Small
-// collections have none and show as a grid.
-func collectionShelves(n int, genres [][]string, first []int, firstTitle string) []collectionShelf {
-	out := []collectionShelf{}
-	if n < shelvesFrom {
-		return out
-	}
-	out = append(out, collectionShelf{Title: firstTitle, Index: first[:min(20, len(first))]})
-	byGenre := map[string][]int{}
-	var names []string
-	for i, gs := range genres {
-		for _, g := range gs {
-			if byGenre[g] == nil {
-				names = append(names, g)
-			}
-			byGenre[g] = append(byGenre[g], i)
-		}
-	}
-	sort.SliceStable(names, func(i, j int) bool { return len(byGenre[names[i]]) > len(byGenre[names[j]]) })
-	for _, g := range names {
-		if len(byGenre[g]) >= 4 && len(byGenre[g]) < n {
-			out = append(out, collectionShelf{Title: g, Index: byGenre[g]})
-		}
-	}
-	return out
+// itemView is a library item as an entry of a collection's shelf.
+func itemView(it *db.Item) titleView {
+	return titleView{TMDBID: it.TMDBID, MediaType: it.Kind, Title: it.Title, Year: it.Year, Overview: it.Overview,
+		PosterPath: it.PosterPath, BackdropPath: it.BackdropPath, Rating: it.Rating, Item: it}
 }
 
-// titleShelves is collectionShelves for a TMDB collection's titles, with
-// a row of what's in the library when that's only some of them.
-func (s *Server) titleShelves(ctx context.Context, c *db.Collection, titles []titleView) []collectionShelf {
-	names := map[int]string{}
-	for _, mt := range []string{"tv", "movie"} {
-		if gs, err := s.TMDB.Genres(ctx, mt); err == nil {
-			for _, g := range gs {
-				names[g.ID] = g.Name
-			}
+// sortViews orders a collection's titles: by title, year (newest or
+// oldest first), rating or when the library added them.
+func sortViews(views []titleView, by string) {
+	rating := func(v titleView) float64 {
+		if v.Item != nil && v.Item.Rating > 0 {
+			return v.Item.Rating
 		}
+		return v.Rating
 	}
-	ids := map[string][]int{}
-	for _, t := range c.Titles {
-		ids[t.MediaType+strconv.Itoa(t.TMDBID)] = t.GenreIDs
-	}
-	genres := make([][]string, len(titles))
-	order := make([]int, len(titles))
-	var have []int
-	for i, v := range titles {
-		order[i] = i
-		for _, id := range ids[v.MediaType+strconv.Itoa(v.TMDBID)] {
-			if names[id] != "" {
-				genres[i] = append(genres[i], names[id])
-			}
-		}
+	added := func(v titleView) int64 {
 		if v.Item != nil {
-			have = append(have, i)
-			if len(genres[i]) == 0 {
-				genres[i] = v.Item.Genres
-			}
+			return v.Item.AddedAt
 		}
+		return 0
 	}
-	first := "Top 20"
-	if c.Rules.Source == "collection" {
-		first = "In order"
+	year := func(v titleView, none int) int {
+		if v.Year == 0 {
+			return none
+		}
+		return v.Year
 	}
-	out := collectionShelves(len(titles), genres, order, first)
-	if len(out) > 0 && len(have) >= 4 && len(have) < len(titles) {
-		out = append(out[:1], append([]collectionShelf{{Title: "In your library", Index: have}}, out[1:]...)...)
-	}
-	return out
-}
-
-// recentFirst is the indexes of items, most recently added first.
-func recentFirst(items []*db.Item) []int {
-	order := make([]int, len(items))
-	for i := range order {
-		order[i] = i
-	}
-	sort.SliceStable(order, func(i, j int) bool { return items[order[i]].AddedAt > items[order[j]].AddedAt })
-	return order
+	sort.SliceStable(views, func(i, j int) bool {
+		a, b := views[i], views[j]
+		switch by {
+		case "year":
+			return year(a, 0) > year(b, 0)
+		case "year_asc":
+			return year(a, 9999) < year(b, 9999)
+		case "rating":
+			return rating(a) > rating(b)
+		case "added":
+			return added(a) > added(b)
+		}
+		return db.SortTitle(a.Title) < db.SortTitle(b.Title)
+	})
 }
 
 // searchKey is a name lowercased with only its letters and digits, so

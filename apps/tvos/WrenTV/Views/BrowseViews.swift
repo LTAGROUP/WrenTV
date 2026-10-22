@@ -153,7 +153,10 @@ struct DiscoverView: View {
                         Shelf(title: "Continue Watching") { ForEach(h.continueWatching) { LandscapeCard(item: $0) } }
                     }
                     if let w = h.watchlist, !w.isEmpty {
-                        Shelf(title: "My Watchlist") { ForEach(w) { PosterCard(item: $0) } }
+                        Shelf(title: "My Watchlist") {
+                            ForEach(w) { PosterCard(item: $0) }
+                            SeeAllCard(route: WatchlistRoute())
+                        }
                     }
                     ForEach(h.rows) { row in
                         Shelf(title: row.title) {

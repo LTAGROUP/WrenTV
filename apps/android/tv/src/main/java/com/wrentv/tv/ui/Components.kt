@@ -22,12 +22,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyListPrefetchStrategy
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -305,6 +307,18 @@ fun LandscapeCard(item: Item, onClick: () -> Unit, modifier: Modifier = Modifier
     }
 }
 
+/** The last card of a shelf that shows only some of a page: opens it all. */
+@Composable
+fun SeeAllCard(onClick: () -> Unit, modifier: Modifier = Modifier, width: Dp = 150.dp) {
+    var focused by remember { mutableStateOf(false) }
+    Column(modifier.width(width)) {
+        ArtCard(onClick, Modifier.width(width).aspectRatio(2f / 3f).onFocusChanged { focused = it.hasFocus }) {
+            Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, Modifier.align(Alignment.Center).size(36.dp), tint = Wren.secondary)
+        }
+        CardCaption("See all", null, focused, width)
+    }
+}
+
 /** A TMDB title: opens the library item when the server has it; with streaming on, anything opens to play. */
 @Composable
 fun TitleCard(title: TitleView, modifier: Modifier = Modifier, rank: Int? = null, width: Dp = 150.dp) {
@@ -397,13 +411,13 @@ val PageGutter = 56.dp
 /** A titled horizontal row of cards. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun Shelf(title: String, modifier: Modifier = Modifier, subtitle: String? = null, content: LazyListScope.() -> Unit) {
+fun Shelf(title: String, modifier: Modifier = Modifier, subtitle: String? = null, state: LazyListState? = null, content: LazyListScope.() -> Unit) {
     Column(modifier.fillMaxWidth()) {
         ShelfTitle(title, subtitle)
         LazyRow(
             // When the page scrolls a shelf into view, its first screenful of
             // cards is composed ahead of time instead of all in one frame.
-            state = rememberLazyListState(prefetchStrategy = remember { LazyListPrefetchStrategy(nestedPrefetchItemCount = 8) }),
+            state = state ?: rememberLazyListState(prefetchStrategy = remember { LazyListPrefetchStrategy(nestedPrefetchItemCount = 8) }),
             contentPadding = PaddingValues(horizontal = PageGutter, vertical = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             content = content,

@@ -42,6 +42,8 @@ import androidx.compose.material.icons.rounded.Label
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.ViewCarousel
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -75,13 +77,15 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.wrentv.tv.data.CatalogPage
-import com.wrentv.tv.data.CollectionDetail
+import com.wrentv.tv.data.CollectionPager
+import com.wrentv.tv.data.key
 import com.wrentv.tv.data.CollectionShelf
 import com.wrentv.tv.data.GenreCount
 import com.wrentv.tv.data.Item
 import com.wrentv.tv.data.TitleView
 import com.wrentv.tv.data.WrenCollection
 import com.wrentv.tv.ui.ArtCard
+import com.wrentv.tv.ui.CardCaption
 import com.wrentv.tv.ui.Choice
 import com.wrentv.tv.ui.ChoicePanel
 import com.wrentv.tv.ui.Chip
@@ -440,78 +444,56 @@ fun CollectionDetailScreen(seed: WrenCollection) {
     var sort by rememberSaveable { mutableStateOf("") }
     var picker by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<Item?>(null) }
-    // "order" is the collection's own order as a grid, for one shown as rows.
-    val serverSort = sort.takeIf { it.isNotEmpty() && it != "order" }
-    val detail = rememberLoaded<CollectionDetail>("collection:${seed.id}:$serverSort", state.refreshTick) {
-        state.api?.collection(seed.id, serverSort)
-    }
-    val c = detail.value?.collection ?: seed
-    val d = detail.value
-    // A big collection shows as rows, like Home; picking an order shows a grid.
-    // Sorted answers come without rows, so whether there are any is remembered.
-    var rowed by rememberSaveable { mutableStateOf(false) }
-    if (!d?.rows.isNullOrEmpty()) rowed = true
-    val hasRows = rowed
-    val rows = if (sort.isEmpty()) d?.rows?.takeIf { it.isNotEmpty() } else null
-    val sorts = if (hasRows) listOf(Choice("", "Rows"), Choice("order", "Collection order")) + collectionSorts.drop(1) else collectionSorts
-    val count = d?.titles?.let { "${it.size} title${if (it.size == 1) "" else "s"}" } ?: "${d?.items?.size ?: c.itemCount ?: 0} in your library"
+    // One shelf in the collection's order, a page at a time; the pager
+    // outlives the screen, so coming back finds what was loaded.
+    val pager = remember(seed.id, sort) { CollectionPager.of(seed.id, sort) }
+    val api = state.api
+    LaunchedEffect(pager, state.refreshTick) { api?.let { pager.start(it, state.scope, state.refreshTick) } }
+    val c = pager.collection ?: seed
     val hero = HeroEntry(
         id = "collection:${c.id}", title = c.name, backdrop = c.backdropPath, logo = null,
-        meta = listOfNotNull(count, c.kindLabel, c.visibleFrom.takeIf { it.isNotEmpty() }?.let { "Visible $it – ${c.visibleUntil}" }),
+        meta = listOfNotNull(pager.countLabel.ifEmpty { null }, c.kindLabel, c.visibleFrom.takeIf { it.isNotEmpty() }?.let { "Visible $it – ${c.visibleUntil}" }),
         badges = emptyList(),
         overview = c.syncError?.takeIf { it.isNotEmpty() && state.isAdmin } ?: c.description.ifEmpty { null },
         item = null,
     )
     val list = rememberLazyListState()
+    val shelf = rememberLazyListState()
+    // Browsing within about 15 posters of the end loads the next page.
+    LaunchedEffect(pager, api) {
+        snapshotFlow { shelf.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }.collect { last ->
+            if (last >= 0 && api != null) pager.near(last, api, state.scope)
+        }
+    }
+    val entries = pager.entries
+    val removable = state.isAdmin && c.kind == "manual"
     CinematicBrowse(list, fallback = hero, label = "Collection", pills = {
-        Chip(sorts.firstOrNull { it.value == sort }?.label ?: "Collection order", false, { picker = true },
+        Chip(collectionSorts.firstOrNull { it.value == sort }?.label ?: "Collection order", false, { picker = true },
             Modifier.rememberFocus("chip:sort"), icon = Icons.AutoMirrored.Rounded.Sort)
     }) {
         when {
-            d == null && detail.error != null -> extra("error") { EmptyState("Couldn't load", detail.error, icon = Icons.Rounded.WifiOff) }
-            d == null -> extra("loading") { Loading() }
-            rows != null -> rows.forEachIndexed { n, r ->
-                val titles = d.titles
-                row("row:$n:${r.title}") {
-                    Shelf(r.title) {
-                        if (titles != null) {
-                            items(r.index.mapNotNull { titles.getOrNull(it) }.distinctBy { it.id }, key = { it.id }) { t ->
-                                TitleCard(t, Modifier.rememberFocus("r$n:${t.id}", default = n == 0 && r.index.firstOrNull()?.let(titles::getOrNull) == t),
-                                    width = CinematicPoster)
-                            }
+            entries.isEmpty() && pager.error != null -> extra("error") { EmptyState("Couldn't load", pager.error, icon = Icons.Rounded.WifiOff) }
+            entries.isEmpty() && !pager.done -> extra("loading") { Loading() }
+            entries.isEmpty() -> extra("none") { EmptyState("Nothing in this collection yet") }
+            else -> row("shelf:$sort") {
+                Shelf(c.name, subtitle = pager.total.takeIf { it > 0 }?.toString(), state = shelf) {
+                    items(entries, key = { it.key }) { t ->
+                        val item = t.item
+                        val focus = Modifier.rememberFocus("c:${t.key}", default = t === entries.first())
+                        if (item != null && removable) {
+                            PosterCard(item, { nav.push(Route.Detail(item.id, item)) }, focus, width = CinematicPoster, onLongClick = { removing = item })
                         } else {
-                            items(r.index.mapNotNull { d.items.getOrNull(it) }.distinctBy { it.id }, key = { it.id }) { item ->
-                                PosterCard(item, { nav.push(Route.Detail(item.id, item)) },
-                                    Modifier.rememberFocus("r$n:${item.id}", default = n == 0 && r.index.firstOrNull()?.let(d.items::getOrNull) == item),
-                                    width = CinematicPoster, onLongClick = if (state.isAdmin && c.kind == "manual") ({ removing = item }) else null)
-                            }
+                            TitleCard(t, focus, width = CinematicPoster)
                         }
+                    }
+                    if (pager.error != null && api != null) item("retry") {
+                        RetryCard({ pager.retry(api, state.scope) }, Modifier.rememberFocus("c:retry"))
                     }
                 }
             }
-            d.titles != null -> {
-                // A list can name a title twice; it's shown once.
-                val titles = sortedTitles(d.titles.orEmpty(), sort).distinctBy { it.id }
-                if (titles.isEmpty()) extra("none") { EmptyState("Nothing in this collection yet") }
-                else grid("titles", "All Titles", "${titles.count { it.item != null }} in your library", titles, { it.id }) { t ->
-                    TitleCard(t, Modifier.rememberFocus("t:${t.id}", default = t == titles.first()), width = CinematicPoster)
-                }
-            }
-            else -> {
-                val items = d.items.distinctBy { it.id }
-                if (items.isNotEmpty()) grid("items", "In Your Library", null, items, { it.id }) { item ->
-                    PosterCard(item, { nav.push(Route.Detail(item.id, item)) }, Modifier.rememberFocus("i:${item.id}", default = item == items.first()),
-                        width = CinematicPoster, onLongClick = if (state.isAdmin && c.kind == "manual") ({ removing = item }) else null)
-                }
-                val missing = d.missing.orEmpty().distinctBy { it.id }
-                if (missing.isNotEmpty()) grid("missing", "Not in Your Library", null, missing, { "m:${it.id}" }) { t ->
-                    TitleCard(t, Modifier.rememberFocus("m:${t.id}"), width = CinematicPoster)
-                }
-                if (items.isEmpty() && missing.isEmpty()) extra("none") { EmptyState("Nothing in this collection yet") }
-            }
         }
     }
-    if (picker) ChoicePanel("Order", sorts, sort, { picker = false }) { sort = it }
+    if (picker) ChoicePanel("Order", collectionSorts, sort, { picker = false }) { sort = it }
     removing?.let { item ->
         com.wrentv.tv.ui.ConfirmPanel("Remove from collection?", "${item.displayTitle} is removed from ${c.name}. The title stays in your library.", "Remove",
             { removing = null }, destructive = true) {
@@ -523,19 +505,76 @@ fun CollectionDetailScreen(seed: WrenCollection) {
     }
 }
 
+/**
+ * The movies and shows saved for later, newest added first: the banner
+ * over them, then a row of each. Watched ones are hidden unless asked for.
+ */
+@Composable
+fun WatchlistScreen() {
+    val state = LocalAppState.current
+    val nav = LocalNavigator.current
+    var showWatched by rememberSaveable { mutableStateOf(false) }
+    val all = rememberLoaded<List<Item>>("watchlist", state.refreshTick) { state.api?.watchlist() }
+    val menu = rememberItemMenu()
+    val items = all.value?.filter { showWatched || !it.isWatched }
+    val movies = items.orEmpty().filter { it.kind == "movie" }
+    val shows = items.orEmpty().filter { it.kind != "movie" }
+    val hero = HeroEntry(
+        id = "watchlist", title = "Watchlist", backdrop = items?.firstOrNull { it.backdropPath != null }?.backdropPath, logo = null,
+        meta = listOfNotNull(items?.let { "${it.size} title${if (it.size == 1) "" else "s"}" }),
+        badges = emptyList(),
+        overview = "Movies and shows you saved for later, newest first.",
+        item = null,
+    )
+    val list = rememberLazyListState()
+    CinematicBrowse(list, fallback = hero, label = "Watchlist", pills = {
+        Chip("Show watched", showWatched, { showWatched = !showWatched }, Modifier.rememberFocus("chip:watched"), icon = Icons.Rounded.Visibility)
+    }) {
+        val first = (movies.firstOrNull() ?: shows.firstOrNull())?.id
+        val shelf = { key: String, title: String, list: List<Item> ->
+            if (list.isNotEmpty()) row(key) {
+                Shelf(title, subtitle = "${list.size}") {
+                    items(list, key = { it.id }) { item ->
+                        PosterCard(item, { nav.push(Route.Detail(item.id, item)) }, Modifier.rememberFocus("$key:${item.id}", default = item.id == first),
+                            width = CinematicPoster, onLongClick = { menu.open(item, onWatchlist = true) })
+                    }
+                }
+            }
+        }
+        when {
+            items == null && all.error != null -> extra("error") { EmptyState("Couldn't load", all.error, icon = Icons.Rounded.WifiOff) }
+            items == null -> extra("loading") { Loading() }
+            items.isEmpty() -> extra("none") {
+                EmptyState(if (all.value.isNullOrEmpty()) "Your watchlist is empty" else "All watched",
+                    if (all.value.isNullOrEmpty()) "Add movies and shows from their pages to find them here." else "Turn on Show watched to see them.")
+            }
+            else -> {
+                shelf("movies", "Movies", movies)
+                shelf("shows", "TV Shows", shows)
+            }
+        }
+    }
+}
+
+/** The end of a shelf whose next page didn't load: pick it to try again. */
+@Composable
+private fun RetryCard(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier.width(CinematicPoster)) {
+        ArtCard(onClick, Modifier.width(CinematicPoster).aspectRatio(2f / 3f)) {
+            Column(Modifier.align(Alignment.Center).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Rounded.Refresh, null, tint = Wren.secondary)
+                Spacer(Modifier.height(8.dp))
+                Text("Couldn't load more", style = MaterialTheme.typography.bodySmall, color = Wren.secondary)
+            }
+        }
+        CardCaption("Retry", null, false, CinematicPoster)
+    }
+}
+
 private val collectionSorts = listOf(
     Choice("", "Collection order"), Choice("title", "Title"), Choice("year", "Year (newest)"),
     Choice("year_asc", "Year (oldest)"), Choice("rating", "Rating"), Choice("added", "Recently added"),
 )
-
-/** The server orders library items; full TMDB title lists are ordered here. */
-private fun sortedTitles(titles: List<TitleView>, sort: String): List<TitleView> = when (sort) {
-    "title" -> titles.sortedBy { it.title.lowercase() }
-    "year" -> titles.sortedByDescending { it.year ?: 0 }
-    "year_asc" -> titles.sortedBy { it.year ?: 9999 }
-    "rating" -> titles.sortedByDescending { it.item?.rating ?: it.rating ?: 0.0 }
-    else -> titles
-}
 
 @Composable
 fun GenreItemsScreen(genre: String, libraryId: String?) {

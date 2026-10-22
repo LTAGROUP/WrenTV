@@ -632,3 +632,7 @@ a.person:focus-visible .face { border-color: var(--accent); transform: scale(1.0
 .wk-day.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .wk-day.on .wd, .wk-day.on .cnt { color: inherit; }
 @media (max-width: 640px) { .weekstrip { gap: 4px; } .wk-days { gap: 4px; } .wk-nav { width: 28px; } .wk-day { padding: 8px 0 6px; } .wk-day .dn { font-size: 17px; } .wk-day .cnt::after { content: '' !important; } }
+
+/* The card at the end of a collection shelf when the next page failed. */
+.card.retry { background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-align: center; }
+.card.retry .poster { display: grid; place-items: center; border: 1px dashed var(--line, #444); color: var(--muted, #aaa); }

@@ -2,7 +2,7 @@
 import { api, img } from './api.js';
 import * as ambient from './ambient.js';
 import { esc, $, $$, el, toast, modal, confirmDialog, icons } from './ui.js';
-import { go, render, setTitle, isAdmin, getLibraries, posterCard, titleCard, lazyImg, libraryTabs, bd, shelf, bindShelves, posterSize, setPosterSize } from './app.js';
+import { go, render, setTitle, isAdmin, getLibraries, posterCard, titleCard, lazyImg, libraryTabs, bd, shelf, bindShelves, posterSize, setPosterSize, discoverHero, bindHero } from './app.js';
 
 const qs = () => new URLSearchParams(location.search);
 
@@ -128,55 +128,40 @@ export async function viewCollections(libId) {
 
 const collSorts = [['', 'Default order'], ['title', 'Title'], ['added', 'Recently added'], ['year', 'Newest'], ['year_asc', 'Oldest'], ['rating', 'Rating']];
 
-function sortTitles(list, sort) {
-  const out = [...list];
-  if (sort === 'title') out.sort((a, b) => a.title.localeCompare(b.title));
-  else if (sort === 'year') out.sort((a, b) => (b.year || 0) - (a.year || 0));
-  else if (sort === 'year_asc') out.sort((a, b) => (a.year || 9999) - (b.year || 9999));
-  else if (sort === 'rating') out.sort((a, b) => (b.item?.rating || b.rating || 0) - (a.item?.rating || a.rating || 0));
-  else if (sort === 'added') out.sort((a, b) => (b.item?.addedAt || 0) - (a.item?.addedAt || 0));
-  return out;
-}
+// A collection is one shelf in its order, loaded a page at a time as it
+// scrolls toward the end.
+const collPage = 40;
 
 export async function viewCollection(id) {
-  // "order" is the default order as a grid, for a collection that's rows.
   const sort = qs().get('sort') || '';
-  const srv = sort === 'order' ? '' : sort;
-  const d = await api(`/api/collections/${id}` + (srv ? `?sort=${srv}` : ''));
+  const page = (offset) => api(`/api/collections/${id}?limit=${collPage}&offset=${offset}` + (sort ? `&sort=${sort}` : ''));
+  const d = await page(0);
   const c = d.collection;
   setTitle(c.name);
   ambient.base(c.backdropPath);
   const admin = isAdmin();
-  // When streaming, a TMDB collection is everything in it, not just what the server has.
-  const titles = d.titles ? sortTitles(d.titles, srv) : null;
-  // A big collection shows as rows, like Home; picking a sort shows a grid.
-  const rows = !sort && d.rows?.length ? d.rows : null;
-  const sorts = rows ? [['', 'Rows'], ['order', 'Default order'], ...collSorts.slice(1)] : collSorts;
-  const meta = [titles ? `${titles.length} title${titles.length === 1 ? '' : 's'}` : `${d.items.length} in your library`, kindLabel(c)];
+  const meta = [d.countLabel, kindLabel(c)].filter(Boolean);
   if (c.visibleFrom) meta.push(`Visible ${fmtMD(c.visibleFrom)} – ${fmtMD(c.visibleUntil)}`);
   if (admin && c.showOnHome) meta.push('Shown on Home');
   const removable = admin && c.kind === 'manual';
-  const card = (it) => removable ? posterCard(it, `<button class="rm" data-rm="${it.id}" title="Remove from collection" aria-label="Remove ${esc(it.title)} from collection">×</button>`) : posterCard(it);
-  const list = titles || d.items;
-  const shelves = rows && rows.map((r) => shelf(r.title, r.index.map((n, i) => {
-    const v = list[n];
-    if (!v) return '';
-    return titles ? titleCard(v, r.title === 'Top 20' && i < 10 ? i + 1 : 0) : card(v);
-  }).join(''), { sub: `${r.index.length}` })).join('');
-  const node = el(`<div><div class="hero coll-hero">
+  const card = (v) => removable && v.item
+    ? posterCard(v.item, `<button class="rm" data-rm="${v.item.id}" title="Remove from collection" aria-label="Remove ${esc(v.title)} from collection">×</button>`)
+    : titleCard(v);
+  const entries = d.entries || [];
+  const hero = entries.filter((v) => v.backdropPath).slice(0, 10);
+  const node = el(`<div>${hero.length ? discoverHero(hero, c.name) : ''}<div class="hero coll-hero">
     <div class="content">${c.posterPath ? `<div class="poster"><img src="${img(c.posterPath, 'w500')}" alt=""></div>` : ''}
     <div><div class="small" style="margin-bottom:6px"><a href="/collections">Collections</a></div><h1>${esc(c.name)}</h1>
     <div class="meta">${meta.map(esc).join('<span class="muted">·</span>')}</div>
     ${c.syncError && admin ? `<p class="error small">Last sync failed: ${esc(c.syncError)}</p>` : ''}
     ${c.description ? `<p class="overview">${esc(c.description)}</p>` : ''}
-    <div class="actions"><select id="sort" data-caption="Sort">${sorts.map(([k, v]) => `<option value="${k}" ${k === sort ? 'selected' : ''}>${v}</option>`).join('')}</select>
+    <div class="actions"><select id="sort" data-caption="Sort">${collSorts.map(([k, v]) => `<option value="${k}" ${k === sort ? 'selected' : ''}>${v}</option>`).join('')}</select>
     ${admin ? `<button class="btn" data-act="edit">Edit</button>${c.kind === 'tmdb' ? '<button class="btn ghost" data-act="sync">Sync now</button>' : ''}
       <button class="btn ghost danger" data-act="delete">Delete</button>` : ''}</div></div></div></div>
-    ${shelves ? `<div class="coll-rows">${shelves}</div>` : titles ? (titles.length ? `<div class="grid">${titles.map((v) => titleCard(v)).join('')}</div>` : '<div class="empty"><h2>This collection is empty</h2></div>')
-      : d.items.length ? `<div class="grid">${d.items.map(card).join('')}</div>`
-      : `<div class="empty"><h2>Nothing from your library yet</h2><p>${c.kind === 'manual' ? 'Add titles from their detail page with “+ Collection”.' : 'Titles appear as soon as the library has them.'}</p></div>`}
-    ${!titles && d.missing?.length ? `<h2 class="section-title">Not in your library <span class="muted small">${d.missing.length}</span></h2>
-      <div class="grid">${d.missing.map((v) => titleCard(v)).join('')}</div>` : ''}</div>`);
+    ${entries.length ? shelf(c.name, entries.map(card).join(''), { sub: `${d.total}`, id: 'coll-shelf' })
+      : `<div class="empty"><h2>${c.kind === 'tmdb' ? 'This collection is empty' : 'Nothing from your library yet'}</h2><p>${c.kind === 'manual' ? 'Add titles from their detail page with “+ Collection”.' : 'Titles appear as soon as the library has them.'}</p></div>`}</div>`);
+  if (hero.length) bindHero(node, hero, c.name);
+  bindShelves(node);
   $('#sort', node).onchange = (e) => go(`/collection/${id}${e.target.value ? '?sort=' + e.target.value : ''}`, true);
   const act = (n, fn) => $(`[data-act=${n}]`, node)?.addEventListener('click', fn);
   act('edit', () => editCollection(c));
@@ -188,14 +173,53 @@ export async function viewCollection(id) {
     await api(`/api/collections/${id}`, { method: 'DELETE' });
     go('/collections');
   });
-  for (const b of $$('[data-rm]', node)) {
-    b.onclick = async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      await api(`/api/collections/${id}/items/${b.dataset.rm}`, { method: 'DELETE' });
-      b.closest('.card').remove();
-    };
-  }
+  const bindRemove = (root) => {
+    for (const b of $$('[data-rm]', root)) {
+      b.onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        await api(`/api/collections/${id}/items/${b.dataset.rm}`, { method: 'DELETE' });
+        b.closest('.card').remove();
+      };
+    }
+  };
+  bindRemove(node);
+  const row = $('#coll-shelf .row', node);
+  if (!row) return node;
+  // Fetch the next page once the view is within about 15 cards of the end,
+  // one fetch at a time; a failed fetch leaves a card to retry it.
+  let loaded = entries.length, busy = false;
+  const more = async () => {
+    if (busy || loaded >= d.total) return;
+    busy = true;
+    $('.retry', row)?.remove();
+    try {
+      const p = await page(loaded);
+      const add = p.entries || [];
+      if (!add.length) { loaded = d.total; return; }
+      loaded += add.length;
+      const frag = el(`<div>${add.map(card).join('')}</div>`);
+      bindRemove(frag);
+      row.append(...frag.children);
+    } catch {
+      const r = el('<button class="card retry" type="button"><div class="poster"><span>Couldn’t load more.<br>Retry</span></div></button>');
+      r.onclick = () => more();
+      row.append(r);
+    } finally {
+      busy = false;
+    }
+    near();
+  };
+  const near = () => {
+    const w = row.firstElementChild?.offsetWidth || 160;
+    if (row.scrollLeft + row.clientWidth >= row.scrollWidth - w * 15) more();
+  };
+  row.addEventListener('scroll', near, { passive: true });
+  row.addEventListener('focusin', (e) => {
+    const cards = [...row.children];
+    if (cards.indexOf(e.target.closest('.card')) >= cards.length - 15) more();
+  });
+  requestAnimationFrame(near);
   return node;
 }
 

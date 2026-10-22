@@ -161,9 +161,12 @@ sealed class DiscoverHero : Grid
     int index;
     bool hovering, opening;
 
-    public DiscoverHero(List<TitleView> titles)
+    readonly string eyebrow;
+
+    public DiscoverHero(List<TitleView> titles, string eyebrow = "Trending this week")
     {
         this.titles = titles;
+        this.eyebrow = eyebrow.ToUpperInvariant();
         Height = 560;
         var api = App.State.Api;
         foreach (var t in titles)
@@ -225,7 +228,7 @@ sealed class DiscoverHero : Grid
         var t = titles[i];
         var api = App.State.Api;
         text.Children.Clear();
-        var kicker = Ui.Text("TRENDING THIS WEEK", 12, FontWeights.Bold, Theme.SecondaryText);
+        var kicker = Ui.Text(eyebrow, 12, FontWeights.Bold, Theme.SecondaryText);
         kicker.CharacterSpacing = 80;
         text.Children.Add(kicker);
         if (t.Item?.LogoPath is { } logo)
@@ -410,22 +413,27 @@ sealed class BrowsePage(string type) : Page
     }
 }
 
-/// Movies and shows saved for later, newest added first.
+/// Movies and shows saved for later: a banner over them, then a row each
+/// for movies and shows, newest added first.
 sealed class WatchlistPage : Page
 {
     bool hideWatched = true;
     List<Item> items = [];
 
-    List<Item> Shown => hideWatched ? items.Where(i => !i.IsWatched).ToList() : items;
+    protected override bool HasAmbient => true;
 
     protected override async Task<UIElement> Build()
     {
         items = await App.State.Api!.Watchlist();
-        var g = new Grid { RowSpacing = 20, Padding = new Thickness(0, 24, 0, 0) };
-        g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        g.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        var shown = Shown;
-        var header = new Grid { Margin = new Thickness(Gutter, 0, Gutter, 0) };
+        var shown = hideWatched ? items.Where(i => !i.IsWatched).ToList() : items;
+        var movies = shown.Where(i => i.Kind != "show").ToList();
+        var shows = shown.Where(i => i.Kind == "show").ToList();
+
+        var sections = new List<UIElement>();
+        var slides = shown.Where(i => i.BackdropPath != null).Take(8).Select(TitleView.Of).ToList();
+        if (slides.Count > 0) sections.Add(new DiscoverHero(slides, "On your watchlist"));
+
+        var header = new Grid { Margin = new Thickness(Gutter, slides.Count > 0 ? 0 : 24, Gutter, 0) };
         var title = PageTitle("Watchlist", shown.Count == 1 ? "1 title" : $"{shown.Count} titles");
         title.Margin = new Thickness(0);
         header.Children.Add(title);
@@ -440,13 +448,17 @@ sealed class WatchlistPage : Page
         ToolTipService.SetToolTip(toggle, "Hide what you've watched");
         toggle.Click += (_, _) => { hideWatched = toggle.IsChecked == true; Reload(quiet: true); };
         header.Children.Add(toggle);
-        g.Children.Add(header);
-        UIElement content = shown.Count == 0
-            ? Ui.Empty("\uE728", "Your watchlist is empty", "Add movies and shows from their pages to find them here.")
-            : Cards.PosterGrid(shown);
-        Grid.SetRow((FrameworkElement)content, 1);
-        g.Children.Add(content);
-        return g;
+        sections.Add(header);
+
+        if (shown.Count == 0)
+            sections.Add(items.Count == 0
+                ? Ui.Empty("\uE728", "Your watchlist is empty", "Add movies and shows from their pages to find them here.")
+                : Ui.Empty("\uE73E", "You've watched everything", "Turn off Hide Watched to see it all."));
+        if (movies.Count > 0) sections.Add(Cards.Shelf("Movies", movies.Select(i => (UIElement)Cards.Poster(i))));
+        if (shows.Count > 0) sections.Add(Cards.Shelf("TV Shows", shows.Select(i => (UIElement)Cards.Poster(i))));
+        var scroll = Scroll(sections.ToArray());
+        if (slides.Count > 0) ((StackPanel)scroll.Content).Padding = new Thickness(0, 0, 0, 48);
+        return scroll;
     }
 }
 
@@ -676,68 +688,126 @@ sealed class SearchPage(string query) : Page
     }
 }
 
+/// A collection: a banner over its titles, then one shelf in the
+/// collection's order that loads more as it scrolls toward the end.
 sealed class CollectionPage(string id, string name) : Page
 {
+    const int PageSize = 40, Ahead = 15;
+    static readonly (string? Key, string Name)[] Sorts =
+        [(null, "Default Order"), ("title", "Title"), ("added", "Recently Added"), ("year", "Newest"), ("year_asc", "Oldest"), ("rating", "Rating")];
+
     protected override bool HasAmbient => true;
 
-    /// A big collection shows as rows, like Home; this shows it as one grid instead.
-    bool asGrid;
+    // Kept across rebuilds, so coming back doesn't start over.
+    string? sort;
+    CollectionPageData? first;
+    readonly List<TitleView> entries = [];
+    int total;
+    bool loading, failed;
+    StackPanel? row;
+    ScrollViewer? rowScroll;
 
     protected override async Task<UIElement> Build()
     {
-        var c = await App.State.Api!.Collection(id);
-        // Lists can name a title twice; it's shown once.
-        c.Items = c.Items.DistinctBy(i => i.Id).ToList();
-        if (c.Collection.BackdropPath != null) Backdrop?.Show(c.Collection.BackdropPath);
-        var rows = asGrid ? null : c.Rows is { Count: > 0 } r ? r : null;
+        var api = App.State.Api!;
+        if (first == null)
+        {
+            first = await api.CollectionPage(id, sort, 0, PageSize);
+            entries.Clear();
+            Append(first);
+        }
+        var c = first.Collection;
+        if (c.BackdropPath != null) Backdrop?.Show(c.BackdropPath);
+        var title = c.Name.Length > 0 ? c.Name : name;
+
+        var sections = new List<UIElement>();
+        var slides = entries.Where(t => t.BackdropPath != null).Take(8).ToList();
+        if (slides.Count > 0) sections.Add(new DiscoverHero(slides, title));
 
         var head = Ui.Column(6);
         var kicker = Ui.Text("COLLECTION", 12, FontWeights.Bold, Theme.EmberBrush);
         kicker.CharacterSpacing = 80;
         head.Children.Add(kicker);
-        head.Children.Add(Ui.Title(c.Collection.Name.Length > 0 ? c.Collection.Name : name, 40));
-        if (!string.IsNullOrEmpty(c.Collection.Description)) head.Children.Add(Ui.Secondary(c.Collection.Description, 15, 3));
-        var count = c.Titles is { } ts ? $"{ts.DistinctBy(t => t.MediaType + t.TmdbId).Count()} titles" : $"{c.Items.Count} in your library";
-        head.Children.Add(Ui.Secondary(count, 14));
-        if (c.Rows is { Count: > 0 })
+        head.Children.Add(Ui.Title(title, 32));
+        if (!string.IsNullOrEmpty(c.Description)) head.Children.Add(Ui.Secondary(c.Description, 15, 3));
+        head.Children.Add(Ui.Secondary(first.CountLabel.Length > 0 ? first.CountLabel : total == 1 ? "1 title" : $"{total} titles", 14));
+        var picker = new ComboBox { Margin = new Thickness(0, 8, 0, 0), MinWidth = 180 };
+        foreach (var (_, n) in Sorts) picker.Items.Add(n);
+        picker.SelectedIndex = Math.Max(0, Array.FindIndex(Sorts, x => x.Key == sort));
+        picker.SelectionChanged += (_, _) =>
         {
-            var toggle = Ui.Button(asGrid ? "Show as Rows" : "Show All in Order", () => { asGrid = !asGrid; Reload(quiet: true); }, asGrid ? "" : "");
-            toggle.HorizontalAlignment = HorizontalAlignment.Left;
-            toggle.Margin = new Thickness(0, 8, 0, 0);
-            head.Children.Add(toggle);
-        }
+            var key = Sorts[Math.Max(0, picker.SelectedIndex)].Key;
+            if (key == sort) return;
+            sort = key;
+            first = null;
+            Reload(quiet: true);
+        };
+        head.Children.Add(picker);
         head.MaxWidth = 640;
         head.HorizontalAlignment = HorizontalAlignment.Left;
-        head.Margin = new Thickness(Gutter, 120, Gutter, 0);
+        head.Margin = new Thickness(Gutter, slides.Count > 0 ? 0 : 120, Gutter, 0);
+        sections.Add(head);
 
-        if (rows != null)
-        {
-            var sections = new List<UIElement> { head };
-            foreach (var row in rows)
+        if (entries.Count == 0)
+            sections.Add(Ui.Empty("\uE8F1", "Nothing here yet", "This collection doesn't have any titles."));
+        else
+            sections.Add(Cards.Shelf("Titles", entries.Select(Card), attach: (r, sv) =>
             {
-                var cards = c.Titles is { } titles
-                    ? row.Index.Where(i => i >= 0 && i < titles.Count).Select(i => titles[i]).DistinctBy(t => t.MediaType + t.TmdbId)
-                        .Select((t, k) => (UIElement)Cards.Title(t, rank: row.Title == "Top 20" && k < 10 ? k + 1 : null)).ToList()
-                    : row.Index.Where(i => i >= 0 && i < c.Items.Count).Select(i => c.Items[i]).DistinctBy(i => i.Id)
-                        .Select(i => (UIElement)Cards.Poster(i)).ToList();
-                if (cards.Count > 0) sections.Add(Cards.Shelf(row.Title, cards));
-            }
-            return Scroll(sections.ToArray());
-        }
+                row = r;
+                rowScroll = sv;
+                sv.ViewChanged += (_, _) => Near();
+                sv.SizeChanged += (_, _) => Near();
+            }));
+        var scroll = Scroll(sections.ToArray());
+        if (slides.Count > 0) ((StackPanel)scroll.Content).Padding = new Thickness(0, 0, 0, 48);
+        return scroll;
+    }
 
-        var missing = (c.Missing ?? c.Titles?.Where(t => t.Item == null).ToList() ?? []).DistinctBy(t => t.MediaType + t.TmdbId).ToList();
-        if (missing.Count > 0)
-            return Scroll(head,
-                Cards.Shelf("In Your Library", c.Items.Select(i => (UIElement)Cards.Poster(i))),
-                Cards.Shelf(App.State.CanStream ? "Stream the Rest" : "Not in Your Library", missing.Select(t => (UIElement)Cards.Title(t))));
-        var g = new Grid { RowSpacing = 20 };
-        g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        g.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        g.Children.Add(head);
-        var list = Cards.PosterGrid(c.Items);
-        Grid.SetRow(list, 1);
-        g.Children.Add(list);
-        return g;
+    static UIElement Card(TitleView t) => Cards.Title(t);
+
+    void Append(CollectionPageData p)
+    {
+        total = p.Total;
+        entries.AddRange(p.Entries);
+    }
+
+    bool Done => entries.Count >= total;
+
+    /// Loads the next page once the row is scrolled within a few cards of its end.
+    async void Near()
+    {
+        if (loading || failed || Done || row == null || rowScroll == null || first == null) return;
+        var per = row.Children.Count == 0 ? 1 : (rowScroll.ExtentWidth / row.Children.Count);
+        var lastVisible = (rowScroll.HorizontalOffset + rowScroll.ViewportWidth) / Math.Max(1, per);
+        if (lastVisible < entries.Count - Ahead) return;
+        loading = true;
+        var target = row;
+        var want = sort;
+        try
+        {
+            var p = await App.State.Api!.CollectionPage(id, sort, entries.Count, PageSize);
+            if (target != row || want != sort) return;
+            var from = entries.Count;
+            Append(p);
+            foreach (var t in entries.Skip(from)) target.Children.Add(Card(t));
+            if (p.Entries.Count == 0) total = entries.Count;
+        }
+        catch (Exception)
+        {
+            if (target != row) return;
+            failed = true;
+            Button? retry = null;
+            retry = Ui.Button("Retry", () =>
+            {
+                target.Children.Remove(retry);
+                failed = false;
+                Near();
+            }, "\uE72C");
+            retry.VerticalAlignment = VerticalAlignment.Center;
+            target.Children.Add(retry);
+        }
+        finally { loading = false; }
+        Near();
     }
 }
 

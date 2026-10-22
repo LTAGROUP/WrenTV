@@ -180,50 +180,41 @@ struct CollectionCard: View {
 struct CollectionDetailView: View {
     @Environment(AppState.self) private var state
     let seed: WrenCollection
-    @State private var detail: CollectionDetail?
     @State private var sort = ""
-    /// Sorted answers come without rows, so whether there are any is remembered.
-    @State private var rowed = false
-    @State private var error: String?
 
-    private var collection: WrenCollection { detail?.collection ?? seed }
+    /// One shelf in the collection's order, a page at a time.
+    private var pager: CollectionPager { CollectionPager.of(seed.id, sort: sort) }
+    private var collection: WrenCollection { pager.collection ?? seed }
 
     var body: some View {
+        let pager = pager
         CinematicPage(fallback: hero, fallbackBackdrop: collection.backdropPath, label: "Collection") {
             if let e = collection.syncError, !e.isEmpty, state.isAdmin {
                 Label(e, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(Color.wrenEmber).padding(.horizontal, 28)
             }
-            if let detail, let rows = detail.rows, !rows.isEmpty, sort.isEmpty {
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, r in shelf(r, detail) }
-            } else if let detail, let titles = detail.titles {
-                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 26) {
-                    ForEach(sorted(titles.uniqued())) { TitleCard(title: $0) }
-                }
-                .padding(.horizontal, 28)
-                if titles.isEmpty {
-                    ContentUnavailableView("Nothing in this collection yet", systemImage: "square.stack")
-                }
-            } else if let detail {
-                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 26) {
-                    ForEach(detail.items.uniqued()) { item in
-                        NavigationLink(value: item) { PosterCard(item: item) }
-                            .buttonStyle(.plain)
-                            .contextMenu { menu(item) }
+            if !pager.entries.isEmpty {
+                Shelf(title: collection.name, subtitle: pager.total > 0 ? "\(pager.total)" : nil) {
+                    ForEach(Array(pager.entries.enumerated()), id: \.element.entryKey) { i, t in
+                        card(t).onAppear { if let api = state.api { pager.appeared(i, api) } }
+                    }
+                    if pager.error != nil, let api = state.api {
+                        Button { pager.retry(api) } label: {
+                            VStack(spacing: 8) {
+                                Image(systemName: "arrow.clockwise").font(.title2)
+                                Text("Couldn't load more").font(.caption)
+                            }
+                            .foregroundStyle(.secondary)
+                            .frame(width: PosterSize.width(150), height: PosterSize.width(150) * 1.5)
+                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Retry")
                     }
                 }
-                .padding(.horizontal, 28)
-                if detail.items.isEmpty {
-                    ContentUnavailableView("Nothing in this collection yet", systemImage: "square.stack")
-                }
-                if let missing = detail.missing, !missing.isEmpty {
-                    Text("Not in your library").font(.title3.bold()).padding(.horizontal, 28).padding(.top, 10)
-                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 26) {
-                        ForEach(missing.uniqued()) { TitleCard(title: $0) }
-                    }
-                    .padding(.horizontal, 28)
-                }
-            } else if let error {
+            } else if let error = pager.error {
                 ContentUnavailableView("Couldn't load", systemImage: "exclamationmark.triangle", description: Text(error))
+            } else if pager.done {
+                ContentUnavailableView("Nothing in this collection yet", systemImage: "square.stack")
             } else {
                 ProgressView().frame(maxWidth: .infinity).padding(.top, 60)
             }
@@ -232,12 +223,7 @@ struct CollectionDetailView: View {
         .toolbar {
             Menu {
                 Picker("Order", selection: $sort) {
-                    if hasRows {
-                        Text("Rows").tag("")
-                        Text("Collection order").tag("order")
-                    } else {
-                        Text("Collection order").tag("")
-                    }
+                    Text("Collection order").tag("")
                     Text("Title").tag("title")
                     Text("Year (newest)").tag("year")
                     Text("Year (oldest)").tag("year_asc")
@@ -250,40 +236,29 @@ struct CollectionDetailView: View {
             }
             .help("Order")
         }
-        .task(id: "\(seed.id)|\(sort)|\(state.refreshTick)") { await load() }
+        .task(id: "\(seed.id)|\(sort)|\(state.refreshTick)") {
+            if let api = state.api { await pager.start(api, refresh: state.refreshTick) }
+        }
     }
-
-    /// Big collections come as shelves; "order" is their own order as a grid.
-    private var hasRows: Bool { rowed || !(detail?.rows ?? []).isEmpty }
 
     /// Until something is hovered, the hero shows the collection itself.
     private var hero: HeroEntry {
         var meta: [String] = []
-        if let titles = detail?.titles?.uniqued() {
-            meta.append("\(titles.count) title\(titles.count == 1 ? "" : "s")")
-        } else {
-            meta.append("\(detail?.items.uniqued().count ?? collection.itemCount ?? 0) in your library")
-        }
+        if !pager.countLabel.isEmpty { meta.append(pager.countLabel) }
         meta.append(collection.kindLabel)
         if !collection.visibleFrom.isEmpty { meta.append("Visible \(collection.visibleFrom) – \(collection.visibleUntil)") }
         return HeroEntry(id: "collection:\(collection.id)", title: collection.name, meta: meta.joined(separator: "  ·  "),
                          overview: collection.description.isEmpty ? nil : collection.description)
     }
 
-    private func shelf(_ r: CollectionRow, _ d: CollectionDetail) -> some View {
-        Shelf(title: r.title) {
-            if let titles = d.titles {
-                let ts = r.index.compactMap { titles.indices.contains($0) ? titles[$0] : nil }.uniqued()
-                ForEach(Array(ts.enumerated()), id: \.element.id) { i, t in
-                    TitleCard(title: t, rank: r.title == "Top 20" && i < 10 ? i + 1 : nil)
-                }
-            } else {
-                ForEach(r.index.compactMap { d.items.indices.contains($0) ? d.items[$0] : nil }.uniqued()) { item in
-                    NavigationLink(value: item) { PosterCard(item: item) }
-                        .buttonStyle(.plain)
-                        .contextMenu { menu(item) }
-                }
-            }
+    @ViewBuilder
+    private func card(_ t: TitleView) -> some View {
+        if let item = t.item {
+            NavigationLink(value: item) { PosterCard(item: item) }
+                .buttonStyle(.plain)
+                .contextMenu { menu(item) }
+        } else {
+            TitleCard(title: t)
         }
     }
 
@@ -295,29 +270,10 @@ struct CollectionDetailView: View {
         }
     }
 
-    /// The server orders library items; full TMDB title lists are ordered here.
-    private func sorted(_ titles: [TitleView]) -> [TitleView] {
-        switch sort {
-        case "title": return titles.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-        case "year": return titles.sorted { ($0.year ?? 0) > ($1.year ?? 0) }
-        case "year_asc": return titles.sorted { ($0.year ?? 9999) < ($1.year ?? 9999) }
-        case "rating": return titles.sorted { ($0.item?.rating ?? $0.rating ?? 0) > ($1.item?.rating ?? $1.rating ?? 0) }
-        default: return titles
-        }
-    }
-
-    private func load() async {
-        let server = sort.isEmpty || sort == "order" ? nil : sort
-        do {
-            detail = try await state.api?.collection(seed.id, sort: server)
-            if !(detail?.rows ?? []).isEmpty { rowed = true }
-        } catch { self.error = error.localizedDescription }
-    }
-
     private func remove(_ item: Item) {
         Task {
             try? await state.api?.removeFromCollection(seed.id, item: item.id)
-            await load()
+            state.refreshTick += 1
         }
     }
 }

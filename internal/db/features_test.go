@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -139,5 +140,51 @@ func TestNextEpisodeStreamed(t *testing.T) {
 		if next, err := d.NextEpisode(ctx, u.ID, show.ID); err == nil {
 			t.Fatalf("%s: offered unaired %+v", src, next)
 		}
+	}
+}
+
+// TestShowWatchedGoesStale checks that a show marked watched mid-season is no
+// longer watched once a new episode arrives.
+func TestShowWatchedGoesStale(t *testing.T) {
+	ctx := context.Background()
+	d, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &User{Username: "a", DisplayName: "Alex"}
+	if err := d.CreateUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	lib := &Library{Name: "s", Type: "shows", Source: "stream"}
+	if err := d.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	show := &Item{LibraryID: lib.ID, Kind: "show", Title: "Show", MatchKey: "show"}
+	if err := d.InsertItem(ctx, show); err != nil {
+		t.Fatal(err)
+	}
+	ep := func(n int) {
+		e := &Item{LibraryID: lib.ID, Kind: "episode", ShowID: show.ID, ParentID: show.ID, SeasonNumber: 1, EpisodeNumber: n, MatchKey: fmt.Sprint(n)}
+		if err := d.InsertItem(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	watched := func() (bool, bool) {
+		items, _, err := d.QueryItems(ctx, ItemQuery{LibraryIDs: []string{lib.ID}, Kind: "show", UserID: u.ID})
+		if err != nil || len(items) != 1 || items[0].Progress == nil {
+			t.Fatalf("query: %v %+v", err, items)
+		}
+		return items[0].Progress.Watched, d.EpisodesWatched(ctx, u.ID, show.ID)
+	}
+	ep(1)
+	if err := d.SetWatched(ctx, u.ID, show.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if a, b := watched(); !a || !b {
+		t.Fatalf("watched before new episode: %v %v", a, b)
+	}
+	ep(2)
+	if a, b := watched(); a || b {
+		t.Fatalf("still watched after new episode: %v %v", a, b)
 	}
 }

@@ -83,6 +83,7 @@ struct TabStack<Root: View>: View {
                 .navigationDestination(for: Library.self) { LibraryPage(library: $0) }
                 .navigationDestination(for: StreamTitleRoute.self) { StreamTitleView(route: $0) }
                 .navigationDestination(for: WrenCollection.self) { CollectionView(collection: $0) }
+                .navigationDestination(for: WatchlistRoute.self) { _ in WatchlistView() }
                 .navigationDestination(for: GenreRoute.self) { GenreView(route: $0) }
                 .navigationDestination(for: PersonRoute.self) { PersonView(route: $0) }
                 .navigationDestination(for: HubRoute.self) { HubView(route: $0) }

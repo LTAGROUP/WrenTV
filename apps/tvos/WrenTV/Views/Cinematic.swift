@@ -732,87 +732,128 @@ struct PersonView: View {
     }
 }
 
-/// A collection's titles in lines of posters, and (when streaming) the ones the server doesn't have yet.
+/// A collection as one shelf in its order, loaded a page at a time as it's
+/// browsed toward the end.
 struct CollectionView: View {
     @Environment(AppState.self) private var state
     let collection: WrenCollection
-    @State private var detail: CollectionDetail?
     @State private var sort = ""
-    /// Sorted answers come without rows, so whether there are any is remembered.
-    @State private var rowed = false
 
-    /// A big collection shows as rows, like Home; "order" is its own order as lines of posters.
-    private var sorts: [(String, String)] {
-        rowed ? [("", "Rows"), ("order", "Collection order")] + collectionSorts.dropFirst() : collectionSorts
-    }
+    private var pager: CollectionPager { CollectionPager.of(collection.id, sort: sort) }
 
     var body: some View {
-        let c = detail?.collection ?? collection
-        CinematicPage(fallback: c.heroEntry(count: count), label: "Collection") {
+        let pager = pager
+        let c = pager.collection ?? collection
+        CinematicPage(fallback: c.heroEntry(count: pager.countLabel.isEmpty ? nil : pager.countLabel), label: "Collection") {
             CinematicRow(id: "sort") {
                 HStack {
                     Menu {
                         Picker("Order", selection: $sort) {
-                            ForEach(sorts, id: \.0) { Text($0.1).tag($0.0) }
+                            ForEach(collectionSorts, id: \.0) { Text($0.1).tag($0.0) }
                         }
                     } label: {
-                        Label(sorts.first { $0.0 == sort }?.1 ?? "Collection order", systemImage: "arrow.up.arrow.down")
+                        Label(collectionSorts.first { $0.0 == sort }?.1 ?? "Collection order", systemImage: "arrow.up.arrow.down")
                     }
                 }
                 .padding(.horizontal, TV.gutter)
                 .padding(.vertical, 20)
                 .focusSection()
             }
-            if let d = detail {
-                if let rows = d.rows, !rows.isEmpty, sort.isEmpty {
-                    ForEach(Array(rows.enumerated()), id: \.offset) { n, r in
-                        CinematicRow(id: "row:\(n):\(r.title)") {
-                            Shelf(title: r.title) {
-                                if let titles = d.titles {
-                                    let ts = r.index.compactMap { titles.indices.contains($0) ? titles[$0] : nil }.uniqued()
-                                    ForEach(Array(ts.enumerated()), id: \.element.id) { i, t in
-                                        TitleCard(title: t, rank: r.title == "Top 20" && i < 10 ? i + 1 : nil, width: Cinematic.poster)
-                                    }
-                                } else {
-                                    ForEach(r.index.compactMap { d.items.indices.contains($0) ? d.items[$0] : nil }.uniqued()) {
-                                        PosterCard(item: $0, width: Cinematic.poster)
-                                    }
+            if !pager.entries.isEmpty {
+                CinematicRow(id: "shelf:\(sort)") {
+                    Shelf(title: c.name, subtitle: pager.total > 0 ? "\(pager.total)" : nil) {
+                        ForEach(Array(pager.entries.enumerated()), id: \.element.entryKey) { i, t in
+                            TitleCard(title: t, width: Cinematic.poster)
+                                .onAppear { if let api = state.api { pager.appeared(i, api) } }
+                        }
+                        if pager.error != nil, let api = state.api {
+                            Button { pager.retry(api) } label: {
+                                VStack(spacing: 12) {
+                                    Image(systemName: "arrow.clockwise").font(.title2)
+                                    Text("Couldn't load more").font(.caption)
                                 }
+                                .frame(width: Cinematic.poster, height: Cinematic.poster * 1.5)
                             }
+                            .buttonStyle(.card)
                         }
                     }
-                } else if let titles = d.titles {
-                    let list = titles.uniqued()
-                    PosterLines(id: "titles", title: "All Titles", subtitle: "\(list.count { $0.item != nil }) in your library", entries: list) {
-                        TitleCard(title: $0, width: Cinematic.poster)
-                    }
-                } else {
-                    let items = d.items.uniqued(), missing = (d.missing ?? []).uniqued()
-                    if !items.isEmpty {
-                        PosterLines(id: "items", title: "In Your Library", entries: items) { PosterCard(item: $0, width: Cinematic.poster) }
-                    }
-                    if !missing.isEmpty {
-                        PosterLines(id: "missing", title: "Not in Your Library", entries: missing) { TitleCard(title: $0, width: Cinematic.poster) }
-                    }
-                    if items.isEmpty && missing.isEmpty { EmptyState(title: "Nothing in this collection yet") }
                 }
+            } else if let error = pager.error {
+                EmptyState(title: "Couldn't load", message: error, symbol: "wifi.exclamationmark")
+            } else if pager.done {
+                EmptyState(title: "Nothing in this collection yet")
             } else {
                 ProgressView().frame(maxWidth: .infinity).padding(.top, 120)
             }
         }
         .task(id: "\(collection.id)|\(sort)|\(state.refreshTick)") {
-            let server = sort.isEmpty || sort == "order" ? nil : sort
-            if let d = try? await state.api?.collection(collection.id, sort: server) {
-                detail = d
-                if !(d.rows ?? []).isEmpty { rowed = true }
-            }
+            if let api = state.api { await pager.start(api, refresh: state.refreshTick) }
         }
     }
+}
 
-    private var count: String? {
-        guard let d = detail else { return nil }
-        if let t = d.titles { return "\(t.uniqued().count) titles" }
-        return "\(d.items.uniqued().count) in your library"
+/// Opens the watchlist page.
+struct WatchlistRoute: Hashable {}
+
+/// Movies and shows saved for later, newest added first: the banner over
+/// them, then a row of each. Watched ones are hidden unless asked for.
+struct WatchlistView: View {
+    @Environment(AppState.self) private var state
+    @State private var items: [Item]?
+    @AppStorage("watchlistHideWatched") private var hideWatched = true
+
+    var body: some View {
+        let shown = (items ?? []).filter { !hideWatched || !$0.isWatched }
+        let hero = HeroEntry(id: "watchlist", title: "Watchlist", backdrop: shown.first { $0.backdropPath != nil }?.backdropPath,
+                             meta: items == nil ? "" : "\(shown.count) title\(shown.count == 1 ? "" : "s")",
+                             overview: "Movies and shows you saved for later, newest first.")
+        CinematicPage(fallback: hero, label: "Watchlist") {
+            CinematicRow(id: "watched") {
+                HStack {
+                    Toggle(isOn: $hideWatched) { Label("Hide Watched", systemImage: "eye.slash") }
+                        .fixedSize()
+                }
+                .padding(.horizontal, TV.gutter)
+                .padding(.vertical, 20)
+                .focusSection()
+            }
+            if let items {
+                ForEach([("Movies", shown.filter { $0.kind == "movie" }), ("TV Shows", shown.filter { $0.kind != "movie" })], id: \.0) { title, list in
+                    if !list.isEmpty {
+                        CinematicRow(id: title) {
+                            Shelf(title: title, subtitle: "\(list.count)") { ForEach(list) { PosterCard(item: $0, width: Cinematic.poster) } }
+                        }
+                    }
+                }
+                if shown.isEmpty {
+                    EmptyState(title: items.isEmpty ? "Your watchlist is empty" : "All watched",
+                               message: items.isEmpty ? "Add movies and shows from their pages to find them here." : "Turn off Hide Watched to see them.",
+                               symbol: "bookmark")
+                }
+            } else {
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 120)
+            }
+        }
+        .task(id: state.refreshTick) {
+            if let list = try? await state.api?.watchlist() { items = list }
+        }
+    }
+}
+
+/// The last card of a shelf that shows only some of a page: opens it all.
+struct SeeAllCard<Route: Hashable>: View {
+    let route: Route
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            NavigationLink(value: route) {
+                Image(systemName: "arrow.right").font(.title)
+                    .frame(width: TV.poster, height: TV.poster * 1.5)
+            }
+            .buttonStyle(.card)
+            Text("See all").font(.caption)
+        }
+        .frame(width: TV.poster)
     }
 }
 

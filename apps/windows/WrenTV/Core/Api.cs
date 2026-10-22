@@ -147,6 +147,14 @@ public sealed class WrenTVApi
     public Task<CollectionDetail> Collection(string id, string? sort = null) =>
         Get<CollectionDetail>($"/api/collections/{id}", sort == null ? null : [("sort", sort)]);
 
+    /// A page of the collection in order (or by sort), limit titles from offset.
+    public Task<CollectionPageData> CollectionPage(string id, string? sort, int offset, int limit = 40)
+    {
+        var q = new List<(string, string)> { ("limit", limit.ToString()), ("offset", offset.ToString()) };
+        if (sort != null) q.Add(("sort", sort));
+        return Get<CollectionPageData>($"/api/collections/{id}", q.ToArray());
+    }
+
     public Task<UserPrefs> Prefs() => Get<UserPrefs>("/api/me/prefs");
     public async Task<UserPrefs> SetPrefs(UserPrefs p) => Json.Parse<UserPrefs>((await Send(HttpMethod.Patch, "/api/me/prefs", body: p)).Body);
     /// Just the poster size, so changing it doesn't resend the rest.

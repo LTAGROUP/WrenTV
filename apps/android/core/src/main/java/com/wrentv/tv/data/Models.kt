@@ -207,6 +207,17 @@ data class CollectionDetail(
     val rows: List<CollectionRowIndex>? = null,
 )
 
+/** A page of a collection's one shelf, in its order ([offset] of [total]). */
+@Serializable
+data class CollectionPage(
+    val collection: WrenCollection,
+    val entries: List<TitleView> = emptyList(),
+    val total: Int = 0,
+    val offset: Int = 0,
+    /** "12 in your library", "40 titles", "8 in your library · 4 not". */
+    val countLabel: String = "",
+)
+
 @Serializable
 data class CollectionRowIndex(val title: String, val index: List<Int> = emptyList())
 

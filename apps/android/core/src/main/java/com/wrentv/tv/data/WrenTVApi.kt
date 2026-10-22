@@ -164,6 +164,13 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     suspend fun collection(id: String, sort: String? = null): CollectionDetail =
         get("/api/collections/$id", sort?.let { mapOf("sort" to it) } ?: emptyMap())
 
+    suspend fun collectionPage(id: String, sort: String, offset: Int, limit: Int = CollectionPager.PageSize): CollectionPage =
+        get("/api/collections/$id", buildMap {
+            put("offset", "$offset")
+            put("limit", "$limit")
+            if (sort.isNotEmpty()) put("sort", sort)
+        })
+
     suspend fun addToCollection(id: String, items: List<String>) {
         send("POST", "/api/collections/$id/items", body = buildJsonObject { put("itemIds", enc(items)) })
     }
