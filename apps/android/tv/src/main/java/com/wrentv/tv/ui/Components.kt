@@ -35,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -78,7 +79,8 @@ import kotlin.math.roundToInt
 class Notices {
     var text by mutableStateOf<String?>(null)
         private set
-    private var serial = 0
+    // State, so showing the same message again restarts its timer.
+    private var serial by mutableIntStateOf(0)
 
     fun show(message: String?) {
         text = message
