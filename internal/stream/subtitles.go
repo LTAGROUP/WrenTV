@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"os"
@@ -205,9 +206,36 @@ func (s *Session) serveSubtitleSegment(w http.ResponseWriter, r *http.Request, t
 		return
 	}
 	start, end := float64(n)*subSegLen, float64(n+1)*subSegLen
+	// Give the whole-track conversion a moment; past that, read just this
+	// window from the file. Players don't fetch a segment twice, so an empty
+	// answer would leave these 30 seconds without subtitles for good.
+	cues, covered := s.convertedCues(r.Context(), typeIdx, end, time.Now().Add(2*time.Second))
+	if !covered {
+		if win, err := s.windowCues(r.Context(), typeIdx, n); err == nil {
+			cues = win
+		} else if r.Context().Err() != nil {
+			return
+		} else {
+			slog.Debug("subtitle window", "session", s.ID, "track", typeIdx, "segment", n, "err", err)
+			cues, _ = s.convertedCues(r.Context(), typeIdx, end, time.Now().Add(18*time.Second))
+		}
+	}
+	var b strings.Builder
+	// Media timestamps start at tsOffset (90 kHz clock); cue times count from 0.
+	fmt.Fprintf(&b, "WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:%d,LOCAL:00:00:00.000\n\n", int64(tsOffset*90000))
+	for _, c := range cues {
+		if c.end > start && c.start < end {
+			fmt.Fprintf(&b, "%s --> %s\n%s\n\n", vttTime(c.start), vttTime(c.end), c.text)
+		}
+	}
+	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	io.WriteString(w, b.String())
+}
+
+// convertedCues waits until the whole-track conversion has finished or got
+// past end, or the deadline passes, and returns its cues so far.
+func (s *Session) convertedCues(ctx context.Context, typeIdx int, end float64, deadline time.Time) ([]vttCue, bool) {
 	cache := s.subtitleCache(typeIdx)
-	var cues []vttCue
-	deadline := time.Now().Add(20 * time.Second)
 	for {
 		complete := true
 		if _, err := os.Stat(cache); err != nil {
@@ -221,27 +249,54 @@ func (s *Session) serveSubtitleSegment(w http.ResponseWriter, r *http.Request, t
 			name += ".part"
 		}
 		b, _ := os.ReadFile(name)
-		cues = parseVTT(string(b), complete)
-		// Done when the track is, or when it has passed this window.
-		if complete || (len(cues) > 0 && cues[len(cues)-1].start >= end) || time.Now().After(deadline) {
-			break
+		cues := parseVTT(string(b), complete)
+		if complete || (len(cues) > 0 && cues[len(cues)-1].start >= end) {
+			return cues, true
+		}
+		if time.Now().After(deadline) {
+			return cues, false
 		}
 		select {
-		case <-r.Context().Done():
-			return
+		case <-ctx.Done():
+			return cues, false
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	var b strings.Builder
-	// Media timestamps start at tsOffset (90 kHz clock); cue times count from 0.
-	fmt.Fprintf(&b, "WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:%d,LOCAL:00:00:00.000\n\n", int64(tsOffset*90000))
-	for _, c := range cues {
-		if c.end > start && c.start < end {
-			fmt.Fprintf(&b, "%s --> %s\n%s\n\n", vttTime(c.start), vttTime(c.end), c.text)
-		}
+}
+
+// windowCues converts one segment's window of a subtitle track by seeking
+// to it, which reads about that much of the file instead of all of it up
+// to there. It starts a little early to catch cues already on screen.
+func (s *Session) windowCues(ctx context.Context, typeIdx, n int) ([]vttCue, error) {
+	key := fmt.Sprintf("%d/%d", typeIdx, n)
+	s.subMu.Lock()
+	cues, ok := s.subWin[key]
+	s.subMu.Unlock()
+	if ok {
+		return cues, nil
 	}
-	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-	io.WriteString(w, b.String())
+	start := float64(n) * subSegLen
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, s.m.cfg.FFmpeg, "-nostdin", "-v", "error", "-ss", fmtTS(math.Max(0, start-10)), "-i", s.Src.Input(),
+		"-copyts", "-map", fmt.Sprintf("0:s:%d", typeIdx), "-to", fmtTS(start+subSegLen), "-f", "webvtt", "-")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("%w: %s", err, msg)
+		}
+		return nil, err
+	}
+	cues = parseVTT(string(out), true)
+	s.subMu.Lock()
+	if s.subWin == nil {
+		s.subWin = map[string][]vttCue{}
+	}
+	s.subWin[key] = cues
+	s.subMu.Unlock()
+	return cues, nil
 }
 
 func (s *Session) subtitleCache(typeIdx int) string {

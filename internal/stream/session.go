@@ -75,6 +75,11 @@ type Session struct {
 	remux *remuxer
 	tx    *transcoder
 
+	// Subtitle segments read straight from the file, for windows the
+	// whole-track conversion hasn't reached yet.
+	subMu  sync.Mutex
+	subWin map[string][]vttCue
+
 	// Delivery stats: bytes sent, per-second buckets for the current rate,
 	// the last segment asked for, and the encode's progress for its speed.
 	bytes    atomic.Int64

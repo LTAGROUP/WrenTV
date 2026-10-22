@@ -1,9 +1,11 @@
 package stream
 
 import (
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -94,5 +96,52 @@ func TestSubtitleSegments(t *testing.T) {
 	}
 	if !strings.Contains(seg2, "00:01:05.000 --> 00:01:06.000\nlast") {
 		t.Fatalf("segment 2: %s", seg2)
+	}
+}
+
+// A segment the whole-track conversion hasn't reached is read from the file
+// by seeking to its window, with real ffmpeg on a small MKV.
+func TestSubtitleSegmentAheadOfConversion(t *testing.T) {
+	real, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	tmp := t.TempDir()
+	var srt strings.Builder
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&srt, "%d\n00:%02d:%02d,000 --> 00:%02d:%02d,000\ncue at %d\n\n", i+1, i*5/60, i*5%60, (i*5+3)/60, (i*5+3)%60, i*5)
+	}
+	os.WriteFile(filepath.Join(tmp, "a.srt"), []byte(srt.String()), 0o644)
+	mkv := filepath.Join(tmp, "t.mkv")
+	if out, err := exec.Command(real, "-v", "error", "-f", "lavfi", "-t", "200", "-i", "testsrc=size=160x120:rate=10",
+		"-i", filepath.Join(tmp, "a.srt"), "-map", "0", "-map", "1", "-c:v", "mpeg4", "-g", "10", "-c:s", "srt", mkv).CombinedOutput(); err != nil {
+		t.Fatalf("make mkv: %v %s", err, out)
+	}
+	// The whole-track conversion (no -ss) never finishes; windows run for real.
+	ff := filepath.Join(tmp, "ffmpeg")
+	os.WriteFile(ff, []byte("#!/bin/sh\ncase \" $* \" in *\" -ss \"*) exec "+real+" \"$@\";; esac\nsleep 60\n"), 0o755)
+	m := NewManager(Config{FFmpeg: ff, ScratchDir: filepath.Join(tmp, "scratch"), SubtitleDir: filepath.Join(tmp, "subs")})
+	src, err := OpenFile(mkv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := &media.Info{Size: 1, Duration: 200, Subtitles: []media.Stream{{TypeIdx: 0, Language: "eng", TextBased: true}}}
+	s, err := m.Create(NewSessionOpts{FileID: "f3", Info: info, Src: src, Decision: media.Decision{Method: media.MethodDirect}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop(s.ID)
+
+	rec := httptest.NewRecorder()
+	began := time.Now()
+	s.ServeHTTP(rec, httptest.NewRequest("GET", "/subs/0/4.vtt", nil), "subs/0/4.vtt")
+	seg := rec.Body.String()
+	if took := time.Since(began); took > 10*time.Second {
+		t.Fatalf("segment took %s", took)
+	}
+	// Segment 4 is 2:00 to 2:30: cues 120 through 145, nothing either side.
+	if !strings.Contains(seg, "00:02:00.000 --> 00:02:03.000\ncue at 120") || !strings.Contains(seg, "cue at 145") ||
+		strings.Contains(seg, "cue at 115") || strings.Contains(seg, "cue at 150") {
+		t.Fatalf("segment 4: %s", seg)
 	}
 }
