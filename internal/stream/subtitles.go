@@ -22,9 +22,10 @@ import (
 // Subtitles inside a file are spread through it, so converting one to WebVTT
 // means reading the whole file: minutes for a large file on a network mount.
 // The conversion runs once per file and track into a cache shared by every
-// session, and requests get whatever has been converted so far. The
-// X-Subtitle-Complete header says whether the track is finished; players
-// fetch it again until it is.
+// session. Most players load a subtitle file once, so a request waits for
+// the whole track, with the cues sent as they're converted. Players that
+// fetch again (the web player) ask with ?partial=1 and get whatever has been
+// converted so far; the X-Subtitle-Complete header says whether that's all.
 
 type subExtraction struct {
 	done chan struct{}
@@ -63,6 +64,10 @@ func (s *Session) serveSubtitle(w http.ResponseWriter, r *http.Request, typeIdx 
 			}
 			complete = true
 		default:
+			if r.URL.Query().Get("partial") != "1" {
+				streamSubtitle(w, r, cache+".part", x)
+				return
+			}
 		}
 	}
 	name := cache
@@ -77,6 +82,89 @@ func (s *Session) serveSubtitle(w http.ResponseWriter, r *http.Request, typeIdx 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Subtitle-Complete", fmt.Sprint(complete))
 	w.Write(b)
+}
+
+// streamSubtitle sends a track as its conversion writes it, whole cues at a
+// time, and ends when the conversion does. Blank lines (harmless between
+// cues) keep the connection alive while it's between cues, so players don't
+// time out the read.
+func streamSubtitle(w http.ResponseWriter, r *http.Request, part string, x *subExtraction) {
+	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Subtitle-Complete", "true")
+	flush := func() {
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
+	io.WriteString(w, "WEBVTT\n\n")
+	flush()
+	var f *os.File
+	defer func() {
+		if f != nil {
+			f.Close()
+		}
+	}()
+	var pending []byte
+	header := true // the file's own WEBVTT header, already sent
+	buf := make([]byte, 64<<10)
+	tick := time.NewTicker(500 * time.Millisecond)
+	defer tick.Stop()
+	idle := 0
+	for {
+		finished := isDone(x)
+		if f == nil {
+			// The open handle keeps reading after the finished file is renamed.
+			f, _ = os.Open(part)
+			if f == nil && finished {
+				f, _ = os.Open(strings.TrimSuffix(part, ".part"))
+			}
+		}
+		if f != nil {
+			for {
+				n, err := f.Read(buf)
+				pending = append(pending, buf[:n]...)
+				if n == 0 || err != nil {
+					break
+				}
+			}
+		}
+		if header {
+			if i := strings.Index(string(pending), "\n\n"); i >= 0 {
+				pending, header = pending[i+2:], false
+			}
+		}
+		sent := false
+		if !header {
+			// Whole cues only: a cue cut short would show cut short.
+			end := len(pending)
+			if !finished {
+				end = strings.LastIndex(string(pending), "\n\n") + 2
+			}
+			if end > 1 {
+				w.Write(pending[:end])
+				pending, sent = pending[end:], true
+			}
+		}
+		if finished {
+			flush()
+			return
+		}
+		if sent {
+			idle = 0
+			flush()
+		} else if idle++; idle >= 4 {
+			idle = 0
+			io.WriteString(w, "\n")
+			flush()
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-x.done:
+		case <-tick.C:
+		}
+	}
 }
 
 // extractSubtitle starts (or joins) converting one subtitle track to WebVTT.

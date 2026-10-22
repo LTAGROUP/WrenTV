@@ -323,8 +323,10 @@ final class PlayerModel {
                     let subs = group.options.filter { $0.mediaType != .closedCaption }
                     pick = subtitle < subs.count ? subs[subtitle] : nil
                 } else {
-                    // Streams name track index 2 "English (3)".
-                    pick = group.options.first { $0.displayName.hasSuffix("(\(subtitle + 1))") }
+                    // Streams name track index 2 "English (3)"; AVFoundation may add
+                    // the language after it ("English (3) - English").
+                    let tag = "(\(subtitle + 1))"
+                    pick = group.options.first { $0.displayName.hasSuffix(tag) || $0.displayName.contains(tag + " - ") }
                 }
             } else {
                 pick = nil

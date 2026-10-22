@@ -456,7 +456,7 @@ class Player {
     const load = async () => {
       let complete = true;
       try {
-        const r = await fetch(sub.url, { cache: 'no-store' });
+        const r = await fetch(sub.url + (sub.url.includes('?') ? '&' : '?') + 'partial=1', { cache: 'no-store' });
         if (!r.ok) throw new Error(r.status);
         complete = r.headers.get('X-Subtitle-Complete') !== 'false';
         const cues = parseVTT(await r.text(), complete);

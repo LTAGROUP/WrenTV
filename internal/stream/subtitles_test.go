@@ -41,20 +41,47 @@ func TestSubtitlesServedWhileConverting(t *testing.T) {
 	}
 	defer m.Stop(s.ID)
 
-	get := func() (string, string) {
+	get := func(path string) (string, string) {
 		rec := httptest.NewRecorder()
-		s.ServeHTTP(rec, httptest.NewRequest("GET", "/subs/0.vtt", nil), "subs/0.vtt")
+		s.ServeHTTP(rec, httptest.NewRequest("GET", "/"+path, nil), "subs/0.vtt")
 		b, _ := io.ReadAll(rec.Body)
 		return string(b), rec.Header().Get("X-Subtitle-Complete")
 	}
-	body, complete := get()
+	body, complete := get("subs/0.vtt?partial=1")
 	if complete != "false" || !strings.Contains(body, "first") || strings.Contains(body, "last") {
 		t.Fatalf("first fetch: complete=%s body=%q", complete, body)
 	}
 	time.Sleep(2 * time.Second)
-	body, complete = get()
+	body, complete = get("subs/0.vtt?partial=1")
 	if complete != "true" || !strings.Contains(body, "last") {
 		t.Fatalf("second fetch: complete=%s body=%q", complete, body)
+	}
+}
+
+// Players that load a subtitle file once get the whole track, even when the
+// conversion is still running when they ask.
+func TestSubtitleWaitsForConversion(t *testing.T) {
+	tmp := t.TempDir()
+	ff := filepath.Join(tmp, "ffmpeg")
+	if err := os.WriteFile(ff, []byte(fakeFFmpeg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(Config{FFmpeg: ff, ScratchDir: filepath.Join(tmp, "scratch"), SubtitleDir: filepath.Join(tmp, "subs")})
+	src, err := OpenFile(ff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := &media.Info{Size: 43, Duration: 700, Subtitles: []media.Stream{{TypeIdx: 0, TextBased: true}}}
+	s, err := m.Create(NewSessionOpts{FileID: "f3", Info: info, Src: src, Decision: media.Decision{Method: media.MethodDirect}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop(s.ID)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest("GET", "/subs/0.vtt", nil), "subs/0.vtt")
+	cues := parseVTT(rec.Body.String(), true)
+	if len(cues) != 2 || cues[0].text != "first" || cues[1].text != "last" {
+		t.Fatalf("body %q", rec.Body.String())
 	}
 }
 
