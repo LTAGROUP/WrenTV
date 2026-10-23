@@ -40,7 +40,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
@@ -248,12 +248,17 @@ private fun CinematicHero(entry: HeroEntry?, label: String?, height: Dp) {
     Box(Modifier.fillMaxWidth().height(height)) {
         AnimatedContent(entry, transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) }, contentKey = { it?.id }, label = "hero",
             modifier = Modifier.align(Alignment.BottomStart).padding(start = PageGutter, bottom = 10.dp).widthIn(max = 600.dp)
-                // A soft shade just behind the text, so it reads on bright art without boxing it in.
+                // A soft shade just behind the text, so it reads on bright art without boxing it in:
+                // an oval that fades out before its edge, so no border shows.
                 .drawBehind {
-                    drawRect(Brush.radialGradient(
-                        0f to Color.Black.copy(alpha = 0.34f), 1f to Color.Transparent,
-                        center = Offset(size.width * 0.3f, size.height * 0.7f), radius = size.maxDimension * 0.62f,
-                    ), topLeft = Offset(-size.width * 0.3f, -size.height * 0.4f), size = Size(size.width * 1.4f, size.height * 1.6f))
+                    val c = Offset(size.width * 0.35f, size.height * 0.55f)
+                    val r = size.width * 0.8f
+                    scale(1f, size.height * 1.1f / r, pivot = c) {
+                        drawCircle(Brush.radialGradient(
+                            0f to Color.Black.copy(alpha = 0.34f), 0.55f to Color.Black.copy(alpha = 0.16f), 1f to Color.Transparent,
+                            center = c, radius = r,
+                        ), radius = r, center = c)
+                    }
                 }) { e ->
             if (e == null) return@AnimatedContent
             Column {
