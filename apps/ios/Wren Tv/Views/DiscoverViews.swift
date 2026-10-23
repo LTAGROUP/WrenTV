@@ -302,3 +302,116 @@ extension View {
     /// Lifts a card toward the pointer on hover, like the TV app.
     func hoverLift(cornerRadius: CGFloat = 10) -> some View { modifier(HoverLift(cornerRadius: cornerRadius)) }
 }
+
+/// The studios behind a title, as logo tiles that open each studio's page.
+struct StudioTiles: View {
+    @Environment(AppState.self) private var state
+    let studios: [Studio]
+
+    var body: some View {
+        Shelf(title: "Production") {
+            ForEach(studios) { s in
+                NavigationLink(value: StudioRoute(id: s.id, name: s.name)) { StudioLogo(studio: s, width: 160) }
+                    .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+/// A studio's logo on a light tile, or its name where there's no logo.
+struct StudioLogo: View {
+    @Environment(AppState.self) private var state
+    let studio: Studio
+    var width: CGFloat
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10).fill(Color(white: 0.95))
+            if let url = state.api?.imageURL(studio.logoPath, size: "w300") {
+                AsyncImage(url: url) { $0.resizable().scaledToFit() } placeholder: { Color.clear }
+                    .padding(width * 0.14)
+            } else {
+                Text(studio.name).font(.headline).foregroundStyle(.black).multilineTextAlignment(.center).padding(10)
+            }
+        }
+        .frame(width: width, height: width / 2)
+    }
+}
+
+/// A studio's movies and shows over its artwork, each shelf loading more near its end.
+struct StudioView: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.metrics) private var m
+    let route: StudioRoute
+    @State private var company: Company?
+    @State private var shelves: [StudioShelf] = []
+    @State private var error: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                hero
+                if let about = company?.description, !about.isEmpty {
+                    Text(about).foregroundStyle(.secondary).frame(maxWidth: 760, alignment: .leading)
+                        .padding(.horizontal, m.gutter).padding(.top, 8)
+                }
+                if company != nil {
+                    VStack(alignment: .leading, spacing: 30) {
+                        ForEach(shelves) { s in
+                            Shelf(title: s.row.title) {
+                                ForEach(s.items) { t in TitleCard(title: t).onAppear { s.appeared(t, api: state.api) } }
+                            }
+                        }
+                        if shelves.isEmpty {
+                            ContentUnavailableView("No movies or shows listed", systemImage: "film")
+                        }
+                    }
+                    .padding(.vertical, 20)
+                } else if let error {
+                    ContentUnavailableView("Couldn't load", systemImage: "exclamationmark.triangle", description: Text(error))
+                } else {
+                    ProgressView().frame(maxWidth: .infinity).padding(.top, 60)
+                }
+            }
+        }
+        .ignoresSafeArea(edges: .top)
+        .navigationTitle(company?.name ?? route.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .task(id: route.id) {
+            guard company == nil else { return }
+            do {
+                guard let c = try await state.api?.company(route.id) else { return }
+                shelves = c.rows.map { StudioShelf(row: $0, studio: c.id) }
+                company = c
+            } catch is CancellationError {
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private var hero: some View {
+        ZStack(alignment: .bottomLeading) {
+            RemoteImage(url: state.api?.imageURL(company?.backdropPath, size: "w1280"))
+                .frame(height: m.heroHeight)
+                .frame(maxWidth: .infinity)
+                .clipped()
+                .overlay(LinearGradient(stops: [.init(color: .clear, location: 0.35), .init(color: .black.opacity(0.55), location: 0.75),
+                                                .init(color: Color.black, location: 1)],
+                                        startPoint: .top, endPoint: .bottom))
+                .overlay(LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .leading, endPoint: .center))
+            HStack(alignment: .bottom, spacing: 18) {
+                StudioLogo(studio: Studio(id: route.id, name: company?.name ?? route.name, logoPath: company?.logoPath), width: m.poster * 1.4)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("STUDIO").font(.caption.weight(.bold)).kerning(1.2).foregroundStyle(Color.wrenEmber)
+                    Text(company?.name ?? route.name).font(.system(size: m.heroTitle, weight: .bold)).lineLimit(2)
+                    let facts = [company?.headquarters, company?.originCountry].compactMap { $0 }.filter { !$0.isEmpty }
+                    if !facts.isEmpty { Text(facts.joined(separator: " · ")).font(.callout).foregroundStyle(.secondary) }
+                }
+            }
+            .padding(.horizontal, m.gutter)
+            .padding(.bottom, 16)
+        }
+    }
+}

@@ -429,6 +429,49 @@ public sealed class Extras
     public List<CastMember> Cast { get; set; } = [];
     public Trailer? Trailer { get; set; }
     public List<TitleView> MoreLikeThis { get; set; } = [];
+    public Franchise? Franchise { get; set; }
+    public List<Studio> Studios { get; set; } = [];
+}
+
+/// The film series a movie belongs to, in release order.
+public sealed class Franchise
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public string? BackdropPath { get; set; }
+    public List<TitleView> Titles { get; set; } = [];
+}
+
+/// A production company behind a title.
+public sealed class Studio
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public string? LogoPath { get; set; }
+}
+
+/// A studio's page: what TMDB says about it and its shelves of movies and shows.
+public sealed class Company
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public string? LogoPath { get; set; }
+    public string? Description { get; set; }
+    public string? Headquarters { get; set; }
+    public string? OriginCountry { get; set; }
+    public string? BackdropPath { get; set; }
+    public List<StudioRow> Rows { get; set; } = [];
+}
+
+/// One of a studio's shelves; more pages come from the catalog with the same sort.
+public sealed class StudioRow
+{
+    public string Id { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string MediaType { get; set; } = "";
+    public string Sort { get; set; } = "";
+    public List<TitleView> Items { get; set; } = [];
+    public int TotalPages { get; set; }
 }
 
 public sealed class ItemPage

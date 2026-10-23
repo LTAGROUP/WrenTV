@@ -250,11 +250,17 @@ struct ItemDetailView: View {
             VStack(alignment: .leading, spacing: 28) {
                 if let ex = extras {
                     if !ex.cast.isEmpty { CastShelf(cast: ex.cast) }
+                    if let f = ex.franchise, !f.titles.isEmpty {
+                        Shelf(title: f.name, subtitle: "\(f.titles.count) films") {
+                            ForEach(f.titles.uniqued()) { TitleCard(title: $0) }
+                        }
+                    }
                     if !ex.moreLikeThis.isEmpty {
                         Shelf(title: "More Like This") {
                             ForEach(ex.moreLikeThis) { TitleCard(title: $0) }
                         }
                     }
+                    if let studios = ex.studios, !studios.isEmpty { StudioTiles(studios: studios) }
                     if !ex.omdb && state.isAdmin {
                         Text("Add an OMDb key in Server → Settings to show Rotten Tomatoes and IMDb ratings.")
                             .font(.caption).foregroundStyle(.secondary)

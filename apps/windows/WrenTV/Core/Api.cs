@@ -179,8 +179,9 @@ public sealed class WrenTVApi
     public Task<TrendingResponse> Trending() => Get<TrendingResponse>("/api/discover/trending");
 
     /// TMDB's whole catalog of movies or shows ("movie" | "show"), a page at a time.
-    public Task<CatalogResult> Catalog(string type, string sort, int? genre, int page) =>
-        Get<CatalogResult>("/api/discover/browse", [("type", type), ("sort", sort), ("genre", genre?.ToString() ?? ""), ("page", page.ToString())]);
+    public Task<CatalogResult> Catalog(string type, string sort, int? genre, int page, int? company = null) =>
+        Get<CatalogResult>("/api/discover/browse", [("type", type), ("sort", sort), ("genre", genre?.ToString() ?? ""), ("page", page.ToString()), ("company", company?.ToString() ?? "")]);
+    public Task<Company> Company(int id) => Get<Company>($"/api/companies/{id}");
     public Task<List<Item>> Search(string q) => Get<List<Item>>("/api/search", [("q", q)]);
 
     public Task<PlayResponse> Play(string id, PlayRequest req) =>

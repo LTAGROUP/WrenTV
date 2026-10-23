@@ -34,7 +34,10 @@ sealed class DetailPage(string id) : Page
                 break;
         }
         if (extras is { Cast.Count: > 0 } x) sections.Add(Cards.Shelf("Cast", x.Cast.Take(20).Select(Person)));
+        if (extras?.Franchise is { Titles.Count: > 0 } f)
+            sections.Add(Cards.Shelf(f.Name, f.Titles.DistinctBy(t => t.MediaType + t.TmdbId).Select(t => (UIElement)Cards.Title(t)), subtitle: $"{f.Titles.Count} films"));
         if (extras is { MoreLikeThis.Count: > 0 } m) sections.Add(Cards.Shelf("More Like This", m.MoreLikeThis.Select(t => (UIElement)Cards.Title(t))));
+        if (extras is { Studios.Count: > 0 } st) sections.Add(Cards.Shelf("Production", st.Studios.Select(StudioTile)));
         var col = new StackPanel { Spacing = 36, Padding = new Thickness(0, 0, 0, 48) };
         foreach (var s in sections) col.Children.Add(s);
         return new ScrollViewer { Content = col };
@@ -255,6 +258,14 @@ sealed class DetailPage(string id) : Page
         var b = Cards.Plain(col);
         ToolTipService.SetToolTip(b, $"See {c.Name}'s movies and shows");
         b.Click += (_, _) => App.Shell?.Push(new PersonPage(id, c.Name));
+        return b;
+    }
+
+    static UIElement StudioTile(Studio s)
+    {
+        var b = Cards.Plain(StudioPage.Logo(s, 180));
+        ToolTipService.SetToolTip(b, $"See {s.Name}'s movies and shows");
+        b.Click += (_, _) => App.Shell?.Push(new StudioPage(s.Id, s.Name));
         return b;
     }
 }

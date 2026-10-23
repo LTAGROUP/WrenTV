@@ -164,6 +164,96 @@ sealed class PersonPage(int id, string name) : Page
     }
 }
 
+/// A studio over its artwork: popular, top rated and recent movies, then
+/// popular and top rated shows. Each shelf loads more as it nears its end.
+sealed class StudioPage(int id, string name) : Page
+{
+    protected override bool HasAmbient => true;
+    const int Ahead = 12;
+
+    /// A studio's logo on a light tile, or its name where there's no logo.
+    public static UIElement Logo(Studio s, double width)
+    {
+        FrameworkElement inner = s.LogoPath != null
+            ? Ui.Image(App.State.Api?.ImageUrl(s.LogoPath, "w300"), 300, Stretch.Uniform)
+            : new TextBlock { Text = s.Name, FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Color.FromArgb(255, 0x1C, 0x1C, 0x1E)), TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10) };
+        if (s.LogoPath != null) inner.Margin = new Thickness(width * 0.14);
+        return new Border
+        {
+            Width = width, Height = width / 2, CornerRadius = new CornerRadius(10),
+            Background = new SolidColorBrush(Color.FromArgb(255, 0xF2, 0xF2, 0xF4)),
+            Child = inner,
+        };
+    }
+
+    protected override async Task<UIElement> Build()
+    {
+        var c = await App.State.Api!.Company(id);
+        if (c.BackdropPath != null) Backdrop?.Show(c.BackdropPath);
+        var head = Ui.Column(8);
+        var kicker = Ui.Text("STUDIO", 12, FontWeights.Bold, Theme.EmberBrush);
+        kicker.CharacterSpacing = 80;
+        head.Children.Add(kicker);
+        head.Children.Add(Ui.Title(c.Name.Length > 0 ? c.Name : name, 40));
+        var facts = new[] { c.Headquarters, c.OriginCountry }.Where(f => !string.IsNullOrWhiteSpace(f)).ToList();
+        if (facts.Count > 0) head.Children.Add(Ui.Secondary(string.Join("  ·  ", facts), 14, 2));
+        if (!string.IsNullOrWhiteSpace(c.Description)) head.Children.Add(Ui.Text(c.Description, 14, wrap: true));
+        var logo = Logo(new Studio { Id = id, Name = c.Name, LogoPath = c.LogoPath }, 240);
+        ((FrameworkElement)logo).VerticalAlignment = VerticalAlignment.Top;
+        var top = new Grid { ColumnSpacing = 28, Margin = new Thickness(Gutter, 100, Gutter, 0), MaxWidth = 1100, HorizontalAlignment = HorizontalAlignment.Left };
+        top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        top.Children.Add(logo);
+        Grid.SetColumn(head, 1);
+        top.Children.Add(head);
+        var sections = new List<UIElement> { top };
+        foreach (var r in c.Rows) sections.Add(Shelf(r));
+        if (c.Rows.Count == 0) sections.Add(Ui.Empty("\uE8B2", "No movies or shows listed", "TMDB doesn't list any titles for this studio yet."));
+        return Scroll(sections.ToArray());
+    }
+
+    /// One shelf, fetching its next page once it's scrolled within a few cards of the end.
+    UIElement Shelf(StudioRow r)
+    {
+        var seen = new HashSet<string>();
+        var items = r.Items.Where(t => seen.Add(t.MediaType + t.TmdbId)).ToList();
+        int page = 1, total = r.TotalPages;
+        var loading = false;
+        StackPanel? row = null;
+        ScrollViewer? sv = null;
+        async void Near()
+        {
+            if (loading || page >= total || row == null || sv == null) return;
+            var per = row.Children.Count == 0 ? 1 : (sv.ExtentWidth / row.Children.Count);
+            var lastVisible = (sv.HorizontalOffset + sv.ViewportWidth) / Math.Max(1, per);
+            if (lastVisible < row.Children.Count - Ahead) return;
+            loading = true;
+            try
+            {
+                var res = await App.State.Api!.Catalog(r.MediaType, r.Sort, null, page + 1, id);
+                foreach (var t in res.Items.Where(t => seen.Add(t.MediaType + t.TmdbId))) row.Children.Add(Cards.Title(t));
+                page = res.Page;
+                total = res.TotalPages;
+            }
+            catch (Exception)
+            {
+                // Tried again when the row next moves.
+            }
+            finally
+            {
+                loading = false;
+            }
+        }
+        return Cards.Shelf(r.Title, items.Select(t => (UIElement)Cards.Title(t)), attach: (rw, s) =>
+        {
+            row = rw;
+            sv = s;
+            s.ViewChanged += (_, _) => Near();
+            s.SizeChanged += (_, _) => Near();
+        });
+    }
+}
+
 /// The page's banner: its first titles with artwork.
 static class LayoutHero
 {

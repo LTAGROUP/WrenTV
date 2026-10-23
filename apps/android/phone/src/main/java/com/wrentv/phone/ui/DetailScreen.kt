@@ -191,9 +191,15 @@ fun DetailScreen(itemId: String, seed: Item?) {
                 val ex = extras
                 if (ex != null) {
                     if (ex.cast.isNotEmpty()) item("cast") { Box(Modifier.padding(top = 20.dp)) { CastShelf(ex.cast) } }
+                    ex.franchise?.takeIf { it.titles.isNotEmpty() }?.let { f ->
+                        item("franchise") {
+                            Box(Modifier.padding(top = 28.dp)) { Shelf(f.name, "${f.titles.size} films") { items(f.titles.distinctBy { it.id }, { it.id }) { TitleCard(it, width = m.poster) } } }
+                        }
+                    }
                     if (ex.moreLikeThis.isNotEmpty()) item("more") {
                         Box(Modifier.padding(top = 28.dp)) { Shelf("More Like This") { items(ex.moreLikeThis, { it.id }) { TitleCard(it, width = m.poster) } } }
                     }
+                    if (ex.studios.isNotEmpty()) item("studios") { Box(Modifier.padding(top = 28.dp)) { StudioTiles(ex.studios) } }
                 } else if (!extrasLoaded) item("skeleton") { Box(Modifier.padding(top = 20.dp)) { SkeletonShelf("More Like This") } }
             }
             d?.files?.takeIf { it.isNotEmpty() }?.let { files -> item("files") { FileSection(files, state.isAdmin) } }

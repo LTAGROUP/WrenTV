@@ -24,9 +24,13 @@ struct DetailView: View {
                         if d.item.kind == "show" { seasons(d) }
                         if d.item.kind == "season" { episodeShelf(d.children ?? [], title: "Episodes") }
                         if let cast = extras?.cast, !cast.isEmpty { castShelf(cast) }
+                        if let f = extras?.franchise, !f.titles.isEmpty {
+                            Shelf(title: f.name, subtitle: "\(f.titles.count) films") { ForEach(f.titles.uniqued()) { TitleCard(title: $0) } }
+                        }
                         if let more = extras?.moreLikeThis, !more.isEmpty {
                             Shelf(title: "More Like This") { ForEach(more) { TitleCard(title: $0) } }
                         }
+                        if let studios = extras?.studios, !studios.isEmpty { StudioTiles(studios: studios) }
                     }
                     .padding(.bottom, 80)
                 }

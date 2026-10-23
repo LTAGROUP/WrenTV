@@ -95,6 +95,7 @@ struct MainView: View {
                     .navigationDestination(for: GenreRoute.self) { GenreItemsView(route: $0).searchBar($search) }
                     .navigationDestination(for: StreamTitleRoute.self) { StreamTitleView(route: $0).searchBar($search) }
                     .navigationDestination(for: PersonRoute.self) { PersonView(route: $0).searchBar($search) }
+                    .navigationDestination(for: StudioRoute.self) { StudioView(route: $0).searchBar($search) }
                     .navigationDestination(for: HubRoute.self) { HubView(route: $0).searchBar($search) }
                     .navigationDestination(for: LayoutEditorRoute.self) { LayoutEditorView(route: $0).searchBar($search) }
                     .navigationDestination(for: Library.self) { LibraryView(library: $0).searchBar($search) }

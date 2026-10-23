@@ -714,15 +714,7 @@ struct PersonView: View {
             }
         }
         .sheet(isPresented: $bioOpen) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    Text(person?.name ?? route.name).font(.title2.bold())
-                    Text(person?.biography ?? "").font(.body)
-                }
-                .frame(maxWidth: 1300, alignment: .leading)
-                .padding(60)
-                .focusable()
-            }
+            BioReader(name: person?.name ?? route.name, text: person?.biography ?? "")
         }
         .task(id: route.id) {
             do {
@@ -911,5 +903,131 @@ extension Color {
         if s.hasPrefix("#") { s.removeFirst() }
         guard s.count == 6, let v = Int(s, radix: 16) else { return nil }
         self.init(red: Double((v >> 16) & 0xFF) / 255, green: Double((v >> 8) & 0xFF) / 255, blue: Double(v & 0xFF) / 255)
+    }
+}
+
+/// A long biography read with the remote: each paragraph takes focus in
+/// turn, so swiping down moves through the text a screenful at a time.
+private struct BioReader: View {
+    let name: String
+    let text: String
+    @FocusState private var focused: Int?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                Text(name).font(.title2.bold())
+                ForEach(Array(bioChunks(text).enumerated()), id: \.offset) { i, chunk in
+                    Text(chunk).font(.body)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 6)
+                        .opacity(focused == nil || focused == i ? 1 : 0.6)
+                        .focusable()
+                        .focused($focused, equals: i)
+                }
+            }
+            .frame(maxWidth: 1300, alignment: .leading)
+            .padding(60)
+        }
+        .onAppear { focused = 0 }
+    }
+}
+
+/// The text's paragraphs, with any too long for a screen split between sentences.
+func bioChunks(_ text: String, limit: Int = 700) -> [String] {
+    text.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.flatMap { para -> [String] in
+        guard para.count > limit else { return [para] }
+        var out: [String] = []
+        var cur = ""
+        para.enumerateSubstrings(in: para.startIndex..., options: .bySentences) { sentence, _, _, _ in
+            guard let sentence else { return }
+            if !cur.isEmpty && cur.count + sentence.count > limit { out.append(cur.trimmingCharacters(in: .whitespaces)); cur = "" }
+            cur += sentence
+        }
+        if !cur.isEmpty { out.append(cur.trimmingCharacters(in: .whitespaces)) }
+        return out
+    }
+}
+
+// MARK: Studio
+
+/// The studios behind a title, as logo tiles that open each studio's page.
+struct StudioTiles: View {
+    let studios: [Studio]
+
+    var body: some View {
+        Shelf(title: "Production") {
+            ForEach(studios) { s in
+                NavigationLink(value: StudioRoute(id: s.id, name: s.name)) { StudioLogo(studio: s, width: 300) }
+                    .buttonStyle(.card)
+            }
+        }
+    }
+}
+
+/// A studio's logo on a light tile, or its name where there's no logo.
+struct StudioLogo: View {
+    @Environment(AppState.self) private var state
+    let studio: Studio
+    var width: CGFloat
+
+    var body: some View {
+        ZStack {
+            Color(white: 0.95)
+            if let url = state.api?.imageURL(studio.logoPath, size: "w300") {
+                AsyncImage(url: url) { $0.resizable().scaledToFit() } placeholder: { Color.clear }
+                    .padding(width * 0.14)
+            } else {
+                Text(studio.name).font(.headline).foregroundStyle(.black).multilineTextAlignment(.center).padding(14)
+            }
+        }
+        .frame(width: width, height: width / 2)
+    }
+}
+
+/// A studio's movies and shows over their artwork: popular, top rated and
+/// recent movies, then popular and top rated shows. Each shelf loads more as
+/// it nears its end.
+struct StudioView: View {
+    @Environment(AppState.self) private var state
+    let route: StudioRoute
+    @State private var company: Company?
+    @State private var shelves: [StudioShelf] = []
+    @State private var error: String?
+
+    var body: some View {
+        let facts = [company?.headquarters, company?.originCountry].compactMap { $0 }.filter { !$0.isEmpty }
+        CinematicPage(fallback: HeroEntry(id: "studio:\(route.id)", title: company?.name ?? route.name,
+                                          backdrop: company?.backdropPath, meta: facts.joined(separator: "  ·  "),
+                                          overview: company?.description),
+                      label: "Studio") {
+            if company != nil {
+                ForEach(shelves) { s in
+                    CinematicRow(id: "row:\(s.id)") {
+                        Shelf(title: s.row.title) {
+                            ForEach(s.items) { t in TitleCard(title: t).onAppear { s.appeared(t, api: state.api) } }
+                        }
+                    }
+                }
+                if shelves.isEmpty {
+                    EmptyState(title: "No movies or shows listed", symbol: "film")
+                }
+            } else if let error {
+                EmptyState(title: "Couldn't load", message: error, symbol: "wifi.exclamationmark")
+            } else {
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 120)
+            }
+        }
+        .task(id: route.id) {
+            guard company == nil else { return }
+            do {
+                guard let c = try await state.api?.company(route.id) else { return }
+                shelves = c.rows.map { StudioShelf(row: $0, studio: c.id) }
+                company = c
+            } catch is CancellationError {
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
     }
 }

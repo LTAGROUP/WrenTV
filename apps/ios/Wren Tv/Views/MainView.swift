@@ -101,6 +101,7 @@ extension View {
             .navigationDestination(for: GenreRoute.self) { GenreItemsView(route: $0) }
             .navigationDestination(for: StreamTitleRoute.self) { StreamTitleView(route: $0) }
             .navigationDestination(for: PersonRoute.self) { PersonView(route: $0) }
+            .navigationDestination(for: StudioRoute.self) { StudioView(route: $0) }
             .navigationDestination(for: SearchRoute.self) { _ in SearchTab() }
             .navigationDestination(for: HubRoute.self) { HubView(route: $0) }
             .navigationDestination(for: LayoutEditorRoute.self) { LayoutEditorView(route: $0) }

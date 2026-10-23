@@ -150,6 +150,7 @@ fun RouteScreen(r: Route) {
         is Route.Catalog -> CatalogScreen(r.type)
         is Route.Hub -> HubScreen(r.id, r.name)
         is Route.Person -> PersonScreen(r.id, r.name)
+        is Route.Studio -> StudioScreen(r.id, r.name)
         Route.Layouts -> LayoutsScreen()
         is Route.LayoutEditor -> LayoutEditorScreen(r.scope, r.title)
     }

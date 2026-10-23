@@ -302,3 +302,111 @@ extension View {
     /// Lifts a card toward the pointer on hover, like the TV app.
     func hoverLift(cornerRadius: CGFloat = 10) -> some View { modifier(HoverLift(cornerRadius: cornerRadius)) }
 }
+
+/// The studios behind a title, as logo tiles that open each studio's page.
+struct StudioTiles: View {
+    let studios: [Studio]
+
+    var body: some View {
+        Shelf(title: "Production") {
+            ForEach(studios) { s in
+                NavigationLink(value: StudioRoute(id: s.id, name: s.name)) { StudioLogo(studio: s, width: 180) }
+                    .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+/// A studio's logo on a light tile, or its name where there's no logo.
+struct StudioLogo: View {
+    @Environment(AppState.self) private var state
+    let studio: Studio
+    var width: CGFloat
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10).fill(Color(white: 0.95))
+            if let url = state.api?.imageURL(studio.logoPath, size: "w300") {
+                AsyncImage(url: url) { $0.resizable().scaledToFit() } placeholder: { Color.clear }
+                    .padding(width * 0.14)
+            } else {
+                Text(studio.name).font(.headline).foregroundStyle(.black).multilineTextAlignment(.center).padding(10)
+            }
+        }
+        .frame(width: width, height: width / 2)
+    }
+}
+
+struct StudioView: View {
+    let route: StudioRoute
+
+    var body: some View {
+        StudioBody(route: route).ambientBackdrop()
+    }
+}
+
+/// A studio's movies and shows over its artwork, each shelf loading more near its end.
+private struct StudioBody: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.ambient) private var ambient
+    let route: StudioRoute
+    @State private var company: Company?
+    @State private var shelves: [StudioShelf] = []
+    @State private var error: String?
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 30) {
+                header
+                if company != nil {
+                    ForEach(shelves) { s in
+                        Shelf(title: s.row.title) {
+                            ForEach(s.items) { t in TitleCard(title: t).onAppear { s.appeared(t, api: state.api) } }
+                        }
+                    }
+                    if shelves.isEmpty {
+                        ContentUnavailableView("No movies or shows listed", systemImage: "film")
+                    }
+                } else if let error {
+                    ContentUnavailableView("Couldn't load", systemImage: "exclamationmark.triangle", description: Text(error))
+                } else {
+                    ProgressView().frame(maxWidth: .infinity).padding(.top, 60)
+                }
+            }
+            .padding(.bottom, 28)
+        }
+        .navigationTitle(company?.name ?? route.name)
+        .task(id: route.id) {
+            do {
+                if company == nil, let c = try await state.api?.company(route.id) {
+                    shelves = c.rows.map { StudioShelf(row: $0, studio: c.id) }
+                    company = c
+                }
+                ambient?.path = company?.backdropPath
+            } catch is CancellationError {
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 24) {
+            StudioLogo(studio: Studio(id: route.id, name: company?.name ?? route.name, logoPath: company?.logoPath), width: 240)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("STUDIO").font(.caption.weight(.bold)).kerning(1.2).foregroundStyle(Color.wrenEmber)
+                Text(company?.name ?? route.name).font(.system(size: 40, weight: .bold)).lineLimit(2)
+                let facts = [company?.headquarters, company?.originCountry].compactMap { $0 }.filter { !$0.isEmpty }
+                if !facts.isEmpty {
+                    Text(facts.joined(separator: "  ·  ")).foregroundStyle(.secondary)
+                }
+                if let about = company?.description, !about.isEmpty {
+                    Text(about).foregroundStyle(.white.opacity(0.85)).frame(maxWidth: 720, alignment: .leading).textSelection(.enabled)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 40)
+    }
+}

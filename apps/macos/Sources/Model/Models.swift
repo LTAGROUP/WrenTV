@@ -367,6 +367,45 @@ struct PersonRoute: Hashable {
     var name: String
 }
 
+struct StudioRoute: Hashable {
+    var id: Int
+    var name: String
+}
+
+/// A studio shelf's titles so far; `more()` fetches the next page when the end comes near.
+@MainActor @Observable
+final class StudioShelf: Identifiable {
+    let row: StudioRow
+    let studio: Int
+    var items: [TitleView]
+    private var page = 1
+    private var total: Int
+    private var loading = false
+    nonisolated var id: String { row.id }
+
+    init(row: StudioRow, studio: Int) {
+        self.row = row
+        self.studio = studio
+        items = row.items.uniqued()
+        total = row.totalPages
+    }
+
+    /// Called as each card appears; within a dozen of the end, the next page comes in.
+    func appeared(_ t: TitleView, api: WrenTVAPI?) {
+        guard let api, !loading, page < total,
+              let i = items.firstIndex(where: { $0.id == t.id }), i >= items.count - 12 else { return }
+        loading = true
+        Task {
+            defer { loading = false }
+            guard let res = try? await api.catalog(type: row.mediaType, sort: row.sort, genre: nil, page: page + 1, company: studio) else { return }
+            let have = Set(items.map(\.id))
+            items += res.items.filter { !have.contains($0.id) }.uniqued()
+            page = res.page
+            total = res.totalPages
+        }
+    }
+}
+
 /// Poster sizes the browsing pages can use. The choice is saved to the
 /// account (UserPrefs.posterSize) and cached here for the first frame.
 enum PosterSize: String, CaseIterable, Identifiable {
@@ -522,6 +561,45 @@ struct Extras: Codable {
     var cast: [CastMember]
     var trailer: Trailer?
     var moreLikeThis: [TitleView]
+    /// The movie series it's part of, in release order.
+    var franchise: Franchise?
+    /// The studios that made it; each has a page.
+    var studios: [Studio]?
+}
+
+struct Franchise: Codable, Hashable {
+    var id: Int
+    var name: String
+    var backdropPath: String?
+    var titles: [TitleView]
+}
+
+struct Studio: Codable, Hashable, Identifiable {
+    var id: Int
+    var name: String
+    var logoPath: String?
+}
+
+/// A studio's page: who they are and shelves of what they made.
+struct Company: Codable, Hashable {
+    var id: Int
+    var name: String
+    var logoPath: String?
+    var description: String?
+    var headquarters: String?
+    var originCountry: String?
+    var backdropPath: String?
+    var rows: [StudioRow]
+}
+
+/// One shelf of a studio's titles; `catalog` with its type, sort and the studio pages through the rest.
+struct StudioRow: Codable, Hashable, Identifiable {
+    var id: String
+    var title: String
+    var mediaType: String
+    var sort: String
+    var items: [TitleView]
+    var totalPages: Int
 }
 
 struct ItemPage: Codable {

@@ -78,6 +78,9 @@ private const val HeroHeight = 0.48f
 /** From a shelf's top to its cards: the title line and the row's own padding. */
 private val ShelfHeader = 48.dp
 
+/** Under a poster: its caption's title and year lines, and a little room below. */
+private val CaptionRoom = 56.dp
+
 /** How much bigger or smaller than usual posters are, from the Poster Size setting. */
 val posterScale: Float
     @Composable @ReadOnlyComposable get() = when (LocalAppState.current.posterSize) {
@@ -96,6 +99,9 @@ private val PosterGap = 20.dp
  * the first row (or the page's pills) focused, the page goes back to the top.
  */
 private class FocusLine(val focusedRow: MutableIntState, val list: LazyListState, val headerPx: Float, val readingPx: Float) : BringIntoViewSpec {
+    /** The hero's height; the focus line sits just under it. */
+    var heroPx = 0f
+
     /** While the page's reading rows have focus, there's no hero and the line sits near the top. */
     var reading = false
 
@@ -103,7 +109,7 @@ private class FocusLine(val focusedRow: MutableIntState, val list: LazyListState
         if (focusedRow.intValue <= 0) {
             return if (list.firstVisibleItemIndex == 0) -list.firstVisibleItemScrollOffset.toFloat() else -containerSize * 4
         }
-        return offset - if (reading) readingPx else HeroHeight * containerSize + headerPx
+        return offset - if (reading) readingPx else heroPx + headerPx
     }
 }
 
@@ -200,11 +206,14 @@ fun CinematicBrowse(
         },
     ) {
         val screen = maxHeight
+        // Short enough that a focused row of posters, captions and all, fits on screen.
+        val hero = minOf(screen * HeroHeight, screen - ShelfHeader - poster * 1.5f - CaptionRoom)
+        spec.heroPx = with(LocalDensity.current) { hero.toPx() }
         // The pills sit under the hero, above the first row.
         // Covers the artwork while reading.
         if (plain > 0f) Box(Modifier.fillMaxSize().graphicsLayer { alpha = plain }.background(Brush.verticalGradient(listOf(Wren.surface, Wren.background))))
         Box(Modifier.graphicsLayer { alpha = 1f - plain }) {
-            CinematicHero(entry, label, screen * HeroHeight - if (pills != null) 56.dp else 0.dp)
+            CinematicHero(entry, label, hero - if (pills != null) 56.dp else 0.dp)
         }
         CompositionLocalProvider(LocalBringIntoViewSpec provides spec) {
             LazyColumn(
@@ -213,7 +222,7 @@ fun CinematicBrowse(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 item("cinematic:top") {
-                    Box(Modifier.fillMaxWidth().height(if (readingNow) ReadingTop else screen * HeroHeight).onFocusChanged { if (it.hasFocus) focusedRow.intValue = 0 }) {
+                    Box(Modifier.fillMaxWidth().height(if (readingNow) ReadingTop else hero).onFocusChanged { if (it.hasFocus) focusedRow.intValue = 0 }) {
                         if (pills != null) {
                             val alpha by animateFloatAsState(if (focusedRow.intValue > 0) 0f else 1f, tween(280), label = "pills")
                             Row(

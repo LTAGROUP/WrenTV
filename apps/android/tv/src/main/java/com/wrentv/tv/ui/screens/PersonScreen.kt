@@ -21,6 +21,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import kotlinx.coroutines.android.awaitFrame
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -71,10 +75,27 @@ fun PersonScreen(id: Int, name: String) {
     var reading by rememberSaveable(id) { mutableStateOf(false) }
     val chunks = remember(p?.biography) { p?.biography?.let(::bioChunks).orEmpty() }
     val knownFor = p?.rows?.firstOrNull()?.title?.equals("Known for", ignoreCase = true) == true
+    // Swapping the card for the text (or back) drops focus onto the shelf
+    // below for a moment, so it's moved across by hand once the new one is there.
+    val bioStart = remember { FocusRequester() }
+    val bioCard = remember { FocusRequester() }
+    var refocus by remember { mutableStateOf<FocusRequester?>(null) }
+    LaunchedEffect(refocus) {
+        val target = refocus ?: return@LaunchedEffect
+        repeat(10) {
+            awaitFrame()
+            if (runCatching { target.requestFocus() }.isSuccess) {
+                refocus = null
+                return@LaunchedEffect
+            }
+        }
+        refocus = null
+    }
     fun read(open: Boolean) {
         // Focus goes to the start of the text, or back to the card.
         nav.focus[route] = if (open) "person:$id:bio:0" else "person:$id:bio"
         reading = open
+        refocus = if (open) bioStart else bioCard
     }
     val readingRows = if (reading && chunks.isNotEmpty()) chunks.size + if (knownFor) 1 else 0 else 0
     // Back closes the text before it leaves the page.
@@ -83,12 +104,12 @@ fun PersonScreen(id: Int, name: String) {
         when {
             p != null -> {
                 if (readingRows > 0) {
-                    row("about") { ReadingHeader(p, chunks[0]) { read(false) } }
+                    row("about") { ReadingHeader(p, chunks[0], bioStart) { read(false) } }
                     chunks.drop(1).forEachIndexed { i, text ->
                         row("bio:${i + 1}") { BioChunk(p.id, i + 1, text, last = i + 2 == chunks.size) { read(false) } }
                     }
                 } else {
-                    row("about") { About(p) { read(true) } }
+                    row("about") { About(p, bioCard) { read(true) } }
                 }
                 p.rows.forEach { r ->
                     row("row:${r.title}") {
@@ -125,7 +146,7 @@ private fun Photo(p: Person) {
  * that runs past its five lines opens the reading page instead ([read]).
  */
 @Composable
-private fun About(p: Person, read: () -> Unit) {
+private fun About(p: Person, requester: FocusRequester, read: () -> Unit) {
     var open by rememberSaveable(p.id) { mutableStateOf(false) }
     var long by remember(p.id) { mutableStateOf(false) }
     Row(Modifier.padding(horizontal = PageGutter, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
@@ -134,7 +155,7 @@ private fun About(p: Person, read: () -> Unit) {
         if (bio != null) {
             Surface(
                 onClick = { if (long) read() else open = !open },
-                modifier = Modifier.widthIn(max = 720.dp).rememberFocus("person:${p.id}:bio", default = true),
+                modifier = Modifier.widthIn(max = 720.dp).focusRequester(requester).rememberFocus("person:${p.id}:bio", default = true),
                 shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
                 colors = ClickableSurfaceDefaults.colors(
                     containerColor = Color.White.copy(alpha = 0.06f), contentColor = Wren.text,
@@ -156,14 +177,14 @@ private fun About(p: Person, read: () -> Unit) {
 
 /** Where the reading text starts: photo, name and facts, then the first part of the biography. */
 @Composable
-private fun ReadingHeader(p: Person, first: String, close: () -> Unit) {
+private fun ReadingHeader(p: Person, first: String, requester: FocusRequester, close: () -> Unit) {
     Row(Modifier.padding(horizontal = PageGutter, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
         Photo(p)
         Column(Modifier.widthIn(max = ReadingWidth)) {
             Text(p.name, style = MaterialTheme.typography.headlineLarge, color = Wren.text)
             if (p.facts.isNotEmpty()) Box(Modifier.padding(top = 6.dp)) { MetaLine(p.facts) }
             Text("Biography", style = MaterialTheme.typography.titleSmall, color = Wren.secondary, modifier = Modifier.padding(top = 18.dp, start = 14.dp))
-            BioText(p.id, 0, first, last = false, close)
+            BioText(p.id, 0, first, last = false, close, Modifier.focusRequester(requester))
         }
     }
 }
@@ -181,10 +202,10 @@ private fun BioChunk(id: Int, index: Int, text: String, last: Boolean, close: ()
  * and the page scrolls with it; selecting any part closes the text.
  */
 @Composable
-private fun BioText(id: Int, index: Int, text: String, last: Boolean, close: () -> Unit) {
+private fun BioText(id: Int, index: Int, text: String, last: Boolean, close: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         onClick = close,
-        modifier = Modifier.rememberFocus("person:$id:bio:$index"),
+        modifier = modifier.rememberFocus("person:$id:bio:$index"),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Transparent, contentColor = Wren.text.copy(alpha = 0.78f),

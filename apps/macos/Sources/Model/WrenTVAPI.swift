@@ -151,6 +151,7 @@ struct WrenTVAPI: Sendable {
 
     // Preferences follow the user across devices.
     func person(_ id: Int) async throws -> Person { try await get("/api/people/\(id)") }
+    func company(_ id: Int) async throws -> Company { try await get("/api/companies/\(id)") }
     func prefs() async throws -> UserPrefs { try await get("/api/me/prefs") }
     func setPrefs(_ p: UserPrefs) async throws -> UserPrefs {
         let (data, _) = try await send("PATCH", "/api/me/prefs", body: p)
@@ -193,9 +194,10 @@ struct WrenTVAPI: Sendable {
     func item(_ id: String) async throws -> ItemDetail { try await get("/api/items/\(id)") }
     func extras(_ id: String) async throws -> Extras { try await get("/api/items/\(id)/extras") }
     func discoverHome() async throws -> DiscoverHome { try await get("/api/discover/home") }
-    func catalog(type: String, sort: String, genre: Int?, page: Int) async throws -> CatalogPage {
+    func catalog(type: String, sort: String, genre: Int?, page: Int, company: Int? = nil) async throws -> CatalogPage {
         try await get("/api/discover/browse", query: [.init(name: "type", value: type), .init(name: "sort", value: sort),
-                                                      .init(name: "genre", value: genre.map(String.init) ?? ""), .init(name: "page", value: String(page))])
+                                                      .init(name: "genre", value: genre.map(String.init) ?? ""), .init(name: "page", value: String(page)),
+                                                      .init(name: "company", value: company.map(String.init) ?? "")])
     }
     func trending() async throws -> TrendingResponse { try await get("/api/discover/trending") }
     func search(_ q: String) async throws -> [Item] { try await get("/api/search", query: [.init(name: "q", value: q)]) }
