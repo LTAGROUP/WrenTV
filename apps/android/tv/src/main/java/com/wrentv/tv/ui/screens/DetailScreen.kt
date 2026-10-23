@@ -43,6 +43,13 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.ui.layout.onSizeChanged
+import kotlinx.coroutines.delay
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.unit.Dp
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.BoxWithConstraints
 import com.wrentv.tv.player.ThemeMusic
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.DisposableEffect
@@ -169,7 +176,7 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
         // The backdrop stays put behind everything and dims as the page scrolls.
         val dim = if (list.firstVisibleItemIndex > 0) 0.35f else 1f
         RemoteImage(state.api?.imageUrl(backdrop, "w1280"), Modifier.fillMaxSize().alpha(dim))
@@ -184,6 +191,15 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
         val rows = LocalBringIntoViewSpec.current
         var heroHeight by remember { mutableIntStateOf(0) }
         var inHero by remember { mutableStateOf(false) }
+        // The logo gets the room the rest of the hero leaves: with the buttons above the
+        // bottom band, a long summary would otherwise push it off the top of the screen.
+        val logoRoom = maxHeight * (1 - HeroBottomBand) - LogoTopMargin
+        // Ratings and tracks arrive just after the page opens and grow the hero; it shows
+        // once they're in (or after a moment without them), so the logo is sized only once.
+        val settled = detail != null && (extras != null || (item.kind != "movie" && item.kind != "show"))
+        var waited by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { delay(1200); waited = true }
+        val heroAlpha by animateFloatAsState(if (settled || waited) 1f else 0f, tween(240), label = "hero")
         val spec = remember(list) { DetailScroll(list) { if (inHero) heroHeight else null } }
         // Ratings and tracks arrive after the page opens; the hero settles again as it grows.
         LaunchedEffect(heroHeight, inHero) {
@@ -194,29 +210,31 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
             item("hero") {
                 Column(
                     Modifier.onSizeChanged { heroHeight = it.height }.onFocusChanged { inHero = it.hasFocus }
+                        .graphicsLayer { alpha = heroAlpha }
                         .padding(start = PageGutter, end = PageGutter, top = 150.dp).width(820.dp),
                 ) {
-                    TitleBlock(item, detail, nav)
-                    Spacer(Modifier.height(14.dp))
-                    // The ratings pills below carry the score; the star would repeat it.
-                    val scored = extras != null && (item.kind == "movie" || item.kind == "show") && extras.ratings.hasAny
-                    MetaLine(metaParts(item, star = !scored), listOfNotNull(item.contentRating?.takeIf { it.isNotEmpty() }) + currentFile(detail, versionId)?.badges.orEmpty())
-                    if (extras != null && (item.kind == "movie" || item.kind == "show")) {
-                        RatingsRow(extras.ratings, Modifier.padding(top = 12.dp))
+                    FitTitle(logoRoom, { TitleBlock(item, detail, nav, it) }) {
+                        Spacer(Modifier.height(14.dp))
+                        // The ratings pills below carry the score; the star would repeat it.
+                        val scored = extras != null && (item.kind == "movie" || item.kind == "show") && extras.ratings.hasAny
+                        MetaLine(metaParts(item, star = !scored), listOfNotNull(item.contentRating?.takeIf { it.isNotEmpty() }) + currentFile(detail, versionId)?.badges.orEmpty())
+                        if (extras != null && (item.kind == "movie" || item.kind == "show")) {
+                            RatingsRow(extras.ratings, Modifier.padding(top = 12.dp))
+                        }
+                        item.tagline?.takeIf { it.isNotEmpty() }?.let {
+                            Text(it, style = MaterialTheme.typography.titleMedium.copy(fontStyle = FontStyle.Italic), color = Wren.secondary, modifier = Modifier.padding(top = 12.dp))
+                        }
+                        item.overview?.takeIf { it.isNotEmpty() }?.let {
+                            Text(it, style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.85f), maxLines = 4, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = 12.dp))
+                        }
+                        val files = detail?.files.orEmpty()
+                        if (item.isPlayable && files.isNotEmpty()) {
+                            TrackRow(files, versionId, prefs, { panel = DetailPanel.Version }, Modifier.padding(top = 16.dp))
+                        }
+                        Spacer(Modifier.height(22.dp))
+                        Actions(item, detail, extras, versionId, ::play, ::toggleWatched) { panel = it }
                     }
-                    item.tagline?.takeIf { it.isNotEmpty() }?.let {
-                        Text(it, style = MaterialTheme.typography.titleMedium.copy(fontStyle = FontStyle.Italic), color = Wren.secondary, modifier = Modifier.padding(top = 12.dp))
-                    }
-                    item.overview?.takeIf { it.isNotEmpty() }?.let {
-                        Text(it, style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.85f), maxLines = 4, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 12.dp))
-                    }
-                    val files = detail?.files.orEmpty()
-                    if (item.isPlayable && files.isNotEmpty()) {
-                        TrackRow(files, versionId, prefs, { panel = DetailPanel.Version }, Modifier.padding(top = 16.dp))
-                    }
-                    Spacer(Modifier.height(22.dp))
-                    Actions(item, detail, extras, versionId, ::play, ::toggleWatched) { panel = it }
                 }
             }
             when {
@@ -319,9 +337,15 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
  * opened instead: at the top, or only as far down as shows the buttons.
  */
 @OptIn(ExperimentalFoundationApi::class)
+/** The share of the screen kept clear below the hero's buttons. */
+private const val HeroBottomBand = 0.16f
+private val LogoMax = 150.dp
+private val LogoMin = 64.dp
+private val LogoTopMargin = 28.dp
+
 private class DetailScroll(val list: LazyListState, val hero: () -> Int?) : BringIntoViewSpec {
     private val TOP = 0.06f
-    private val BOTTOM = 0.16f
+    private val BOTTOM = HeroBottomBand
 
     /** Where the page sits with the hero focused: its bottom just above the bottom band. */
     fun heroScroll(height: Int, containerSize: Float): Int = (height - containerSize * (1 - BOTTOM)).coerceAtLeast(0f).toInt()
@@ -374,8 +398,28 @@ private fun metaParts(item: Item, star: Boolean = true): List<String> = listOfNo
     item.airDate?.takeIf { it.isNotEmpty() && item.kind == "episode" },
 ) + item.genres.orEmpty().take(3)
 
+/**
+ * The title over what's below it, with the logo sized in the same pass to the room the
+ * rest leaves, so it opens at its final size.
+ */
 @Composable
-private fun TitleBlock(item: Item, detail: ItemDetail?, nav: com.wrentv.tv.ui.Navigator) {
+private fun FitTitle(room: Dp, title: @Composable (logoHeight: Dp) -> Unit, below: @Composable () -> Unit) {
+    SubcomposeLayout { c ->
+        val loose = c.copy(minWidth = 0, minHeight = 0)
+        val under = subcompose("below") { Column { below() } }.map { it.measure(loose) }
+        val underHeight = under.sumOf { it.height }
+        val logo = (room - underHeight.toDp()).coerceIn(LogoMin, LogoMax)
+        val top = subcompose("title") { Column { title(logo) } }.map { it.measure(loose) }
+        val width = (top + under).maxOfOrNull { it.width } ?: 0
+        layout(width, top.sumOf { it.height } + underHeight) {
+            var y = 0
+            (top + under).forEach { it.place(0, y); y += it.height }
+        }
+    }
+}
+
+@Composable
+private fun TitleBlock(item: Item, detail: ItemDetail?, nav: com.wrentv.tv.ui.Navigator, logoHeight: Dp = LogoMax) {
     val state = LocalAppState.current
     val logo = item.logoPath ?: detail?.show?.logoPath
     if (item.kind == "episode" || item.kind == "season") {
@@ -388,7 +432,7 @@ private fun TitleBlock(item: Item, detail: ItemDetail?, nav: com.wrentv.tv.ui.Na
             style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.Bold), color = Wren.text, maxLines = 2, overflow = TextOverflow.Ellipsis,
         )
     } else if (logo != null) {
-        AsyncImage(state.api?.imageUrl(logo, "w500"), item.title, Modifier.width(440.dp).height(150.dp),
+        AsyncImage(state.api?.imageUrl(logo, "w500"), item.title, Modifier.width(440.dp).height(logoHeight),
             contentScale = ContentScale.Fit, alignment = Alignment.BottomStart)
     } else {
         Text(item.title, style = MaterialTheme.typography.displayMedium.copy(fontWeight = FontWeight.Bold), color = Wren.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
