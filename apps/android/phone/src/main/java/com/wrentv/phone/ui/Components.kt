@@ -356,10 +356,13 @@ fun ItemMenu(item: Item, expanded: Boolean, dismiss: () -> Unit, onWatchlist: Bo
         if (item.kind == "episode" && item.showId != null) {
             DropdownMenuItem({ Text("Go to Show") }, { dismiss(); nav.push(Route.Detail(item.showId!!)) })
         }
-        DropdownMenuItem({ Text(if (item.isWatched) "Mark Unwatched" else "Mark Watched") }, {
+        val mark = { watched: Boolean ->
             dismiss()
-            scope.launch { runCatching { state.api?.setWatched(item.id, !item.isWatched) }; state.refreshTick++ }
-        })
+            scope.launch { runCatching { state.api?.setWatched(item.id, watched) }; state.refreshTick++ }
+        }
+        if (!item.isWatched) DropdownMenuItem({ Text("Mark as Watched") }, { mark(true) })
+        // Part way through counts too: unwatching clears where it left off.
+        if (item.isWatched || item.inProgress) DropdownMenuItem({ Text("Mark as Unwatched") }, { mark(false) })
         if (item.kind == "movie" || item.kind == "show") {
             DropdownMenuItem({ Text(if (onWatchlist) "Remove from Watchlist" else "Add to Watchlist") }, {
                 dismiss()

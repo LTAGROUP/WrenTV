@@ -218,13 +218,15 @@ static class Cards
             if (item.Kind == "episode" && item.ShowId is { } sid) Add("Go to Show", "", () => Nav.Item(sid));
             if (item.Kind != "season")
             {
-                var watched = item.IsWatched;
-                Add(watched ? "Mark as Unwatched" : "Mark as Watched", watched ? "" : "", async () =>
+                async void Mark(bool watched)
                 {
                     if (App.State.Api is not { } api) return;
-                    try { await api.SetWatched(item.Id, !watched); App.State.Bump(); }
+                    try { await api.SetWatched(item.Id, watched); App.State.Bump(); }
                     catch (Exception ex) { App.Shell?.ShowError(ex.Message); }
-                });
+                }
+                if (!item.IsWatched) Add("Mark as Watched", "", () => Mark(true));
+                // Part way through counts too: unwatching clears where it left off.
+                if (item.IsWatched || item.InProgress) Add("Mark as Unwatched", "", () => Mark(false));
             }
             menu.ShowAt(e, args.TryGetPosition(e, out var pt) ? new FlyoutShowOptions { Position = pt } : new FlyoutShowOptions());
             args.Handled = true;

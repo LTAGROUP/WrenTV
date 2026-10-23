@@ -219,14 +219,20 @@ struct ItemMenu: View {
             }
         }
         if item.kind != "season" {
-            Button {
-                Task {
-                    try? await state.api?.setWatched(item.id, !item.isWatched)
-                    state.refreshTick += 1
-                }
-            } label: {
-                Label(item.isWatched ? "Mark as Unwatched" : "Mark as Watched", systemImage: item.isWatched ? "eye.slash" : "checkmark")
+            if !item.isWatched {
+                Button { mark(true) } label: { Label("Mark as Watched", systemImage: "checkmark") }
             }
+            // Part way through counts too: unwatching clears where it left off.
+            if item.isWatched || item.inProgress {
+                Button { mark(false) } label: { Label("Mark as Unwatched", systemImage: "eye.slash") }
+            }
+        }
+    }
+
+    private func mark(_ watched: Bool) {
+        Task {
+            try? await state.api?.setWatched(item.id, watched)
+            state.refreshTick += 1
         }
     }
 }

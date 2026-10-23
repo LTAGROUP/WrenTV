@@ -623,6 +623,7 @@ fun SearchScreen() {
     var searched by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     val field = remember { FocusRequester() }
+    val menu = rememberItemMenu()
     var recent by remember { mutableStateOf(state.recentSearches) }
     // Before anything is typed: recent searches and what's popular, rather than a blank page.
     val popular = if (state.canStream) rememberLoaded<DiscoverHome>("home:discover") { state.api?.discoverHome() }.value
@@ -635,7 +636,8 @@ fun SearchScreen() {
     LaunchedEffect(state.searchSeed) {
         state.searchSeed?.let { query = it; state.searchSeed = null }
     }
-    LaunchedEffect(query) {
+    // Searched again after a change from the menu, so its marks are current.
+    LaunchedEffect(query, state.refreshTick) {
         val q = query.trim()
         if (q.length < 2) { results = emptyList(); more = emptyList(); collections = emptyList(); searched = ""; return@LaunchedEffect }
         delay(350)
@@ -698,13 +700,15 @@ fun SearchScreen() {
         if (titles.isNotEmpty()) {
             if (more.isNotEmpty() && !state.canStream) fullWidth("on") { SectionTitle("On This Server") }
             items(titles, key = { it.id }) { item ->
-                PosterCard(item, { open { nav.push(Route.Detail(item.id, item)) } }, Modifier.rememberFocus("r:${item.id}"), width = CardWidth)
+                PosterCard(item, { open { nav.push(Route.Detail(item.id, item)) } }, Modifier.rememberFocus("r:${item.id}"), width = CardWidth,
+                    onLongClick = { menu.open(item) })
             }
         }
         if (episodes.isNotEmpty()) {
             fullWidth("eps") { SectionTitle("Episodes", Modifier.padding(top = 8.dp)) }
             items(episodes, key = { it.id }, span = { GridItemSpan(2) }) { item ->
-                LandscapeCard(item, { open { nav.push(Route.Detail(item.id, item)) } }, Modifier.rememberFocus("r:${item.id}"), width = CardWidth * 2 + 20.dp)
+                LandscapeCard(item, { open { nav.push(Route.Detail(item.id, item)) } }, Modifier.rememberFocus("r:${item.id}"), width = CardWidth * 2 + 20.dp,
+                    onLongClick = { menu.open(item) })
             }
         }
         if (more.isNotEmpty()) {

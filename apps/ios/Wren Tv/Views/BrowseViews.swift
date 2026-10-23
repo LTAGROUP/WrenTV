@@ -122,10 +122,12 @@ struct ItemContextMenu: View {
 
     var body: some View {
         if item.isPlayable || item.kind == "show" || item.kind == "season" {
-            if item.isWatched {
-                Button("Mark as Unwatched", systemImage: "eye.slash") { set(false) }
-            } else {
+            if !item.isWatched {
                 Button("Mark as Watched", systemImage: "checkmark.circle") { set(true) }
+            }
+            // Part way through counts too: unwatching clears where it left off.
+            if item.isWatched || item.inProgress {
+                Button("Mark as Unwatched", systemImage: "eye.slash") { set(false) }
             }
         }
         if item.kind == "movie" || item.kind == "show" {

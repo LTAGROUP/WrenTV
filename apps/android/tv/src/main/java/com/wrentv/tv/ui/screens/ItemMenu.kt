@@ -59,18 +59,21 @@ private fun ItemMenu(m: ItemMenuState) {
                 ListRow("Go to Show", { close(); nav.push(Route.Detail(item.showId!!)) })
             }
             if (item.isPlayable || item.kind == "show" || item.kind == "season") {
-                ListRow(if (item.isWatched) "Mark as Unwatched" else "Mark as Watched", {
+                val mark = { watched: Boolean ->
                     close()
                     // The menu is gone by now, so this runs in the app's scope.
                     state.scope.launch {
                         try {
-                            state.api?.setWatched(item.id, !item.isWatched)
+                            state.api?.setWatched(item.id, watched)
                             state.refreshTick++
                         } catch (e: Exception) {
                             notices.show(e.message)
                         }
                     }
-                })
+                }
+                if (!item.isWatched) ListRow("Mark as Watched", { mark(true) })
+                // Part way through counts too: unwatching clears where it left off.
+                if (item.isWatched || item.inProgress) ListRow("Mark as Unwatched", { mark(false) })
             }
             if (m.onWatchlist) {
                 ListRow("Remove from Watchlist", {
