@@ -6,6 +6,8 @@ struct PreferencesView: View {
     @Environment(AppState.self) private var state
     @State private var audioLanguage = "en"
     @State private var subtitleLanguage = ""
+    @State private var forcedSubtitles = true
+    @State private var foreignAudioSubtitles = true
     @State private var watchedPercent = 90
     @State private var continueAfter = 30
     @State private var loaded = false
@@ -37,10 +39,14 @@ struct PreferencesView: View {
                     ForEach(options, id: \.0) { Text($0.1).tag($0.0) }
                 }
                 .disabled(!loaded || state.api == nil)
+                Toggle("Forced subtitles", isOn: $forcedSubtitles)
+                    .disabled(!loaded || state.api == nil)
+                Toggle("Subtitles with foreign audio", isOn: $foreignAudioSubtitles)
+                    .disabled(!loaded || state.api == nil)
             } header: {
                 Text("Playback")
             } footer: {
-                Text(status ?? "Movies and episodes start with audio and subtitles in these languages when they have them. Saved to your account, so it applies on every device.")
+                Text(status ?? "Movies and episodes start with audio and subtitles in these languages when they have them. Forced subtitles cover only foreign-language lines and signs, and show even with subtitles off. With foreign audio, subtitles in your audio language turn on. Saved to your account, so it applies on every device.")
                     .foregroundStyle(.secondary)
             }
             Section {
@@ -78,6 +84,8 @@ struct PreferencesView: View {
             if let p = try? await api.prefs() {
                 audioLanguage = p.audioLanguage
                 subtitleLanguage = p.subtitleLanguage ?? ""
+                forcedSubtitles = p.forcedSubtitles ?? true
+                foreignAudioSubtitles = p.foreignAudioSubtitles ?? true
                 watchedPercent = p.watchedPercent ?? 90
                 continueAfter = p.continueAfter ?? 30
                 if let size = p.posterSize, PosterSize(rawValue: size) != nil { posterSize = size }
@@ -88,6 +96,12 @@ struct PreferencesView: View {
             if old != new { save() }
         }
         .onChange(of: subtitleLanguage) { old, new in
+            if old != new { save() }
+        }
+        .onChange(of: forcedSubtitles) { old, new in
+            if old != new { save() }
+        }
+        .onChange(of: foreignAudioSubtitles) { old, new in
             if old != new { save() }
         }
         .onChange(of: watchedPercent) { old, new in
@@ -104,6 +118,7 @@ struct PreferencesView: View {
     private func save() {
         guard loaded, let api = state.api else { return }
         let prefs = UserPrefs(audioLanguage: audioLanguage, subtitleLanguage: subtitleLanguage,
+                              forcedSubtitles: forcedSubtitles, foreignAudioSubtitles: foreignAudioSubtitles,
                               watchedPercent: watchedPercent, continueAfter: continueAfter, posterSize: posterSize)
         Task {
             do {

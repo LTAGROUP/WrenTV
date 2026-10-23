@@ -272,6 +272,10 @@ public sealed class UserPrefs
     public string AudioLanguage { get; set; } = "";
     /// Subtitles turn on in this language when a file has them; empty is off.
     public string? SubtitleLanguage { get; set; }
+    /// With subtitles off, forced tracks (foreign-language lines only) still show.
+    public bool? ForcedSubtitles { get; set; }
+    /// Subtitles in the audio language turn on when a title plays in another language.
+    public bool? ForeignAudioSubtitles { get; set; }
     /// How far in (percent) a title counts as watched.
     public int? WatchedPercent { get; set; }
     /// Seconds watched before a title is on Continue Watching.

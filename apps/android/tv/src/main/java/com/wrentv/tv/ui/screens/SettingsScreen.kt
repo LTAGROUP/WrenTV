@@ -44,6 +44,7 @@ import com.wrentv.tv.ui.LocalNotices
 import com.wrentv.tv.ui.Wren
 import com.wrentv.tv.ui.ReportScroll
 import com.wrentv.tv.ui.Route
+import com.wrentv.tv.ui.ToggleRow
 import com.wrentv.tv.ui.TopBarSpace
 import com.wrentv.tv.ui.formatBytes
 import com.wrentv.tv.ui.rememberFocus
@@ -120,6 +121,10 @@ fun SettingsScreen() {
                         value = if (p == null) "…" else languageName(p.audioLanguage) ?: "File's default", enabled = p != null)
                     ListRow("Subtitles", { panel = SettingsPanel.Subtitles }, Modifier.rememberFocus("set:subs"),
                         value = if (p == null) "…" else languageName(p.subtitleLanguage) ?: "Off", enabled = p != null)
+                    ToggleRow("Forced subtitles", p?.forcedSubtitles ?: true, { on -> p?.let { save(it.copy(forcedSubtitles = on)) } },
+                        Modifier.rememberFocus("set:forced"), detail = "With subtitles off, still show foreign-language lines and signs")
+                    ToggleRow("Subtitles with foreign audio", p?.foreignAudioSubtitles ?: true, { on -> p?.let { save(it.copy(foreignAudioSubtitles = on)) } },
+                        Modifier.rememberFocus("set:foreign"), detail = "When a title plays in another language, show subtitles in your audio language")
                 }
                 FormSection("Watching", "Saved to your account, so it applies on every device.") {
                     val p = prefs

@@ -35,6 +35,8 @@ sealed class SettingsPage : Page
         {
             var audio = LanguageBox("Audio language", prefs.AudioLanguage, allowOff: false);
             var subs = LanguageBox("Subtitles", prefs.SubtitleLanguage ?? "", allowOff: true);
+            var forced = new ToggleSwitch { Header = "Forced subtitles", IsOn = prefs.ForcedSubtitles ?? true };
+            var foreign = new ToggleSwitch { Header = "Subtitles with foreign audio", IsOn = prefs.ForeignAudioSubtitles ?? true };
             var saved = Ui.Secondary("");
             var watched = NumberBox("Counts as watched at", UserPrefs.WatchedPercents.Select(n => (n, $"{n}%")), prefs.WatchedPercent ?? 90);
             var after = NumberBox("Add to Continue Watching after", UserPrefs.ContinueAfters, prefs.ContinueAfter ?? 30);
@@ -45,6 +47,7 @@ sealed class SettingsPage : Page
                     var p = new UserPrefs
                     {
                         AudioLanguage = Code(audio), SubtitleLanguage = Code(subs),
+                        ForcedSubtitles = forced.IsOn, ForeignAudioSubtitles = foreign.IsOn,
                         WatchedPercent = Number(watched), ContinueAfter = Number(after),
                     };
                     await api.SetPrefs(p);
@@ -54,10 +57,14 @@ sealed class SettingsPage : Page
             }
             audio.SelectionChanged += (_, _) => Save();
             subs.SelectionChanged += (_, _) => Save();
+            forced.Toggled += (_, _) => Save();
+            foreign.Toggled += (_, _) => Save();
             watched.SelectionChanged += (_, _) => Save();
             after.SelectionChanged += (_, _) => Save();
             playback.Children.Add(Ui.Row(16, audio, subs));
             playback.Children.Add(Ui.Secondary("The player picks these when a title has them. You can still switch tracks while watching.", 13, 3));
+            playback.Children.Add(Ui.Row(32, forced, foreign));
+            playback.Children.Add(Ui.Secondary("Forced subtitles cover only foreign-language lines and signs, and show even with subtitles off. With foreign audio, subtitles in your audio language turn on when a title plays in another language.", 13, 3));
             playback.Children.Add(Ui.Row(16, watched, after));
             playback.Children.Add(Ui.Secondary("How far in a movie or episode counts as watched, and how long you watch before it's on Continue Watching. Saved to your account, so it applies on every device.", 13, 3));
             playback.Children.Add(saved);

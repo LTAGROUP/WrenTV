@@ -235,6 +235,10 @@ data class UserPrefs(
     val audioLanguage: String = "",
     /** Subtitles turn on in this language when a file has them; empty is off. */
     val subtitleLanguage: String? = null,
+    /** With subtitles off, forced tracks (foreign-language lines only) still show. */
+    val forcedSubtitles: Boolean = true,
+    /** Subtitles in the audio language turn on when a title plays in another language. */
+    val foreignAudioSubtitles: Boolean = true,
     /** How far in (50–98%) a movie or episode counts as watched. */
     val watchedPercent: Int = 90,
     /** Seconds (10–1800) watched before a title is on Continue Watching. */

@@ -290,7 +290,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		Status: "ready", SessionID: sess.ID, Engine: dec.Engine, Method: dec.Method, Decision: &dec,
 		Duration: info.Duration, Info: info, FileID: f.ID,
 		Chapters: nonNil(info.Chapters), Markers: s.markersFor(ctx, f, info),
-		SubtitleIndex: preferredSubtitle(info, prefs.SubtitleLanguage),
+		SubtitleIndex: startingSubtitle(info, prefs, dec.AudioIndex),
 	}
 	resp.Versions = versionViews(files)
 	s.recordPlay(r, it, f, sess, dec, info)
@@ -487,6 +487,62 @@ func preferredSubtitle(info *media.Info, lang string) int {
 			score += 4
 		}
 		if !strings.Contains(title, "sdh") && !strings.Contains(title, "commentary") {
+			score += 2
+		}
+		if st.Default {
+			score++
+		}
+		if score > bestScore {
+			best, bestScore = st.TypeIdx, score
+		}
+	}
+	return best
+}
+
+// startingSubtitle is the subtitle track a title starts with, or -1: the
+// user's subtitle language if they keep subtitles on; else, when the audio
+// isn't in their language, subtitles in it; else a forced track for any
+// foreign-language lines.
+func startingSubtitle(info *media.Info, p db.Prefs, audioIdx int) int {
+	if t := preferredSubtitle(info, p.SubtitleLanguage); t >= 0 {
+		return t
+	}
+	heard := ""
+	for _, a := range info.Audio {
+		if a.TypeIdx == audioIdx {
+			heard = db.NormalizeLang(a.Language)
+		}
+	}
+	// Untagged audio isn't known to be foreign.
+	if p.ForeignAudioSubtitles && p.AudioLanguage != "" && heard != "" && heard != "und" && heard != p.AudioLanguage {
+		if t := preferredSubtitle(info, p.AudioLanguage); t >= 0 {
+			return t
+		}
+	}
+	if !p.ForcedSubtitles {
+		return -1
+	}
+	for _, lang := range []string{p.SubtitleLanguage, p.AudioLanguage, heard} {
+		if t := forcedSubtitle(info, lang); t >= 0 {
+			return t
+		}
+	}
+	return -1
+}
+
+// forcedSubtitle is a forced track in a language (flagged, or named so), or -1.
+// Text beats pictures, as browsers only show text.
+func forcedSubtitle(info *media.Info, lang string) int {
+	if lang == "" {
+		return -1
+	}
+	best, bestScore := -1, -1
+	for _, st := range info.Subtitles {
+		if db.NormalizeLang(st.Language) != lang || !(st.Forced || strings.Contains(strings.ToLower(st.Title), "forced")) {
+			continue
+		}
+		score := 0
+		if st.TextBased {
 			score += 2
 		}
 		if st.Default {

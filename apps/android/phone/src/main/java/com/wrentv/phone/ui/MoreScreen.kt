@@ -1,5 +1,6 @@
 package com.wrentv.phone.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -115,6 +116,10 @@ fun PreferencesScreen() {
             SectionHeader("Languages")
             LanguagePicker("Audio", p.audioLanguage.ifEmpty { null }, "Original") { save(p.copy(audioLanguage = it ?: "")) }
             LanguagePicker("Subtitles", p.subtitleLanguage?.ifEmpty { null }, "Off") { save(p.copy(subtitleLanguage = it ?: "")) }
+            SwitchRow("Forced subtitles", "With subtitles off, still show foreign-language lines and signs", p.forcedSubtitles) { save(p.copy(forcedSubtitles = it)) }
+            SwitchRow("Subtitles with foreign audio", "When a title plays in another language, show subtitles in your audio language", p.foreignAudioSubtitles) {
+                save(p.copy(foreignAudioSubtitles = it))
+            }
             Text("These apply on every device signed in to your account. You can still change tracks while watching.",
                 Modifier.fillMaxWidth().padding(horizontal = metrics().gutter, vertical = 8.dp), color = Wren.secondary, style = MaterialTheme.typography.bodySmall)
             error?.let { Text(it, Modifier.padding(horizontal = metrics().gutter), color = Wren.ember, style = MaterialTheme.typography.bodySmall) }
@@ -265,6 +270,21 @@ private fun PosterSizePicker() {
                 DropdownMenuItem({ Text(label) }, { open = false; state.posterSize = v }, trailingIcon = { if (state.posterSize == v) Icon(Icons.Rounded.Check, null) })
             }
         }
+    }
+}
+
+/** A setting that's on or off, with a line saying what it does. */
+@Composable
+private fun SwitchRow(title: String, detail: String, checked: Boolean, change: (Boolean) -> Unit) {
+    androidx.compose.foundation.layout.Row(
+        Modifier.fillMaxWidth().clickable { change(!checked) }.padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(detail, color = Wren.secondary, style = MaterialTheme.typography.bodySmall)
+        }
+        androidx.compose.material3.Switch(checked, change)
     }
 }
 

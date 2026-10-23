@@ -457,6 +457,10 @@ struct UserPrefs: Codable, Hashable {
     var audioLanguage: String
     /// Subtitles turn on in this language when a file has them; empty is off.
     var subtitleLanguage: String?
+    /// With subtitles off, forced tracks (foreign-language lines only) still show.
+    var forcedSubtitles: Bool?
+    /// Subtitles in the audio language turn on when a title plays in another language.
+    var foreignAudioSubtitles: Bool?
     /// How far in (percent) a title counts as watched.
     var watchedPercent: Int?
     /// Seconds watched before a title is on Continue Watching.

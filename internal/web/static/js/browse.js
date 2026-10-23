@@ -695,7 +695,13 @@ export async function viewAccount() {
       <p class="small muted">Wren TV starts playback with an audio track in this language when the file has one.</p>
       <div class="field"><label>Subtitles</label>
         <select id="subs">${`<option value="">Off</option>` + sorted.map((c) => `<option value="${c}" ${c === prefs.subtitleLanguage ? 'selected' : ''}>${esc(name(c))}</option>`).join('')}</select></div>
-      <p class="small muted">Subtitles in this language turn on by themselves when the file has them. Both settings are saved to your account, so they apply on every device and browser you sign in with. You can still switch tracks while watching.</p>
+      <p class="small muted">Subtitles in this language turn on by themselves when the file has them. These settings are saved to your account, so they apply on every device and browser you sign in with. You can still switch tracks while watching.</p>
+      <div class="field"><label for="forced">Forced subtitles</label>
+        <select id="forced"><option value="1" ${prefs.forcedSubtitles !== false ? 'selected' : ''}>Show automatically</option><option value="" ${prefs.forcedSubtitles === false ? 'selected' : ''}>Off</option></select></div>
+      <p class="small muted">Forced tracks only cover foreign-language lines, like signs or a scene in another language. With subtitles off, Wren TV shows them in your subtitle or audio language.</p>
+      <div class="field"><label for="foreign">Subtitles with foreign audio</label>
+        <select id="foreign"><option value="1" ${prefs.foreignAudioSubtitles !== false ? 'selected' : ''}>Show automatically</option><option value="" ${prefs.foreignAudioSubtitles === false ? 'selected' : ''}>Off</option></select></div>
+      <p class="small muted">When a title plays in a language other than your audio language, subtitles in your audio language turn on.</p>
       <div class="field"><label>Counts as watched at</label>
         <select id="watched">${[50, 60, 70, 75, 80, 85, 90, 95, 98].map((v) => `<option value="${v}" ${v === (prefs.watchedPercent || 90) ? 'selected' : ''}>${v}%</option>`).join('')}</select></div>
       <p class="small muted" style="margin:0">How far into a movie or episode you need to get before it's marked watched and drops off Continue Watching. Lower it if you usually stop when the credits start.</p>
@@ -721,6 +727,14 @@ export async function viewAccount() {
   };
   $('#audio', node).onchange = save('audioLanguage');
   $('#subs', node).onchange = save('subtitleLanguage');
+  const toggle = (key) => async (e) => {
+    try {
+      await api('/api/me/prefs', { method: 'PATCH', body: { [key]: e.target.value === '1' } });
+      toast('Saved. New playback will use this setting.');
+    } catch (err) { toast(err.message); }
+  };
+  $('#forced', node).onchange = toggle('forcedSubtitles');
+  $('#foreign', node).onchange = toggle('foreignAudioSubtitles');
   $('#watched', node).onchange = async (e) => {
     try {
       await api('/api/me/prefs', { method: 'PATCH', body: { watchedPercent: Number(e.target.value) } });

@@ -93,3 +93,42 @@ func TestChooseStreamRank(t *testing.T) {
 		t.Fatalf("explicit choice: got %s", got)
 	}
 }
+
+func TestStartingSubtitle(t *testing.T) {
+	subs := []media.Stream{
+		{TypeIdx: 0, Language: "eng", Forced: true},
+		{TypeIdx: 1, Language: "eng"},
+		{TypeIdx: 2, Language: "fra"},
+		{TypeIdx: 3, Language: "fra", Title: "Forced"},
+	}
+	english := &media.Info{Audio: []media.Stream{{TypeIdx: 0, Language: "eng"}}, Subtitles: subs}
+	japanese := &media.Info{Audio: []media.Stream{{TypeIdx: 0, Language: "jpn"}}, Subtitles: subs}
+	untagged := &media.Info{Audio: []media.Stream{{TypeIdx: 0}}, Subtitles: subs}
+	on := db.Prefs{AudioLanguage: "en", ForcedSubtitles: true, ForeignAudioSubtitles: true}
+	off := db.Prefs{AudioLanguage: "en"}
+	fr := on
+	fr.SubtitleLanguage = "fr"
+	cases := []struct {
+		name string
+		info *media.Info
+		p    db.Prefs
+		want int
+	}{
+		{"chosen language wins", english, fr, 2},
+		{"forced for foreign lines", english, on, 0},
+		{"nothing when both off", english, off, -1},
+		{"full track for foreign audio", japanese, on, 1},
+		{"untagged audio isn't foreign", untagged, on, 0},
+		{"forced in the subtitle language first", english, db.Prefs{AudioLanguage: "en", SubtitleLanguage: "de", ForcedSubtitles: true}, 0},
+	}
+	for _, c := range cases {
+		if got := startingSubtitle(c.info, c.p, 0); got != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, got, c.want)
+		}
+	}
+	frForced := db.Prefs{AudioLanguage: "en", SubtitleLanguage: "fr", ForcedSubtitles: true}
+	frOnly := &media.Info{Audio: english.Audio, Subtitles: []media.Stream{subs[0], subs[3]}}
+	if got := startingSubtitle(frOnly, frForced, 0); got != 3 {
+		t.Errorf("forced named in the title: got %d, want 3", got)
+	}
+}

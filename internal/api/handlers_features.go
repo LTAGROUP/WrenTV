@@ -39,6 +39,8 @@ func (s *Server) handlePatchPrefs(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AudioLanguage    *string `json:"audioLanguage"`
 		SubtitleLanguage *string `json:"subtitleLanguage"`
+		ForcedSubtitles  *bool   `json:"forcedSubtitles"`
+		ForeignAudioSubs *bool   `json:"foreignAudioSubtitles"`
 		WatchedPercent   *int    `json:"watchedPercent"`
 		ContinueAfter    *int    `json:"continueAfter"`
 		PosterSize       *string `json:"posterSize"`
@@ -52,6 +54,12 @@ func (s *Server) handlePatchPrefs(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SubtitleLanguage != nil {
 		p.SubtitleLanguage = db.NormalizeLang(*req.SubtitleLanguage)
+	}
+	if req.ForcedSubtitles != nil {
+		p.ForcedSubtitles = *req.ForcedSubtitles
+	}
+	if req.ForeignAudioSubs != nil {
+		p.ForeignAudioSubtitles = *req.ForeignAudioSubs
 	}
 	if req.WatchedPercent != nil {
 		if *req.WatchedPercent < 50 || *req.WatchedPercent > 98 {

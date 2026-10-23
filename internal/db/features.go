@@ -17,6 +17,12 @@ type Prefs struct {
 	AudioLanguage string `json:"audioLanguage"`
 	// SubtitleLanguage turns subtitles on in this language ("fr"); empty is off.
 	SubtitleLanguage string `json:"subtitleLanguage"`
+	// ForcedSubtitles shows a forced track (one covering only foreign-language
+	// lines) when no other subtitles are on.
+	ForcedSubtitles bool `json:"forcedSubtitles"`
+	// ForeignAudioSubtitles turns on subtitles in the audio language when a
+	// title plays in another language.
+	ForeignAudioSubtitles bool `json:"foreignAudioSubtitles"`
 	// WatchedPercent is how far into a movie or episode (50–98) playback must
 	// get before it counts as watched.
 	WatchedPercent int `json:"watchedPercent"`
@@ -35,7 +41,7 @@ const DefaultWatchedPercent = 90
 const DefaultContinueAfter = 30
 
 func DefaultPrefs() Prefs {
-	return Prefs{AudioLanguage: "en", WatchedPercent: DefaultWatchedPercent, ContinueAfter: DefaultContinueAfter, PosterSize: "medium"}
+	return Prefs{AudioLanguage: "en", ForcedSubtitles: true, ForeignAudioSubtitles: true, WatchedPercent: DefaultWatchedPercent, ContinueAfter: DefaultContinueAfter, PosterSize: "medium"}
 }
 
 // ContinueAfterSeconds is how far in a title must be to be on Continue Watching.
