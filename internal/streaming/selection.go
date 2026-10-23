@@ -17,7 +17,7 @@ var (
 	junkRE = regexp.MustCompile(`(?i)\b(cam|camrip|hdcam|ts|hdts|telesync|tc|telecine|scr|screener|dvdscr|workprint|sample|trailer|tlr|teaser|promo|featurette|prologue|making[ ._-]of|upscaled?|ai[ ._-]upscale[d]?)\b`)
 	// S01E02, s1e2, 1x02
 	episodeRE     = regexp.MustCompile(`(?i)\bs(\d{1,2})[ ._-]*e(\d{1,3})\b|\b(\d{1,2})x(\d{2,3})\b`)
-	multiSeasonRE = regexp.MustCompile(`(?i)\bs\d{1,2}\s*-\s*s?\d{1,2}\b|\bseasons?[ ._-]*\d{1,2}\s*-\s*\d{1,2}\b`)
+	multiSeasonRE = regexp.MustCompile(`(?i)\bs(\d{1,2})\s*-\s*s?(\d{1,2})\b|\bseasons?[ ._-]*(\d{1,2})\s*-\s*(\d{1,2})\b`)
 	// Season 01 Episode 02
 	episodeWordsRE = regexp.MustCompile(`(?i)\bseason[ ._-]*(\d{1,2})\W*episode[ ._-]*(\d{1,3})\b`)
 	seasonRE       = regexp.MustCompile(`(?i)\b(?:s(\d{1,2})|season[ ._-]*(\d{1,2}))\b`)
@@ -109,19 +109,30 @@ func isJunk(name string) bool {
 	return junkRE.MatchString(strings.ReplaceAll(name, "_", " "))
 }
 
-// isPack reports whether a release name looks like a whole season (or more).
+// isPack reports whether a release name looks like a whole season: the
+// season itself, a range of seasons that takes it in, or a complete series
+// that names no season.
 func isPack(name string, season int) bool {
+	if season <= 0 {
+		return false
+	}
 	if _, _, ok := EpisodeOf(name); ok {
 		return false
 	}
-	if completeRE.MatchString(name) {
-		return true
+	if m := multiSeasonRE.FindStringSubmatch(name); m != nil {
+		lo, _ := strconv.Atoi(m[1] + m[3])
+		hi, _ := strconv.Atoi(m[2] + m[4])
+		return lo <= season && season <= hi
 	}
-	if m := seasonRE.FindStringSubmatch(name); m != nil {
-		n, _ := strconv.Atoi(m[1] + m[2])
-		return n == season
+	if ms := seasonRE.FindAllStringSubmatch(name, -1); ms != nil {
+		for _, m := range ms {
+			if n, _ := strconv.Atoi(m[1] + m[2]); n == season {
+				return true
+			}
+		}
+		return false // another season's pack, "complete" or not
 	}
-	return false
+	return completeRE.MatchString(name)
 }
 
 // minMBPerMin is the least a real copy of a film takes per minute at each
@@ -146,13 +157,16 @@ func bigEnough(rels []Release, runtime int) []Release {
 }
 
 // Rank orders an addon's releases for one quality: matching quality only,
-// junk, unplayable and oversized releases dropped, then (for episodes) season packs first
-// so the rest of the season can come from the same torrent, English releases
-// before dubbed or hard-subbed ones, then quality markers and seeders.
+// junk, unplayable and oversized releases dropped, then English releases
+// before dubbed or hard-subbed ones, then (for episodes) season packs before
+// single episodes whatever their seeders, so the rest of the season can come
+// from the same torrent, then quality markers and seeders.
 func Rank(rels []Release, quality string, maxSize int64, season int) []Release {
 	type scored struct {
-		r     Release
-		score int
+		r       Release
+		foreign int
+		pack    bool
+		score   int
 	}
 	var list []scored
 	for _, r := range rels {
@@ -160,15 +174,13 @@ func Rank(rels []Release, quality string, maxSize int64, season int) []Release {
 			unplayableRE.MatchString(r.FileName) {
 			continue
 		}
+		pack := isPack(r.Name, season)
 		// Packs report the whole torrent's size; their file is checked once picked.
-		if maxSize > 0 && r.Size > maxSize && !isPack(r.Name, season) && !multiSeasonRE.MatchString(r.Name) {
+		if maxSize > 0 && r.Size > maxSize && !pack && !multiSeasonRE.MatchString(r.Name) {
 			continue
 		}
 		t := strings.ToLower(r.Text)
 		score := min(max(r.Seeders, 0), 500) * 4
-		if season > 0 && isPack(r.Name, season) {
-			score += 3000
-		}
 		for _, b := range []struct {
 			tag string
 			pts int
@@ -178,13 +190,21 @@ func Rank(rels []Release, quality string, maxSize int64, season int) []Release {
 				score += b.pts
 			}
 		}
-		score -= foreignPenalty(r.Text)
 		if quality != "2160p" && (strings.Contains(t, "hdr") || strings.Contains(t, "dolby vision")) {
 			score -= 300 // HDR at 1080p is rarer to play back well
 		}
-		list = append(list, scored{r, score})
+		list = append(list, scored{r, foreignPenalty(r.Text), pack, score})
 	}
-	sort.SliceStable(list, func(i, j int) bool { return list[i].score > list[j].score })
+	sort.SliceStable(list, func(i, j int) bool {
+		a, b := list[i], list[j]
+		if a.foreign != b.foreign {
+			return a.foreign < b.foreign
+		}
+		if a.pack != b.pack {
+			return a.pack
+		}
+		return a.score > b.score
+	})
 	out := make([]Release, len(list))
 	for i, s := range list {
 		out[i] = s.r

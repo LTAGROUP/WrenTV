@@ -233,6 +233,17 @@ func newestToo(ranked []Release) []Release {
 	return out
 }
 
+// packsFirst is newestToo with the season packs Rank put on top kept
+// ahead of the rest, so they're tried before newer single episodes
+// (packs ranked lower, such as dubs, stay mixed in).
+func packsFirst(ranked []Release, season int) []Release {
+	n := 0
+	for n < len(ranked) && isPack(ranked[n].Name, season) {
+		n++
+	}
+	return append(newestToo(ranked[:n:n]), newestToo(ranked[n:])...)
+}
+
 // postsAtOnce is how many posts a quality reads at once; while someone
 // waits to play, the best quality's go ahead of read-ahead. Popular
 // titles' top posts are mostly taken down, and each dead one takes
@@ -843,7 +854,7 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 				if q == best {
 					defer unlead()
 				}
-				order := newestToo(s.rank(nzbs, q, maxSize, season))
+				order := packsFirst(s.rank(nzbs, q, maxSize, season), season)
 				go s.prefetchNZBs(ctx, order[:min(len(order), nzbsAhead)], season, episode)
 				for _, r := range order {
 					slots <- struct{}{}
@@ -885,8 +896,14 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 						}
 						// A find waiting on a slow post ranked above it is stored
 						// after a moment anyway, so playback isn't held up; at
-						// once while someone waits on a quality with none yet.
-						if p != nil && k >= next && solo && !settled && need > 0 && !seen(tried[k]) {
+						// once while someone waits on a quality with none yet,
+						// unless what's above it is a season pack, which is
+						// worth that moment.
+						packAbove := false
+						for i := next; i < k && !packAbove; i++ {
+							packAbove = !done[i] && isPack(tried[i].Name, season)
+						}
+						if p != nil && k >= next && solo && !settled && need > 0 && !seen(tried[k]) && !packAbove {
 							stored[k] = true
 							keep(tried[k], p, false)
 						} else if p != nil && k >= next {

@@ -53,7 +53,26 @@ type usenetState struct {
 	// for the servers in missingKey: others may still have them.
 	missing    map[string]time.Time
 	missingKey string
+	// packs are season searches for packs, by indexer and season, shared
+	// by that season's episode lookups.
+	packs map[string]*packSearch
 }
+
+// packSearch is one indexer's search of a season for packs.
+type packSearch struct {
+	done chan struct{}
+	res  []usenet.Result
+	at   time.Time
+}
+
+// packsFor is how long a season search for packs is reused: a season's
+// episodes are looked up one after another, and each would ask again.
+const packsFor = time.Hour
+
+// packWait is how long an episode lookup waits for its season's packs
+// once its own search is in, so a slow season search doesn't hold it up
+// (what it finds is kept for the next episode).
+const packWait = 2 * time.Second
 
 // deadFor is how long a stream that failed a play stays skipped.
 const deadFor = 7 * 24 * time.Hour
@@ -213,35 +232,31 @@ func (s *Service) searchIndexers(ctx context.Context, q usenet.Query) []Release 
 	ch := make(chan []Release, len(ixs))
 	for _, ix := range ixs {
 		go func(ix usenet.Indexer) {
-			t := time.Now()
-			res, err := ix.Search(ctx, q)
-			if err != nil {
-				slog.Warn("indexer search failed", "indexer", ix.Name, "err", err)
-			} else {
-				slog.Info("indexer search", "indexer", ix.Name, "title", q.Title, "posts", len(res), "took", time.Since(t).Round(time.Millisecond))
+			// An episode search finds only that episode's posts, so the
+			// season is searched as well for packs of it.
+			var ps *packSearch
+			if q.Season > 0 && q.Episode > 0 {
+				ps = s.seasonPacks(ix, q)
 			}
-			// New posts often aren't tagged with an IMDb ID yet, so a search
-			// by ID finds few: search by name too, keeping posts named for
-			// this title.
-			if q.IMDB != "" && len(res) < byNameBelow && ctx.Err() == nil {
-				byName := q
-				byName.IMDB = ""
-				more, err := ix.Search(ctx, byName)
-				have := map[string]bool{}
-				for _, r := range res {
+			res, _ := searchIndexer(ctx, ix, q)
+			var packs []usenet.Result
+			if ps != nil {
+				select {
+				case <-ps.done:
+					packs = ps.res
+				case <-time.After(packWait):
+					slog.Info("season pack search still going", "indexer", ix.Name, "title", q.Title, "season", q.Season)
+				case <-ctx.Done():
+				}
+			}
+			have := map[string]bool{}
+			for _, r := range res {
+				have[r.NZB] = true
+			}
+			for _, r := range packs {
+				if !have[r.NZB] {
 					have[r.NZB] = true
-				}
-				added := 0
-				for _, r := range more {
-					if !have[r.NZB] && namedFor(r.Title, q.Title, q.Year, q.Season) {
-						res = append(res, r)
-						added++
-					}
-				}
-				if err != nil {
-					slog.Warn("indexer search by name failed", "indexer", ix.Name, "err", err)
-				} else {
-					slog.Info("indexer search by name", "indexer", ix.Name, "title", q.Title, "posts", len(more), "kept", added)
+					res = append(res, r)
 				}
 			}
 			var rels []Release
@@ -257,6 +272,88 @@ func (s *Service) searchIndexers(ctx context.Context, q usenet.Query) []Release 
 		out = append(out, <-ch...)
 	}
 	return out
+}
+
+// seasonPacks returns the search of a season for packs on one indexer,
+// starting it unless one is under way or recent.
+func (s *Service) seasonPacks(ix usenet.Indexer, q usenet.Query) *packSearch {
+	key := fmt.Sprint(ix.URL, "|", q.IMDB, "|", q.Title, "|", q.Season)
+	u := &s.usenet
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if ps := u.packs[key]; ps != nil && time.Since(ps.at) < packsFor {
+		return ps
+	}
+	if u.packs == nil {
+		u.packs = map[string]*packSearch{}
+	}
+	for k, ps := range u.packs {
+		if time.Since(ps.at) >= packsFor {
+			delete(u.packs, k)
+		}
+	}
+	ps := &packSearch{done: make(chan struct{}), at: time.Now()}
+	u.packs[key] = ps
+	go func() {
+		defer close(ps.done)
+		// Not the lookup's context: a lookup that ends early shouldn't
+		// leave the season's other episodes a cancelled search.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		sq := q
+		sq.Episode = 0
+		res, err := searchIndexer(ctx, ix, sq)
+		if err != nil {
+			u.mu.Lock()
+			if u.packs[key] == ps {
+				delete(u.packs, key) // try again next lookup
+			}
+			u.mu.Unlock()
+		}
+		for _, r := range res {
+			if isPack(r.Title, q.Season) {
+				ps.res = append(ps.res, r)
+			}
+		}
+		slog.Info("indexer search for season packs", "indexer", ix.Name, "title", q.Title, "season", q.Season, "packs", len(ps.res))
+	}()
+	return ps
+}
+
+// searchIndexer asks one indexer for a title's posts.
+func searchIndexer(ctx context.Context, ix usenet.Indexer, q usenet.Query) ([]usenet.Result, error) {
+	t := time.Now()
+	res, err := ix.Search(ctx, q)
+	if err != nil {
+		slog.Warn("indexer search failed", "indexer", ix.Name, "err", err)
+	} else {
+		slog.Info("indexer search", "indexer", ix.Name, "title", q.Title, "episode", q.Episode, "posts", len(res), "took", time.Since(t).Round(time.Millisecond))
+	}
+	// New posts often aren't tagged with an IMDb ID yet, so a search
+	// by ID finds few: search by name too, keeping posts named for
+	// this title.
+	if q.IMDB != "" && len(res) < byNameBelow && ctx.Err() == nil {
+		byName := q
+		byName.IMDB = ""
+		more, err := ix.Search(ctx, byName)
+		have := map[string]bool{}
+		for _, r := range res {
+			have[r.NZB] = true
+		}
+		added := 0
+		for _, r := range more {
+			if !have[r.NZB] && namedFor(r.Title, q.Title, q.Year, q.Season) {
+				res = append(res, r)
+				added++
+			}
+		}
+		if err != nil {
+			slog.Warn("indexer search by name failed", "indexer", ix.Name, "err", err)
+		} else {
+			slog.Info("indexer search by name", "indexer", ix.Name, "title", q.Title, "posts", len(more), "kept", added)
+		}
+	}
+	return res, err
 }
 
 // byNameBelow is how few posts a search by IMDb ID may find before the
@@ -443,11 +540,14 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 	if err != nil {
 		return fail("nzb", err)
 	}
+	// A season pack's other episodes are read too, so they can be stored
+	// from it (see fillSeason).
 	var keep func(string) bool
 	if season > 0 {
+		pack := isPack(r.Name, season)
 		keep = func(name string) bool {
 			s, e, ok := EpisodeOf(name)
-			return !ok || (s == season && e == episode)
+			return !ok || (s == season && (e == episode || pack))
 		}
 	}
 	// missing remembers a post found with articles gone, but not one a

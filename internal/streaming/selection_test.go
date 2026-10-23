@@ -52,6 +52,35 @@ func TestRankPrefersPacksAndDropsJunk(t *testing.T) {
 	}
 }
 
+func TestRankPacksBeatSeedersButNotLanguage(t *testing.T) {
+	rels := []Release{
+		{Name: "Show.S02E03.1080p.BluRay.REMUX.Atmos", Text: "Show.S02E03.1080p.BluRay.REMUX.Atmos", InfoHash: "ep", Seeders: 999},
+		{Name: "Show.S02.1080p.WEB", Text: "Show.S02.1080p.WEB", InfoHash: "pack", Seeders: 1},
+		{Name: "Show.S01-S04.1080p", Text: "Show.S01-S04.1080p", InfoHash: "range", Seeders: 0},
+		{Name: "Show.S02.1080p.MULTi", Text: "Show.S02.1080p.MULTi", InfoHash: "dub", Seeders: 999},
+		{Name: "Show.S01.COMPLETE.1080p", Text: "Show.S01.COMPLETE.1080p", InfoHash: "s1", Seeders: 999},
+	}
+	var order []string
+	for _, r := range Rank(rels, "1080p", 0, 2) {
+		order = append(order, r.InfoHash)
+	}
+	if o := strings.Join(order, ","); o != "pack,range,ep,s1,dub" {
+		t.Fatalf("rank = %s", o)
+	}
+	for name, want := range map[string]bool{
+		"Show.S01-S03.1080p":         true,
+		"Show Seasons 3-5 1080p":     false,
+		"Show.Complete.Series.1080p": true,
+		"Show.S03.Complete.1080p":    false,
+		"Show.Season.2.1080p.WEB-DL": true,
+		"Show.S02E01-E10.1080p.WEB":  false,
+	} {
+		if got := isPack(name, 2); got != want {
+			t.Errorf("isPack(%q, 2) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestRankPrefersEnglish(t *testing.T) {
 	rels := []Release{
 		{Text: "오펜하이머 Oppenheimer,2023.1080p.KORSUB.WEBRip.H264.AAC.mkv", InfoHash: "kor", Seeders: 500},
