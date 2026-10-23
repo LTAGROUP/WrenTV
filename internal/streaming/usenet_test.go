@@ -515,3 +515,44 @@ func TestSeasonPackSearchShared(t *testing.T) {
 		t.Fatalf("season searched %d times", n)
 	}
 }
+
+func TestMissingPackRememberedForSeason(t *testing.T) {
+	ctx := context.Background()
+	video := make([]byte, 300_000)
+	rand.New(rand.NewSource(3)).Read(video)
+	copy(video, []byte{0x1a, 0x45, 0xdf, 0xa3})
+	pack, ns := usenettest.New(t), usenettest.New(t)
+	for n := 1; n <= 3; n++ {
+		name := fmt.Sprintf("Show.S01E%02d.1080p.WEB-DL-GONE.mkv", n)
+		pack.Post(name, video, 50_000)
+		ns.Post(name, video, 50_000)
+	}
+	ns.Remove("Show.S01E02.1080p.WEB-DL-GONE.mkv", 2)
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	cfg := &config.Config{DataDir: t.TempDir(), Streaming: config.StreamingConfig{Enabled: true, Usenet: true,
+		NewsServers: []config.NewsServerConfig{{Host: ns.Host, Port: ns.Port, Username: "me", Password: "secret", Connections: 4, Enabled: true}}}}
+	s := New(Deps{Cfg: cfg, DB: d, TMDB: tmdb.New("test", "en-US", d), Hub: library.NewHub()})
+	// The NZB is already cached, so no indexer is needed.
+	r := Release{Name: "Show.S01.1080p.WEB-DL-GONE", NZB: "https://indexer.test/getnzb?id=pack", Usenet: true, FileIdx: -1}
+	os.MkdirAll(filepath.Dir(s.nzbPath(r.NZB)), 0o755)
+	if err := os.WriteFile(s.nzbPath(r.NZB), pack.NZB(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := s.addPost(ctx, r, 1, 1, 0); p != nil {
+		t.Fatal("a pack with articles gone was picked")
+	}
+	// Ruled out for the rest of the season, not for other seasons.
+	if !s.usenet.wasMissing(r, 1, 3) || s.usenet.wasMissing(r, 2, 1) {
+		t.Fatalf("missing for S01E03 = %v, S02E01 = %v", s.usenet.wasMissing(r, 1, 3), s.usenet.wasMissing(r, 2, 1))
+	}
+	// A single episode's miss stays with that episode.
+	ep := Release{Name: "Show.S01E01.1080p.WEB-DL-X", NZB: "https://indexer.test/getnzb?id=ep", Usenet: true}
+	s.usenet.markMissing(ep, 1, 1)
+	if s.usenet.wasMissing(ep, 1, 2) {
+		t.Fatal("an episode's missing articles ruled out another episode")
+	}
+}

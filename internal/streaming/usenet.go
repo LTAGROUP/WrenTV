@@ -85,12 +85,17 @@ func missingKey(r Release, season, episode int) string {
 	return fmt.Sprintf("%s|%d|%d", releaseKey(r), season, episode)
 }
 
-// wasMissing reports whether a check already found articles gone from r.
+// wasMissing reports whether a check already found articles gone from r,
+// for this episode or (a season pack) the whole season.
 func (u *usenetState) wasMissing(r Release, season, episode int) bool {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	t, ok := u.missing[missingKey(r, season, episode)]
-	return ok && time.Since(t) < missingFor
+	for _, ep := range []int{episode, 0} {
+		if t, ok := u.missing[missingKey(r, season, ep)]; ok && time.Since(t) < missingFor {
+			return true
+		}
+	}
+	return false
 }
 
 func (u *usenetState) markMissing(r Release, season, episode int) {
@@ -543,18 +548,24 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 	// A season pack's other episodes are read too, so they can be stored
 	// from it (see fillSeason).
 	var keep func(string) bool
+	pack := season > 0 && isPack(r.Name, season)
 	if season > 0 {
-		pack := isPack(r.Name, season)
 		keep = func(name string) bool {
 			s, e, ok := EpisodeOf(name)
 			return !ok || (s == season && (e == episode || pack))
 		}
 	}
 	// missing remembers a post found with articles gone, but not one a
-	// server error or timeout stopped.
-	missing := func(step string, err error) (*pick, bool) {
+	// server error or timeout stopped. A season pack's whole-post checks
+	// rule it out for the season; a gap in one episode's file, for that
+	// episode only.
+	missing := func(step string, err error, whole bool) (*pick, bool) {
 		if err == nil || errors.Is(err, usenet.ErrMissing) {
-			s.usenet.markMissing(r, season, episode)
+			ep := episode
+			if pack && whole {
+				ep = 0
+			}
+			s.usenet.markMissing(r, season, ep)
 		}
 		if err == nil {
 			err = errors.New("articles missing from the news server")
@@ -562,12 +573,12 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 		return fail(step, err)
 	}
 	if ok, err := usenet.Alive(ctx, pool, nzb, keep, 24); !ok {
-		return missing("check", err)
+		return missing("check", err, true)
 	}
 	vids, err := usenet.Inspect(ctx, pool, nzb, keep)
 	if err != nil {
 		if ctx.Err() == nil && errors.Is(err, usenet.ErrMissing) {
-			return missing("inspect", err)
+			return missing("inspect", err, true)
 		}
 		return fail("inspect", err)
 	}
@@ -585,7 +596,7 @@ func (s *Service) addPost(ctx context.Context, r Release, season, episode int, m
 		return fail("pick", fmt.Errorf("%s is over the size limit", f.Name))
 	}
 	if ok, err := usenet.Available(ctx, pool, nzb, layouts[f.Name], 48); !ok {
-		return missing("check", err)
+		return missing("check", err, false)
 	}
 	slog.Info("usenet post found", "release", r.Name, "file", f.Name, "size", f.Size, "took", time.Since(t).Round(time.Millisecond), "nzb", nzbTook.Round(time.Millisecond))
 	return &pick{rel: r, tor: &Torrent{Files: files}, file: f, layouts: layouts}, true
