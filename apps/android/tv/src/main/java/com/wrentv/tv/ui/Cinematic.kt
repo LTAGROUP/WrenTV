@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
@@ -38,7 +39,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
@@ -89,14 +95,20 @@ private val PosterGap = 20.dp
  * Scrolls a focused card so its row's top sits on the focus line. With
  * the first row (or the page's pills) focused, the page goes back to the top.
  */
-private class FocusLine(val focusedRow: MutableIntState, val list: LazyListState, val headerPx: Float) : BringIntoViewSpec {
+private class FocusLine(val focusedRow: MutableIntState, val list: LazyListState, val headerPx: Float, val readingPx: Float) : BringIntoViewSpec {
+    /** While the page's reading rows have focus, there's no hero and the line sits near the top. */
+    var reading = false
+
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
         if (focusedRow.intValue <= 0) {
             return if (list.firstVisibleItemIndex == 0) -list.firstVisibleItemScrollOffset.toFloat() else -containerSize * 4
         }
-        return offset - (HeroHeight * containerSize + headerPx)
+        return offset - if (reading) readingPx else HeroHeight * containerSize + headerPx
     }
 }
+
+/** Above the reading rows: room for the top bar. */
+private val ReadingTop = 96.dp
 
 class CinematicScope internal constructor(
     val lazy: LazyListScope, private val focusedRow: MutableIntState, private val rowSpec: BringIntoViewSpec,
@@ -142,7 +154,10 @@ class CinematicScope internal constructor(
 /**
  * A cinematic page. [fallback] fills the hero until something takes focus
  * (a hub's or collection's own details); [pills] sit under the hero, above
- * the first row, for the page's own choices (All Movies, sort).
+ * the first row, for the page's own choices (All Movies, sort). While one
+ * of the first [reading] rows has focus (a person's long biography), the
+ * hero and artwork give way to a plain page that's easy to read; they come
+ * back once focus moves below those rows.
  */
 @Composable
 fun CinematicBrowse(
@@ -150,6 +165,7 @@ fun CinematicBrowse(
     fallback: HeroEntry? = null,
     label: String? = null,
     pills: (@Composable () -> Unit)? = null,
+    reading: Int = 0,
     content: CinematicScope.() -> Unit,
 ) {
     val ambient = LocalAmbient.current
@@ -159,7 +175,11 @@ fun CinematicBrowse(
     val focusedRow = rememberSaveable(saver = androidx.compose.runtime.saveable.Saver<MutableIntState, Int>({ it.intValue }, { mutableIntStateOf(it) })) { mutableIntStateOf(0) }
     val rowSpec = LocalBringIntoViewSpec.current
     val headerPx = with(LocalDensity.current) { ShelfHeader.toPx() }
-    val spec = remember(list) { FocusLine(focusedRow, list, headerPx) }
+    val readingPx = with(LocalDensity.current) { ReadingTop.toPx() }
+    val spec = remember(list) { FocusLine(focusedRow, list, headerPx, readingPx) }
+    val readingNow = reading > 0 && focusedRow.intValue < reading
+    spec.reading = readingNow
+    val plain by animateFloatAsState(if (readingNow) 1f else 0f, tween(420), label = "reading")
     ReportScroll(list)
     // Up into the top bar takes the page back to its top.
     LaunchedEffect(bar) { snapshotFlow { bar.focused }.collect { if (it) focusedRow.intValue = 0 } }
@@ -181,7 +201,11 @@ fun CinematicBrowse(
     ) {
         val screen = maxHeight
         // The pills sit under the hero, above the first row.
-        CinematicHero(entry, label, screen * HeroHeight - if (pills != null) 56.dp else 0.dp)
+        // Covers the artwork while reading.
+        if (plain > 0f) Box(Modifier.fillMaxSize().graphicsLayer { alpha = plain }.background(Brush.verticalGradient(listOf(Wren.surface, Wren.background))))
+        Box(Modifier.graphicsLayer { alpha = 1f - plain }) {
+            CinematicHero(entry, label, screen * HeroHeight - if (pills != null) 56.dp else 0.dp)
+        }
         CompositionLocalProvider(LocalBringIntoViewSpec provides spec) {
             LazyColumn(
                 Modifier.fillMaxSize(), state = list,
@@ -189,7 +213,7 @@ fun CinematicBrowse(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 item("cinematic:top") {
-                    Box(Modifier.fillMaxWidth().height(screen * HeroHeight).onFocusChanged { if (it.hasFocus) focusedRow.intValue = 0 }) {
+                    Box(Modifier.fillMaxWidth().height(if (readingNow) ReadingTop else screen * HeroHeight).onFocusChanged { if (it.hasFocus) focusedRow.intValue = 0 }) {
                         if (pills != null) {
                             val alpha by animateFloatAsState(if (focusedRow.intValue > 0) 0f else 1f, tween(280), label = "pills")
                             Row(
@@ -214,7 +238,14 @@ private fun CinematicHero(entry: HeroEntry?, label: String?, height: Dp) {
     val api = LocalAppState.current.api
     Box(Modifier.fillMaxWidth().height(height)) {
         AnimatedContent(entry, transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) }, contentKey = { it?.id }, label = "hero",
-            modifier = Modifier.align(Alignment.BottomStart).padding(start = PageGutter, bottom = 10.dp).widthIn(max = 640.dp)) { e ->
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = PageGutter, bottom = 10.dp).widthIn(max = 600.dp)
+                // A soft shade just behind the text, so it reads on bright art without boxing it in.
+                .drawBehind {
+                    drawRect(Brush.radialGradient(
+                        0f to Color.Black.copy(alpha = 0.34f), 1f to Color.Transparent,
+                        center = Offset(size.width * 0.3f, size.height * 0.7f), radius = size.maxDimension * 0.62f,
+                    ), topLeft = Offset(-size.width * 0.3f, -size.height * 0.4f), size = Size(size.width * 1.4f, size.height * 1.6f))
+                }) { e ->
             if (e == null) return@AnimatedContent
             Column {
                 if (label != null) {
@@ -222,7 +253,7 @@ private fun CinematicHero(entry: HeroEntry?, label: String?, height: Dp) {
                     Spacer(Modifier.height(6.dp))
                 }
                 if (e.logo != null) {
-                    AsyncImage(api?.imageUrl(e.logo, "w500"), e.title, Modifier.width(320.dp).height(84.dp),
+                    AsyncImage(api?.imageUrl(e.logo, "w500"), e.title, Modifier.width(264.dp).height(68.dp),
                         contentScale = ContentScale.Fit, alignment = Alignment.BottomStart)
                 } else {
                     Text(e.title, style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold), color = Wren.text,
@@ -232,7 +263,7 @@ private fun CinematicHero(entry: HeroEntry?, label: String?, height: Dp) {
                 MetaLine(e.meta, e.badges)
                 e.overview?.takeIf { it.isNotEmpty() }?.let {
                     Spacer(Modifier.height(8.dp))
-                    Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.85f),
+                    Text(it, style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp), color = Color.White.copy(alpha = 0.85f),
                         maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
             }

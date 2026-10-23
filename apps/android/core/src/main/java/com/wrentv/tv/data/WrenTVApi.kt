@@ -188,6 +188,7 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     suspend fun setPosterSize(v: String) { send("PATCH", "/api/me/prefs", body = buildJsonObject { put("posterSize", v) }) }
 
     suspend fun person(id: Int): Person = get("/api/people/$id")
+    suspend fun company(id: Int): Company = get("/api/companies/$id")
 
     // Simkl: link with a code, then what's watched here goes to Simkl.
     suspend fun simkl(): SimklStatus = get("/api/me/simkl")
@@ -255,8 +256,9 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     suspend fun resetLayout(scope: String, default: Boolean) {
         send("DELETE", "/api/layouts/$scope", mapOf("target" to if (default) "default" else "me"))
     }
-    suspend fun catalog(type: String, sort: String, genre: Int?, page: Int): CatalogPage =
-        get("/api/discover/browse", mapOf("type" to type, "sort" to sort, "genre" to (genre?.toString() ?: ""), "page" to page.toString()))
+    suspend fun catalog(type: String, sort: String, genre: Int?, page: Int, company: Int? = null): CatalogPage =
+        get("/api/discover/browse", mapOf("type" to type, "sort" to sort, "genre" to (genre?.toString() ?: ""), "page" to page.toString(),
+            "company" to (company?.toString() ?: "")))
 
     suspend fun trending(): TrendingResponse = get("/api/discover/trending")
     suspend fun search(q: String): List<Item> = get("/api/search", mapOf("q" to q))

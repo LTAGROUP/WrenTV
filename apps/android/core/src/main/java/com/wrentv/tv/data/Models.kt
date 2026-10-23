@@ -370,6 +370,40 @@ data class Extras(
     val cast: List<CastMember> = emptyList(),
     val trailer: Trailer? = null,
     val moreLikeThis: List<TitleView> = emptyList(),
+    /** The movie series it's part of, in release order. */
+    val franchise: Franchise? = null,
+    /** The studios that made it; each has a page. */
+    val studios: List<Studio> = emptyList(),
+)
+
+@Serializable
+data class Franchise(val id: Int, val name: String = "", val backdropPath: String? = null, val titles: List<TitleView> = emptyList())
+
+@Serializable
+data class Studio(val id: Int, val name: String = "", val logoPath: String? = null)
+
+/** A studio's page: who they are and shelves of what they made. */
+@Serializable
+data class Company(
+    val id: Int,
+    val name: String = "",
+    val logoPath: String? = null,
+    val description: String? = null,
+    val headquarters: String? = null,
+    val originCountry: String? = null,
+    val backdropPath: String? = null,
+    val rows: List<StudioRow> = emptyList(),
+)
+
+/** One shelf of a studio's titles; [WrenTVApi.catalog] with its type, sort and the studio pages through the rest. */
+@Serializable
+data class StudioRow(
+    val id: String,
+    val title: String = "",
+    val mediaType: String = "movie",
+    val sort: String = "popular",
+    val items: List<TitleView> = emptyList(),
+    val totalPages: Int = 1,
 )
 
 @Serializable

@@ -114,7 +114,9 @@ struct CinematicPage<Rows: View>: View {
                     .id(path)
                     .transition(.opacity)
             }
-            LinearGradient(colors: [Color.wrenInk.opacity(0.92), Color.wrenInk.opacity(0.35), .clear], startPoint: .leading, endPoint: .trailing)
+            // Only as wide as the text needs, so the art stays the focus.
+            LinearGradient(stops: [.init(color: Color.wrenInk.opacity(0.8), location: 0), .init(color: Color.wrenInk.opacity(0.3), location: 0.32),
+                                   .init(color: .clear, location: 0.58)], startPoint: .leading, endPoint: .trailing)
             LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: Color.wrenInk.opacity(0.7), location: 0.45),
                                    .init(color: Color.wrenInk, location: 0.75)], startPoint: .top, endPoint: .bottom)
         }
@@ -135,13 +137,14 @@ private struct HeroText: View {
                 if let label { Text(label.uppercased()).font(.caption.weight(.bold)).foregroundStyle(Color.wrenEmber) }
                 if let logo = e.logo {
                     RemoteImage(url: state.api?.imageURL(logo, size: "w500"), contentMode: .fit)
-                        .frame(maxWidth: 520, maxHeight: 130, alignment: .bottomLeading)
+                        .frame(maxWidth: 420, maxHeight: 104, alignment: .bottomLeading)
                 } else {
                     Text(e.title).font(.system(size: 58, weight: .bold)).lineLimit(1)
                 }
                 if !e.meta.isEmpty { Text(e.meta).font(.callout).foregroundStyle(.secondary) }
                 if let o = e.overview, !o.isEmpty {
-                    Text(o).font(.callout).lineLimit(3).frame(maxWidth: 980, alignment: .leading)
+                    Text(o).font(.subheadline).lineLimit(3).frame(maxWidth: 900, alignment: .leading)
+                        .shadow(color: .black.opacity(0.5), radius: 10)
                 }
             }
         }

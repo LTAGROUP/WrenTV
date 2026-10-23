@@ -130,7 +130,7 @@ fun Hero(entries: List<HeroEntry>, label: String? = null) {
         val t = e.tmdb
         when {
             item != null -> nav.push(Route.Detail(item.id, item))
-            t != null -> nav.push(Route.StreamTitle(t.tmdbId, t.mediaType, t.title))
+            t != null -> nav.push(Route.StreamTitle(t.tmdbId, t.mediaType, t.title, t))
         }
     }
 
@@ -153,7 +153,7 @@ fun Hero(entries: List<HeroEntry>, label: String? = null) {
                     }
                 }
             }
-            t != null -> nav.push(Route.StreamTitle(t.tmdbId, t.mediaType, t.title))
+            t != null -> nav.push(Route.StreamTitle(t.tmdbId, t.mediaType, t.title, t))
         }
     }
 
@@ -174,7 +174,7 @@ fun Hero(entries: List<HeroEntry>, label: String? = null) {
                     if (e.logo != null) {
                         AsyncImage(
                             state.api?.imageUrl(e.logo, "w500"), e.title,
-                            Modifier.width(420.dp).height(130.dp),
+                            Modifier.width(340.dp).height(104.dp),
                             contentScale = ContentScale.Fit, alignment = Alignment.BottomStart,
                         )
                     } else {
@@ -187,7 +187,8 @@ fun Hero(entries: List<HeroEntry>, label: String? = null) {
                     MetaLine(e.meta, e.badges)
                     e.overview?.takeIf { it.isNotEmpty() }?.let {
                         Spacer(Modifier.height(10.dp))
-                        Text(it, style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.85f), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.85f), maxLines = 3, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 620.dp))
                     }
                 }
             }

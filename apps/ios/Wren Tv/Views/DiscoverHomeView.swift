@@ -120,20 +120,22 @@ struct DiscoverHero: View {
             .overlay(LinearGradient(stops: [.init(color: .clear, location: 0.35), .init(color: .black.opacity(0.55), location: 0.75),
                                             .init(color: Color.black, location: 1)],
                                     startPoint: .top, endPoint: .bottom))
-            .overlay(LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .leading, endPoint: .center))
+            .overlay(LinearGradient(stops: [.init(color: .black.opacity(0.58), location: 0), .init(color: .black.opacity(0.24), location: 0.28),
+                                            .init(color: .clear, location: 0.48)], startPoint: .leading, endPoint: .trailing))
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("TRENDING THIS WEEK").font(.caption.bold()).kerning(1).foregroundStyle(.white.opacity(0.7))
                 if let logo = title.item?.logoPath {
                     RemoteImage(url: state.api?.imageURL(logo, size: "w500"), contentMode: .fit)
-                        .frame(maxWidth: m.compact ? 260 : 400, maxHeight: m.compact ? 100 : 130, alignment: .bottomLeading)
+                        .frame(maxWidth: m.compact ? 220 : 330, maxHeight: m.compact ? 84 : 106, alignment: .bottomLeading)
                         .id(title.id)
                 } else {
                     Text(title.title).font(.system(size: m.heroTitle, weight: .bold)).id(title.id)
                 }
                 Text(metaLine).font(.callout).foregroundStyle(.white.opacity(0.75))
                 if let o = title.overview {
-                    Text(o).font(.callout).lineLimit(2).foregroundStyle(.white.opacity(0.85)).frame(maxWidth: 560, alignment: .leading)
+                    Text(o).font(.subheadline).lineLimit(2).foregroundStyle(.white.opacity(0.85)).frame(maxWidth: 520, alignment: .leading)
+                        .shadow(color: .black.opacity(0.45), radius: 8)
                 }
                 HStack(spacing: 10) {
                     if title.mediaType == "movie" {

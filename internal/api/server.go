@@ -146,7 +146,7 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(s.authenticate)
+		r.Use(s.authenticate, interactive)
 		r.Get("/api/me", s.handleMe)
 		r.Post("/api/pair/{code}/approve", s.handleApprovePair)
 		r.Get("/api/events", s.handleEvents)
@@ -172,6 +172,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/watchlist", s.handleWatchlist)
 		r.Get("/api/calendar", s.handleCalendar)
 		r.Get("/api/people/{id}", s.handlePerson)
+		r.Get("/api/companies/{id}", s.handleCompany)
 		r.Post("/api/items/{id}/play", s.handlePlay)
 		r.Get("/api/items/{id}/versions", s.handleVersions)
 		r.Delete("/api/sessions/{sid}", s.handleStopSession)
@@ -258,6 +259,14 @@ func (s *Server) Router() http.Handler {
 }
 
 // ---------- middleware ----------
+
+// interactive gives a signed-in request's TMDB lookups their own rate
+// budget, so a page doesn't wait behind a library scan.
+func interactive(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(tmdb.Interactive(r.Context())))
+	})
+}
 
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

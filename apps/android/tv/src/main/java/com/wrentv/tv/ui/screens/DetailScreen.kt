@@ -71,6 +71,8 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import com.wrentv.tv.data.Studio
+import androidx.compose.ui.text.style.TextAlign
 import com.wrentv.tv.data.CastMember
 import com.wrentv.tv.data.Extras
 import com.wrentv.tv.data.Item
@@ -227,12 +229,24 @@ private fun DetailPage(item: Item, detail: ItemDetail?, extras: Extras?, prefs: 
             }
             if (extras != null && (item.kind == "movie" || item.kind == "show")) {
                 if (extras.cast.isNotEmpty()) item("cast") { CompositionLocalProvider(LocalBringIntoViewSpec provides rows) { CastShelf(extras.cast) } }
+                extras.franchise?.takeIf { it.titles.size >= 2 }?.let { f ->
+                    item("franchise") {
+                        CompositionLocalProvider(LocalBringIntoViewSpec provides rows) {
+                            Shelf(f.name, subtitle = "${f.titles.size} films") {
+                                items(f.titles, key = { it.id }) { t -> TitleCard(t, Modifier.rememberFocus("franchise:${t.id}")) }
+                            }
+                        }
+                    }
+                }
                 if (extras.moreLikeThis.isNotEmpty()) item("more") {
                     CompositionLocalProvider(LocalBringIntoViewSpec provides rows) {
                         Shelf("More Like This") {
                             items(extras.moreLikeThis, key = { it.id }) { t -> TitleCard(t, Modifier.rememberFocus("more:${t.id}")) }
                         }
                     }
+                }
+                if (extras.studios.isNotEmpty()) item("studios") {
+                    CompositionLocalProvider(LocalBringIntoViewSpec provides rows) { StudioShelf(extras.studios) }
                 }
             }
             val files = detail?.files.orEmpty()
@@ -718,6 +732,26 @@ private fun CastShelf(cast: List<CastMember>) {
                 Text(c.name, style = MaterialTheme.typography.labelLarge, color = if (focused) Wren.text else Wren.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 c.character?.takeIf { it.isNotEmpty() }?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = Wren.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+/** The studios that made it, as logos on light tiles; each opens the studio's page. */
+@Composable
+private fun StudioShelf(studios: List<Studio>) {
+    val api = LocalAppState.current.api
+    val nav = LocalNavigator.current
+    Shelf("Production") {
+        items(studios, key = { it.id }) { s ->
+            ArtCard({ nav.push(Route.Studio(s.id, s.name)) }, Modifier.size(200.dp, 100.dp).rememberFocus("studio:${s.id}"), shape = RoundedCornerShape(12.dp)) {
+                Box(Modifier.fillMaxSize().background(Color(0xFFF2F2F4)).padding(horizontal = 20.dp, vertical = 16.dp), contentAlignment = Alignment.Center) {
+                    if (s.logoPath != null) {
+                        AsyncImage(api?.imageUrl(s.logoPath, "w300"), s.name, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                    } else {
+                        Text(s.name, style = MaterialTheme.typography.titleMedium, color = Color(0xFF1C1C1E), textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }

@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wrentv.tv.data.AppState
 import com.wrentv.tv.data.Item
+import com.wrentv.tv.data.TitleView
 import com.wrentv.tv.data.WrenCollection
 
 sealed interface Route {
@@ -41,8 +42,9 @@ sealed interface Route {
     data class GenreItems(val genre: String, val libraryId: String? = null) : Route { override val key = "genre:$genre:$libraryId" }
     data class Hub(val id: String, val name: String) : Route { override val key = "hub:$id" }
     data class Person(val id: Int, val name: String) : Route { override val key = "person:$id" }
+    data class Studio(val id: Int, val name: String) : Route { override val key = "studio:$id" }
     /** Every movie or show TMDB has, as a grid, opened from the Movies and TV Shows pages. */
-    data class StreamTitle(val tmdbId: Int, val mediaType: String, val title: String) : Route { override val key = "stream:$mediaType:$tmdbId" }
+    data class StreamTitle(val tmdbId: Int, val mediaType: String, val title: String, val seed: TitleView? = null) : Route { override val key = "stream:$mediaType:$tmdbId" }
     data class Trailer(val youtubeKey: String, val title: String) : Route { override val key = "trailer:$youtubeKey" }
     data class Player(val target: PlayTarget) : Route { override val key = "player:${target.itemId}" }
     /** Live TV, full screen, starting on a channel; up and down change it, within [group] when set. */

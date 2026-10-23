@@ -39,8 +39,11 @@ type Client struct {
 	language string
 	http     *http.Client
 	limiter  *rate.Limiter
-	cache    Cache
-	sf       singleflight.Group
+	// quick is for requests someone is waiting on, so they don't queue
+	// behind a library scan; the two together stay under TMDB's limit.
+	quick *rate.Limiter
+	cache Cache
+	sf    singleflight.Group
 
 	mu  sync.Mutex
 	mem map[string]memEntry // hot cache for the current scan (seasons shared by many episodes)
@@ -53,6 +56,7 @@ func New(apiKey, language string, cache Cache) *Client {
 		http:     &http.Client{Timeout: 15 * time.Second},
 		// TMDB allows ~50 req/s; stay comfortably under it.
 		limiter: rate.NewLimiter(rate.Limit(35), 20),
+		quick:   rate.NewLimiter(rate.Limit(10), 10),
 		cache:   cache,
 		mem:     map[string]memEntry{},
 	}
@@ -61,6 +65,25 @@ func New(apiKey, language string, cache Cache) *Client {
 func (c *Client) Enabled() bool { return c.key != "" }
 
 var ErrNotFound = errors.New("tmdb: not found")
+
+type interactiveKey struct{}
+
+// Interactive marks ctx as a request someone is waiting on.
+func Interactive(ctx context.Context) context.Context {
+	return context.WithValue(ctx, interactiveKey{}, true)
+}
+
+// pause waits d, or less if ctx ends first.
+func pause(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
 
 // get fetches path with params, served from cache when fresh.
 func (c *Client) get(ctx context.Context, path string, params url.Values, maxAge time.Duration, out any) error {
@@ -84,26 +107,47 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, maxAge
 	v, err, _ := c.sf.Do(key, func() (any, error) {
 		params.Set("api_key", c.key)
 		var body []byte
+		limiter, perTry := c.limiter, 15*time.Second
+		if ctx.Value(interactiveKey{}) != nil {
+			// A stalled connection is retried sooner than the client's timeout.
+			limiter, perTry = c.quick, 6*time.Second
+		}
 		for attempt := 0; attempt < 4; attempt++ {
-			if err := c.limiter.Wait(ctx); err != nil {
+			if err := limiter.Wait(ctx); err != nil {
 				return nil, err
 			}
-			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+path+"?"+params.Encode(), nil)
+			tryCtx, cancel := context.WithTimeout(ctx, perTry)
+			req, _ := http.NewRequestWithContext(tryCtx, http.MethodGet, base+path+"?"+params.Encode(), nil)
 			req.Header.Set("Accept", "application/json")
 			resp, err := c.http.Do(req)
 			if err != nil {
+				cancel()
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 				if attempt == 3 {
 					return nil, err
 				}
-				time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
+				if err := pause(ctx, time.Duration(attempt+1)*500*time.Millisecond); err != nil {
+					return nil, err
+				}
 				continue
 			}
-			body, _ = io.ReadAll(resp.Body)
+			body, err = io.ReadAll(resp.Body)
 			resp.Body.Close()
+			cancel()
+			if err != nil {
+				if attempt == 3 || ctx.Err() != nil {
+					return nil, err
+				}
+				continue
+			}
 			switch {
 			case resp.StatusCode == http.StatusTooManyRequests:
 				wait, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
-				time.Sleep(time.Duration(max(wait, 1)) * time.Second)
+				if err := pause(ctx, time.Duration(max(wait, 1))*time.Second); err != nil {
+					return nil, err
+				}
 				continue
 			case resp.StatusCode == http.StatusNotFound:
 				return nil, ErrNotFound

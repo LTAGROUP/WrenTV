@@ -214,6 +214,7 @@ func (s *Server) recentTitles(ctx context.Context, userID string, ids []string, 
 
 // handleDiscoverBrowse is the Movies and TV Shows pages when the server
 // streams: TMDB's whole catalog, a page at a time, linked to the library.
+// It also pages a studio's shelves (company).
 func (s *Server) handleDiscoverBrowse(w http.ResponseWriter, r *http.Request) {
 	if !s.TMDB.Enabled() {
 		writeJSON(w, 200, map[string]any{"enabled": false, "items": []titleView{}, "genres": []tmdb.Genre{}, "page": 1, "totalPages": 0})
@@ -226,7 +227,15 @@ func (s *Server) handleDiscoverBrowse(w http.ResponseWriter, r *http.Request) {
 	page := max(1, min(queryInt(r, "page", 1), 500))
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	ts, pages, err := s.TMDB.Discover(ctx, mediaType, r.URL.Query().Get("sort"), queryInt(r, "genre", 0), page)
+	q := tmdb.DiscoverQuery{Sort: r.URL.Query().Get("sort"), Page: page}
+	if g := queryInt(r, "genre", 0); g > 0 {
+		q.Genres = []int{g}
+	}
+	// A studio's shelf asks for its next page here.
+	if c := queryInt(r, "company", 0); c > 0 {
+		q.Companies = []int{c}
+	}
+	ts, pages, err := s.TMDB.DiscoverWith(ctx, mediaType, q)
 	if err != nil {
 		writeErr(w, 502, "TMDB unavailable: "+err.Error())
 		return

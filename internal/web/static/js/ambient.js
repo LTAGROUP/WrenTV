@@ -3,7 +3,7 @@
 // at the top right and fades into a background tinted from it.
 import { img } from './api.js';
 
-const pages = [/^\/$/, /^\/watchlist$/, /^\/library\/[^/]+$/, /^\/collections$/, /^\/collection\/[^/]+$/, /^\/library\/[^/]+\/collections$/, /^\/movies$/, /^\/shows$/, /^\/calendar$/];
+const pages = [/^\/$/, /^\/watchlist$/, /^\/library\/[^/]+$/, /^\/collections$/, /^\/collection\/[^/]+$/, /^\/studio\/\d+$/, /^\/library\/[^/]+\/collections$/, /^\/movies$/, /^\/shows$/, /^\/calendar$/];
 let root, layers, front = 0, current = '', timer = 0, on = false;
 const tints = new Map();
 

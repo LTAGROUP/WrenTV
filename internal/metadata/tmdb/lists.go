@@ -147,6 +147,8 @@ type DiscoverQuery struct {
 	Sort      string
 	Genres    []int
 	Providers []int
+	// Companies are production companies (studios); any of them.
+	Companies []int
 	Page      int
 }
 
@@ -171,6 +173,9 @@ func (c *Client) DiscoverWith(ctx context.Context, mediaType string, q DiscoverQ
 		if len(q.Providers) > 0 || len(q.Genres) > 0 {
 			params.Set("vote_count.gte", "200")
 		}
+		if len(q.Companies) > 0 {
+			params.Set("vote_count.gte", "100")
+		}
 	case "new":
 		params.Set("sort_by", date+".desc")
 		params.Set(date+".lte", time.Now().Format("2006-01-02"))
@@ -180,6 +185,9 @@ func (c *Client) DiscoverWith(ctx context.Context, mediaType string, q DiscoverQ
 	}
 	if len(q.Genres) > 0 {
 		params.Set("with_genres", joinInts(q.Genres, "|"))
+	}
+	if len(q.Companies) > 0 {
+		params.Set("with_companies", joinInts(q.Companies, "|"))
 	}
 	if len(q.Providers) > 0 {
 		params.Set("with_watch_providers", joinInts(q.Providers, "|"))

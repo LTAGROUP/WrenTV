@@ -297,7 +297,8 @@ func (s *Service) Libraries(ctx context.Context) ([]*db.Library, error) {
 // ---------- titles ----------
 
 // AddTitle returns the streaming library item for a TMDB movie or show,
-// creating it (with every aired season and episode) the first time.
+// creating it the first time. A new show's aired seasons and episodes are
+// added in the background.
 func (s *Service) AddTitle(ctx context.Context, kind string, tmdbID int) (*db.Item, error) {
 	if !s.Active() {
 		return nil, ErrDisabled
@@ -340,10 +341,18 @@ func (s *Service) AddTitle(ctx context.Context, kind string, tmdbID int) (*db.It
 		return nil, err
 	}
 	if show != nil {
-		s.syncEpisodes(ctx, it, show)
 		s.mu.Lock()
 		s.refreshed[it.ID] = time.Now()
 		s.mu.Unlock()
+		// A long-running show has a season request each, so the page opens
+		// now and the seasons follow (item.updated) once they're in.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			s.syncEpisodes(ctx, it, show)
+			// Simkl marks for its episodes can only land once they exist.
+			_ = s.DB.ApplyExternalWatched(ctx)
+		}()
 	}
 	s.Hub.Publish(library.Event{Type: "item.added", LibraryID: lib.ID, ItemID: it.ID})
 	return it, nil

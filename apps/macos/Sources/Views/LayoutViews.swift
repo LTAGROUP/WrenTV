@@ -194,13 +194,13 @@ private struct HeroText: View {
                 if let label { Text(label.uppercased()).font(.caption.weight(.bold)).kerning(1.2).foregroundStyle(Color.wrenEmber) }
                 if let logo = e.logo {
                     RemoteImage(url: state.api?.imageURL(logo, size: "w500"), contentMode: .fit)
-                        .frame(maxWidth: 380, maxHeight: 96, alignment: .bottomLeading)
+                        .frame(maxWidth: 310, maxHeight: 78, alignment: .bottomLeading)
                 } else {
                     Text(e.title).font(.system(size: 38, weight: .bold)).lineLimit(1)
                 }
                 if !e.meta.isEmpty { Text(e.meta).font(.callout).foregroundStyle(.white.opacity(0.75)) }
                 if let o = e.overview, !o.isEmpty {
-                    Text(o).font(.callout).foregroundStyle(.white.opacity(0.85)).lineLimit(3).frame(maxWidth: 620, alignment: .leading)
+                    Text(o).font(.subheadline).foregroundStyle(.white.opacity(0.85)).lineLimit(3).frame(maxWidth: 580, alignment: .leading)
                 }
             }
         }

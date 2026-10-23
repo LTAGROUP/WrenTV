@@ -1,6 +1,17 @@
 package com.wrentv.tv.ui.screens
 
 import androidx.compose.foundation.background
+import com.wrentv.tv.ui.RemoteImage
+import com.wrentv.tv.ui.PageGutter
+import com.wrentv.tv.data.TitleView
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,9 +67,41 @@ fun StreamTitleScreen(route: Route.StreamTitle) {
             EmptyState("Couldn't open ${route.title}", added.error, icon = Icons.Rounded.CloudOff)
             PillButton("Try Again", { added.error = null; attempt++ }, Modifier.padding(top = 20.dp).rememberFocus("stream:retry", default = true), primary = true)
         }
+        route.seed != null -> OpeningPreview(route.seed)
         else -> Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Spinner()
             Text("Opening ${route.title}…", style = MaterialTheme.typography.titleMedium, color = Wren.secondary, modifier = Modifier.padding(top = 16.dp))
+        }
+    }
+}
+
+/**
+ * What the title's card already knew, laid out like its detail page, while
+ * the server adds it; the full page takes over as soon as it's there.
+ */
+@Composable
+private fun OpeningPreview(t: TitleView) {
+    val state = LocalAppState.current
+    Box(Modifier.fillMaxSize()) {
+        RemoteImage(state.api?.imageUrl(t.backdropPath, "w1280"), Modifier.fillMaxSize())
+        Box(
+            Modifier.fillMaxSize()
+                .background(Brush.verticalGradient(0f to Color.Transparent, 0.45f to Color.Black.copy(alpha = 0.55f), 0.8f to Wren.background))
+                .background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.85f), 0.6f to Color.Transparent)),
+        )
+        Column(Modifier.padding(start = PageGutter, end = PageGutter, top = 150.dp).width(820.dp)) {
+            Text(t.title, style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.Bold), color = Wren.text,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(14.dp))
+            MetaLine(listOfNotNull(t.year?.toString(), if (t.mediaType == "show") "Series" else "Film", t.rating?.takeIf { it > 0 }?.let { "★ %.1f".format(it) }))
+            t.overview?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.85f), maxLines = 4,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 14.dp).widthIn(max = 720.dp))
+            }
+            Row(Modifier.padding(top = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                Spinner(22.dp)
+                Text("Getting it ready…", style = MaterialTheme.typography.bodyMedium, color = Wren.secondary, modifier = Modifier.padding(start = 12.dp))
+            }
         }
     }
 }

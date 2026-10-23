@@ -199,12 +199,14 @@ sealed class DiscoverHero : Grid
                 EndPoint = new Windows.Foundation.Point(0.5, 0.5),
                 GradientStops =
                 {
-                    new GradientStop { Color = Windows.UI.Color.FromArgb(0xA6, 0, 0, 0), Offset = 0 },
-                    new GradientStop { Color = Windows.UI.Color.FromArgb(0, 0, 0, 0), Offset = 1 },
+                    // Only as wide as the text needs, so the art stays the focus.
+                    new GradientStop { Color = Windows.UI.Color.FromArgb(0x94, 0, 0, 0), Offset = 0 },
+                    new GradientStop { Color = Windows.UI.Color.FromArgb(0x3D, 0, 0, 0), Offset = 0.56 },
+                    new GradientStop { Color = Windows.UI.Color.FromArgb(0, 0, 0, 0), Offset = 0.96 },
                 },
             },
         });
-        text.MaxWidth = 620;
+        text.MaxWidth = 580;
         text.Margin = new Thickness(Page.Gutter, 0, Page.Gutter, 12);
         text.VerticalAlignment = VerticalAlignment.Bottom;
         text.HorizontalAlignment = HorizontalAlignment.Left;
@@ -234,8 +236,8 @@ sealed class DiscoverHero : Grid
         if (t.Item?.LogoPath is { } logo)
         {
             var img = Ui.Image(api?.ImageUrl(logo, "w500"), 800, Stretch.Uniform);
-            img.MaxWidth = 400;
-            img.MaxHeight = 130;
+            img.MaxWidth = 330;
+            img.MaxHeight = 106;
             img.HorizontalAlignment = HorizontalAlignment.Left;
             text.Children.Add(img);
         }
@@ -245,7 +247,7 @@ sealed class DiscoverHero : Grid
         meta.Add(t.MediaType == "show" ? "Series" : "Film");
         if (t.Rating is > 0 and var r) meta.Add($"★ {r:0.0}");
         text.Children.Add(Ui.Secondary(string.Join(" · ", meta), 14));
-        if (!string.IsNullOrEmpty(t.Overview)) text.Children.Add(Ui.Text(t.Overview, 14, maxLines: 2, wrap: true));
+        if (!string.IsNullOrEmpty(t.Overview)) text.Children.Add(Ui.Text(t.Overview, 13, maxLines: 2, wrap: true));
 
         var row = Ui.Row(10);
         row.Margin = new Thickness(0, 4, 0, 0);

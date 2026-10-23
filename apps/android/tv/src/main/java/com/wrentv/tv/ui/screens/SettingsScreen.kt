@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.mutableIntStateOf
+import com.wrentv.tv.data.WrenCollection
 import com.wrentv.tv.data.ContinueAfters
 import com.wrentv.tv.data.OfflineItem
 import com.wrentv.tv.data.SimklStatus
@@ -58,7 +59,7 @@ private val Languages = listOf(
 private fun languageChoices(none: String): List<Choice<String>> =
     listOf(Choice("", none)) + Languages.map { Choice(it, languageName(it) ?: it) }.sortedBy { it.label.lowercase(Locale.getDefault()) }
 
-private enum class SettingsPanel { Audio, Subtitles, Watched, ContinueAfter, PosterSize, SignOut }
+private enum class SettingsPanel { Audio, Subtitles, Watched, ContinueAfter, PosterSize, Screensaver, SignOut }
 
 private val posterSizes = listOf(Choice("small", "Small"), Choice("medium", "Medium"), Choice("large", "Large"))
 
@@ -73,6 +74,8 @@ fun SettingsScreen() {
     var prefs by remember { mutableStateOf<UserPrefs?>(null) }
     var panel by remember { mutableStateOf<SettingsPanel?>(null) }
     LaunchedEffect(state.user?.id) { prefs = runCatching { state.api?.prefs() }.getOrNull() }
+    var collections by remember { mutableStateOf<List<WrenCollection>?>(null) }
+    LaunchedEffect(state.user?.id) { collections = runCatching { state.api?.collections() }.getOrNull() }
 
     fun save(p: UserPrefs) {
         val before = prefs
@@ -139,6 +142,10 @@ fun SettingsScreen() {
                     ListRow("Theme Music", { state.themeMusic = !state.themeMusic }, Modifier.rememberFocus("set:theme"),
                         detail = "Plays a show's theme on its page", value = if (state.themeMusic) "On" else "Off")
                 }
+                FormSection("Screensaver", "Comes up after a few idle minutes. Kept on this TV.") {
+                    ListRow("Show", { panel = SettingsPanel.Screensaver }, Modifier.rememberFocus("set:screensaver"),
+                        detail = "Artwork that drifts past, with the time", value = screensaverLabel(state.screensaver, collections))
+                }
                 val saved = state.downloads.items
                 if (saved.isNotEmpty() || state.limits?.canDownload == true) {
                     FormSection("Downloads on this TV") {
@@ -186,10 +193,24 @@ fun SettingsScreen() {
             prefs?.let { p -> save(p.copy(continueAfter = it)) }
         }
         SettingsPanel.PosterSize -> ChoicePanel("Poster Size", posterSizes, state.posterSize, { panel = null }) { state.posterSize = it }
+        SettingsPanel.Screensaver -> ChoicePanel("Screensaver", screensaverChoices(collections), state.screensaver, { panel = null }) {
+            state.screensaver = it
+        }
         SettingsPanel.SignOut -> ConfirmPanel("Sign out?", "You'll need to sign in again to watch from ${server?.name ?: "this server"}.", "Sign Out", { panel = null }, destructive = true) {
             state.signOut()
         }
     }
+}
+
+private fun screensaverChoices(collections: List<WrenCollection>?): List<Choice<String>> =
+    listOf(Choice("auto", "Library Highlights", "What's popular, new and on Home")) +
+        collections.orEmpty().filter { it.active != false }.map { Choice("collection:${it.id}", it.name, it.group ?: "Collection") } +
+        Choice("clock", "Clock Only")
+
+private fun screensaverLabel(value: String, collections: List<WrenCollection>?): String = when {
+    value == "clock" -> "Clock Only"
+    value.startsWith("collection:") -> collections?.firstOrNull { it.id == value.removePrefix("collection:") }?.name ?: "A collection"
+    else -> "Library Highlights"
 }
 
 private fun roleName(role: String?, admin: Boolean): String? = when {

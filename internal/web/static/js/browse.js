@@ -357,13 +357,138 @@ export async function viewPerson(id) {
     ${p.rows.length ? `<div class="coll-rows">${p.rows.map((r) => shelf(r.title, r.credits.map(credit).join(''), { sub: `${r.credits.length}` })).join('')}</div>`
       : '<div class="empty"><h2>No movies or shows listed</h2></div>'}</div>`);
   bindShelves(node);
+  // A biography longer than its five lines opens below the header, on a
+  // plain panel of its own; each paragraph takes focus in turn, so a remote
+  // reads down through it before reaching the rows.
   const bio = $('.bio', node), more = $('#more', node);
   if (bio) requestAnimationFrame(() => {
-    if (bio.scrollHeight > bio.clientHeight + 4) {
-      more.hidden = false;
-      more.onclick = () => { const open = bio.classList.toggle('open'); more.textContent = open ? 'Less' : 'More'; };
-    }
+    if (bio.scrollHeight <= bio.clientHeight + 4) return;
+    more.hidden = false;
+    let panel = null;
+    const close = () => {
+      panel?.remove();
+      panel = null;
+      bio.hidden = false;
+      more.textContent = 'More';
+      more.focus({ preventScroll: true });
+      $('.hero', node).scrollIntoView({ block: 'start', behavior: 'smooth' });
+    };
+    more.onclick = () => {
+      if (panel) return close();
+      const paras = p.biography.split(/\n\s*\n|\n/).map((t) => t.trim()).filter(Boolean);
+      panel = el(`<section class="bio-read"><h2>Biography</h2>${paras.map((t) => `<p tabindex="0">${esc(t)}</p>`).join('')}
+        <button class="btn ghost small" type="button">Show less</button></section>`);
+      $('button', panel).onclick = close;
+      $('.hero', node).after(panel);
+      bio.hidden = true;
+      more.textContent = 'Less';
+      const first = $('p', panel);
+      first.focus({ preventScroll: true });
+      first.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    };
   });
+  return node;
+}
+
+// ---------------------------------------------------------------- studio
+
+// Each studio's shelves as far as they've been loaded, so Back comes to the
+// same cards; history.state keeps where the page and each shelf were.
+const studioRows = new Map();
+
+export async function viewStudio(id) {
+  const c = await api(`/api/companies/${id}`);
+  setTitle(c.name);
+  ambient.base(c.backdropPath);
+  const back = history.state?.studio === id ? history.state : null;
+  const kept = back && studioRows.get(id);
+  const rows = c.rows.map((r) => ({ ...r, page: 1, ...(kept?.[r.id] || {}) }));
+  studioRows.set(id, Object.fromEntries(rows.map((r) => [r.id, r])));
+  const facts = [c.headquarters, c.originCountry].filter(Boolean);
+  const node = el(`<div><div class="hero coll-hero studio-hero">
+    <div class="content">${c.logoPath ? `<div class="studio-logo"><img src="${img(c.logoPath, 'w500')}" alt=""></div>` : ''}
+    <div><h1>${esc(c.name)}</h1>
+    ${facts.length ? `<div class="meta">${facts.map(esc).join('<span class="muted">·</span>')}</div>` : ''}
+    ${c.description ? `<p class="overview">${esc(c.description)}</p>` : ''}</div></div></div>
+    ${rows.length ? `<div class="coll-rows">${rows.map((r) => shelf(r.title, r.items.map((v) => titleCard(v)).join(''), { id: `studio-${r.id}` })).join('')}</div>`
+      : '<div class="empty"><h2>No movies or shows listed</h2></div>'}</div>`);
+  bindShelves(node);
+
+  // Titles not yet on the server all link to /item/stream; their TMDB id tells them apart.
+  const cardKey = (a) => (a.dataset.streamTitle ? `${a.dataset.media}:${a.dataset.streamTitle}` : a.getAttribute('href'));
+  const write = (card = document.activeElement?.closest?.('.card')) => {
+    if (!node.isConnected) return window.removeEventListener('scroll', save);
+    if (location.pathname !== `/studio/${id}`) return;
+    const lefts = Object.fromEntries(rows.map((r) => [r.id, $(`#studio-${r.id} .row`, node)?.scrollLeft || 0]));
+    history.replaceState({ studio: id, y: window.scrollY, lefts, focus: card && node.contains(card) ? cardKey(card) : null }, '');
+  };
+  let saving = 0;
+  const save = () => {
+    clearTimeout(saving);
+    saving = setTimeout(write, 250);
+  };
+  // Opening a title saves at once, before the page changes under it.
+  const now = (e) => {
+    const card = e.target.closest?.('.card');
+    if (card) { clearTimeout(saving); write(card); }
+  };
+  window.addEventListener('scroll', save, { passive: true });
+  node.addEventListener('focusin', save);
+  node.addEventListener('pointerdown', now, true);
+  node.addEventListener('keydown', (e) => { if (e.key === 'Enter') now(e); }, true);
+
+  for (const r of rows) {
+    const row = $(`#studio-${r.id} .row`, node);
+    if (!row) continue;
+    row.addEventListener('scroll', save, { passive: true });
+    let busy = false;
+    const more = async () => {
+      if (busy || r.page >= r.totalPages) return;
+      busy = true;
+      $('.retry', row)?.remove();
+      try {
+        const q = new URLSearchParams({ type: r.mediaType, sort: r.sort, company: id, page: r.page + 1 });
+        const p = await api(`/api/discover/browse?${q}`);
+        const have = new Set(r.items.map((v) => `${v.mediaType}:${v.tmdbId}`));
+        const add = (p.items || []).filter((v) => !have.has(`${v.mediaType}:${v.tmdbId}`));
+        r.items = r.items.concat(add);
+        r.page = p.page || r.page + 1;
+        r.totalPages = p.totalPages || r.page;
+        row.append(...el(`<div>${add.map((v) => titleCard(v)).join('')}</div>`).children);
+      } catch {
+        const b = el('<button class="card retry" type="button"><div class="poster"><span>Couldn’t load more.<br>Retry</span></div></button>');
+        b.onclick = () => more();
+        row.append(b);
+      } finally {
+        busy = false;
+      }
+      near();
+    };
+    // Within about 15 cards of the end, the next page comes in.
+    const near = () => {
+      const w = row.firstElementChild?.offsetWidth || 160;
+      if (row.scrollLeft + row.clientWidth >= row.scrollWidth - w * 15) more();
+    };
+    row.addEventListener('scroll', near, { passive: true });
+    row.addEventListener('focusin', (e) => {
+      const cards = [...row.children];
+      if (cards.indexOf(e.target.closest('.card')) >= cards.length - 15) more();
+    });
+    requestAnimationFrame(near);
+  }
+
+  if (back) {
+    // Once it's on the page: each shelf where it was, then the page, then the card.
+    requestAnimationFrame(() => {
+      for (const r of rows) {
+        const row = $(`#studio-${r.id} .row`, node);
+        if (row && back.lefts?.[r.id]) row.scrollLeft = back.lefts[r.id];
+      }
+      window.scrollTo(0, back.y || 0);
+      const card = back.focus && [...$$('.card', node)].find((a) => cardKey(a) === back.focus);
+      card?.focus({ preventScroll: true });
+    });
+  }
   return node;
 }
 

@@ -34,7 +34,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import coil3.compose.AsyncImage
+import coil3.imageLoader
+import coil3.request.ImageRequest
+import com.wrentv.tv.data.WrenTVApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import com.wrentv.tv.data.DiscoverHome
 import com.wrentv.tv.data.HomeResponse
 import com.wrentv.tv.data.TrendingResponse
@@ -88,14 +95,33 @@ fun Screensaver(allowed: Boolean) {
 @Composable
 private fun Slides() {
     val state = LocalAppState.current
-    val slides = remember { pool() }
+    val context = LocalContext.current
+    val source = state.screensaver
+    // What's already loaded shows at once; the chosen source replaces it as soon as it arrives.
+    var slides by remember { mutableStateOf(if (source == "clock") emptyList() else pool()) }
     var index by remember { mutableIntStateOf(0) }
+    LaunchedEffect(source) {
+        val api = state.api ?: return@LaunchedEffect
+        if (source == "clock") return@LaunchedEffect
+        val fresh = runCatching { load(api, source) }.getOrNull().orEmpty()
+        if (fresh.isNotEmpty()) { slides = fresh; index = 0 }
+    }
     LaunchedEffect(slides) {
         if (slides.size < 2) return@LaunchedEffect
         while (true) {
+            // Fetch the next picture ahead, so it fades in whole rather than drawing in.
+            slides.getOrNull((index + 1) % slides.size)?.backdrop?.let { b ->
+                context.imageLoader.enqueue(ImageRequest.Builder(context).data(state.api?.imageUrl(b, "w1280")).build())
+            }
             delay(14_000)
             index = (index + 1) % slides.size
         }
+    }
+    if (source == "clock" || slides.isEmpty()) {
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            Clock(Modifier.align(Alignment.Center), big = true)
+        }
+        return
     }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         Crossfade(slides.getOrNull(index), animationSpec = tween(2500), label = "screensaver") { e ->
@@ -122,12 +148,12 @@ private fun Slides() {
                 }
             }
         }
-        Clock(Modifier.align(Alignment.BottomEnd).padding(end = 64.dp, bottom = 56.dp))
+        Clock(Modifier.align(Alignment.BottomEnd).padding(end = 64.dp, bottom = 56.dp).graphicsLayer { alpha = 0.85f })
     }
 }
 
 @Composable
-private fun Clock(modifier: Modifier) {
+private fun Clock(modifier: Modifier, big: Boolean = false) {
     var now by remember { mutableStateOf(Date()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -135,16 +161,34 @@ private fun Clock(modifier: Modifier) {
             delay(60_000 - System.currentTimeMillis() % 60_000)
         }
     }
-    Column(modifier, horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(DateFormat.getTimeInstance(DateFormat.SHORT).format(now), color = Color.White, fontSize = 40.sp)
-        Text(DateFormat.getDateInstance(DateFormat.FULL).format(now), color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
+    Column(modifier, horizontalAlignment = if (big) Alignment.CenterHorizontally else Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(DateFormat.getTimeInstance(DateFormat.SHORT).format(now), color = Color.White.copy(alpha = if (big) 0.8f else 1f), fontSize = if (big) 96.sp else 34.sp, fontWeight = FontWeight.Light)
+        Text(DateFormat.getDateInstance(DateFormat.FULL).format(now), color = Color.White.copy(alpha = 0.55f), fontSize = if (big) 20.sp else 14.sp)
     }
+}
+
+/** Fresh slides from the chosen source: one collection, or the library's highlights. */
+private suspend fun load(api: WrenTVApi, source: String): List<HeroEntry> = coroutineScope {
+    val out = if (source.startsWith("collection:")) {
+        val c = api.collection(source.removePrefix("collection:"))
+        c.items.map { it.heroEntry() } + c.titles.orEmpty().map { it.heroEntry() }
+    } else {
+        val home = async { runCatching { api.discoverHome() }.getOrNull() }
+        val library = async { runCatching { api.home() }.getOrNull() }
+        val trending = async { runCatching { api.trending() }.getOrNull() }
+        entries(listOfNotNull(home.await(), library.await(), trending.await()))
+    }
+    out.filter { it.backdrop != null }.distinctBy { it.id }.shuffled().take(60)
 }
 
 /** Whatever the home pages have already loaded, with artwork, in a new order each time. */
 private fun pool(): List<HeroEntry> {
+    return entries(PageCache.values.values).filter { it.backdrop != null }.distinctBy { it.id }.shuffled().take(40)
+}
+
+private fun entries(pages: Collection<Any?>): List<HeroEntry> {
     val out = mutableListOf<HeroEntry>()
-    for (v in PageCache.values.values) {
+    for (v in pages) {
         when (v) {
             is DiscoverHome -> {
                 out += v.hero.map { it.heroEntry() }
@@ -158,5 +202,5 @@ private fun pool(): List<HeroEntry> {
             is TrendingResponse -> out += v.items.map { it.heroEntry() }
         }
     }
-    return out.filter { it.backdrop != null }.distinctBy { it.id }.shuffled().take(40)
+    return out
 }

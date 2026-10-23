@@ -335,7 +335,7 @@ fun TitleCard(title: TitleView, modifier: Modifier = Modifier, rank: Int? = null
                 val item = title.item
                 when {
                     item != null -> nav.push(Route.Detail(item.id, item))
-                    state.canStream -> nav.push(Route.StreamTitle(title.tmdbId, title.mediaType, title.title))
+                    state.canStream -> nav.push(Route.StreamTitle(title.tmdbId, title.mediaType, title.title, title))
                     else -> notices.show("${title.title} isn't on this server.")
                 }
             },
@@ -482,7 +482,8 @@ fun Spinner(size: Dp = 44.dp) {
 /** Darkens the bottom and left of a backdrop so text over it reads. */
 fun Modifier.heroScrim(bottomTo: Color = Wren.background): Modifier = this
     .background(Brush.verticalGradient(0.35f to Color.Transparent, 0.75f to Color.Black.copy(alpha = 0.55f), 1f to bottomTo))
-    .background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.8f), 0.55f to Color.Transparent))
+    // Only as wide as the text needs, so the art stays the focus.
+    .background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.66f), 0.3f to Color.Black.copy(alpha = 0.32f), 0.5f to Color.Transparent))
 
 // Formatting
 

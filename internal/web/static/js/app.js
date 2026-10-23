@@ -46,6 +46,7 @@ const routes = [
   [/^\/collection\/([^/]+)$/, browse.viewCollection],
   [/^\/calendar$/, browse.viewCalendar],
   [/^\/person\/(\d+)$/, browse.viewPerson],
+  [/^\/studio\/(\d+)$/, browse.viewStudio],
   [/^\/account$/, browse.viewAccount],
   [/^\/manage\/stats$/, viewStats, true],
   [/^\/item\/([^/]+)$/, viewItem],
@@ -59,6 +60,19 @@ const routes = [
 
 export const canStream = () => !!(state.server?.streaming && state.limits?.canStream);
 
+// What each not-yet-added title's card knew, so opening one can show its
+// details straight away while the server adds it.
+const seeds = new Map();
+const seed = (v) => { seeds.set(`${v.mediaType}:${v.tmdbId}`, v); };
+
+function openingPreview(v) {
+  const meta = [v.year, v.mediaType === 'show' ? 'Series' : 'Film', v.rating && `★ ${v.rating.toFixed(1)}`].filter(Boolean);
+  $('#page').innerHTML = `<div data-opening><div class="hero"><div class="bg" ${v.backdropPath ? `style="background-image:url('${img(v.backdropPath, 'w1280')}')"` : ''}></div>
+    <div class="content"><div><h1>${esc(v.title)}</h1><div class="meta">${meta.join('<span class="muted">·</span>')}</div>
+    <p class="overview">${esc(v.overview || '')}</p><div class="actions"><span class="opening"><span class="spinner"></span>Getting it ready…</span></div></div></div></div></div>`;
+  window.scrollTo(0, 0);
+}
+
 // Titles that aren't on the server yet are added to the streaming library on first open.
 document.addEventListener('click', async (e) => {
   const a = e.target.closest('[data-stream-title]');
@@ -68,12 +82,16 @@ document.addEventListener('click', async (e) => {
   if (a.dataset.busy) return;
   a.dataset.busy = '1';
   a.classList.add('busy');
+  const v = !a.dataset.streamPlay && seeds.get(`${a.dataset.media}:${a.dataset.streamTitle}`);
+  if (v) openingPreview(v);
   try {
     const it = await api('/api/streaming/titles', { method: 'POST', body: { tmdbId: Number(a.dataset.streamTitle), mediaType: a.dataset.media } });
     if (a.dataset.streamPlay && it.kind === 'movie') openPlayer(it.id, { resume: true });
-    else go('/item/' + it.id);
+    // Unless they've gone somewhere else meanwhile.
+    else if (!v || $('#page [data-opening]')) go('/item/' + it.id);
   } catch (ex) {
     toast(ex.message);
+    if (v && $('#page [data-opening]')) render();
   } finally {
     delete a.dataset.busy;
     a.classList.remove('busy');
@@ -427,6 +445,7 @@ export function titleCard(v, rank) {
   const r = rank ? `<span class="rank">${rank}</span>` : '';
   if (v.item) return posterCard(v.item, r);
   if (canStream()) {
+    seed(v);
     return `<a class="card" href="/item/stream" data-stream-title="${v.tmdbId}" data-media="${esc(v.mediaType)}"${bd(v.backdropPath)}>
       <div class="poster">${v.posterPath ? lazyImg(img(v.posterPath), v.title) : `<div class="ph">${esc(v.title)}</div>`}${v.watched ? '<div class="watched"></div>' : ''}${r}</div>
       <div class="t">${esc(v.title)}</div><div class="s">${esc(v.year || '')}</div></a>`;
@@ -649,6 +668,7 @@ function heroContent(titles, i, eyebrow = 'Trending this week') {
   const it = v.item;
   const meta = [v.year, v.mediaType === 'show' ? 'Series' : 'Film', v.rating && `★ ${v.rating.toFixed(1)}`].filter(Boolean);
   const stream = `data-stream-title="${v.tmdbId}" data-media="${esc(v.mediaType)}"`;
+  seed(v);
   const resume = it?.progress && !it.progress.watched && it.progress.position > 30;
   let actions;
   if (v.mediaType === 'movie') {
@@ -1070,6 +1090,10 @@ async function downloadToDevice(it, btn, fileId) {
   }
 }
 
+// A studio's logo on a light tile (most are dark on clear), or its name.
+const studioTile = (c) => `<a class="studio-tile" href="/studio/${c.id}" title="${esc(c.name)}">${c.logoPath
+  ? `<img src="${img(c.logoPath, 'w300')}" alt="${esc(c.name)}" loading="lazy">` : `<span>${esc(c.name)}</span>`}</a>`;
+
 async function loadExtras(it, node) {
   let x;
   try { x = await api(`/api/items/${it.id}/extras`); } catch { x = null; }
@@ -1086,11 +1110,25 @@ async function loadExtras(it, node) {
   }
   if (x.cast.length) $('.cast', cast).innerHTML = x.cast.map(personCard).join('');
   else cast.remove();
+  // The movie's series, in release order, comes before what's like it.
+  if (x.franchise?.titles?.length >= 2) {
+    const f = el(shelf(x.franchise.name, x.franchise.titles.map((v) => titleCard(v)).join(''), { sub: `${x.franchise.titles.length} films`, id: 'franchise' }));
+    more.before(f);
+    bindShelves(f);
+  }
+  let after = more;
   if (x.moreLikeThis.length) {
     const next = el(shelf('More Like This', x.moreLikeThis.map((v) => titleCard(v)).join(''), { id: 'more' }));
     more.replaceWith(next);
     bindShelves(next);
-  } else more.remove();
+    after = next;
+  }
+  if (x.studios?.length) {
+    const st = el(shelf('Production', x.studios.map(studioTile).join(''), { id: 'studios' }));
+    after.after(st);
+    bindShelves(st);
+  }
+  if (!x.moreLikeThis.length) more.remove();
   // Cast scrolls with the shelf arrows too.
   for (const b of $$('#cast-shelf .arrows button', node)) b.onclick = () => { const c = $('.cast', node); c.scrollBy({ left: Number(b.dataset.dir) * c.clientWidth * 0.85 }); };
 }

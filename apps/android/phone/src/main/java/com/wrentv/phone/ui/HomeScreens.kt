@@ -186,12 +186,12 @@ fun Hero(label: String, slides: List<Slide>, actions: @Composable (Int) -> Unit)
                 Column(Modifier.align(Alignment.BottomStart).padding(horizontal = m.gutter).padding(bottom = 54.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = Color.White.copy(alpha = 0.7f))
                     if (s.logo != null) {
-                        RemoteImage(state.api?.imageUrl(s.logo, "w500"), Modifier.widthIn(max = 260.dp).fillMaxWidth().heightIn(max = 100.dp).height(100.dp), ContentScale.Fit)
+                        RemoteImage(state.api?.imageUrl(s.logo, "w500"), Modifier.widthIn(max = 220.dp).fillMaxWidth().heightIn(max = 84.dp).height(84.dp), ContentScale.Fit)
                     } else {
                         Text(s.title, fontSize = 32.sp, fontWeight = FontWeight.Bold, lineHeight = 36.sp)
                     }
                     Text(s.meta, color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyMedium)
-                    s.overview?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.bodyMedium) }
+                    s.overview?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.bodySmall) }
                 }
             }
         }

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"sort"
 	"strconv"
 	"time"
 
@@ -110,6 +111,24 @@ type extrasView struct {
 	Cast         []castView  `json:"cast"`
 	Trailer      *trailer    `json:"trailer,omitempty"`
 	MoreLikeThis []titleView `json:"moreLikeThis"`
+	// Franchise is the TMDB collection a movie belongs to, in release
+	// order, when it has more than one title.
+	Franchise *franchiseView `json:"franchise,omitempty"`
+	// Studios made it; each opens a page of their titles.
+	Studios []studioView `json:"studios"`
+}
+
+type franchiseView struct {
+	ID           int         `json:"id"`
+	Name         string      `json:"name"`
+	BackdropPath string      `json:"backdropPath,omitempty"`
+	Titles       []titleView `json:"titles"`
+}
+
+type studioView struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	LogoPath string `json:"logoPath,omitempty"`
 }
 
 type trailer struct {
@@ -133,7 +152,7 @@ func (s *Server) handleExtras(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out := extrasView{Ratings: ratingsView{TMDB: it.Rating}, OMDb: s.OMDb.Enabled(), TMDB: s.TMDB.Enabled(),
-		Cast: []castView{}, MoreLikeThis: []titleView{}}
+		Cast: []castView{}, MoreLikeThis: []titleView{}, Studios: []studioView{}}
 	imdbID := it.IMDBID
 
 	if s.TMDB.Enabled() && it.TMDBID > 0 {
@@ -178,6 +197,15 @@ func (s *Server) handleExtras(w http.ResponseWriter, r *http.Request) {
 				views = views[:24]
 			}
 			out.MoreLikeThis = nonNil(s.linkLibrary(ctx, r, views, true))
+			for _, c := range ex.ProductionCompanies {
+				if len(out.Studios) == 8 {
+					break
+				}
+				out.Studios = append(out.Studios, studioView{ID: c.ID, Name: c.Name, LogoPath: c.LogoPath})
+			}
+			if ref := ex.BelongsToCollection; ref != nil && ref.ID > 0 {
+				out.Franchise = s.franchise(ctx, r, ref.ID)
+			}
 		}
 	}
 	if s.OMDb.Enabled() && imdbID != "" {
@@ -189,6 +217,44 @@ func (s *Server) handleExtras(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, out)
+}
+
+// franchise is a TMDB collection's titles in release order, or nil when it
+// can't be read or holds fewer than two released titles.
+func (s *Server) franchise(ctx context.Context, r *http.Request, id int) *franchiseView {
+	f, err := s.TMDB.Collection(ctx, id)
+	if err != nil {
+		slog.Debug("tmdb collection", "id", id, "err", err)
+		return nil
+	}
+	today := time.Now().Format("2006-01-02")
+	var parts []tmdb.Title
+	released := 0
+	for _, t := range f.Parts {
+		if t.PosterPath == "" {
+			continue
+		}
+		if t.ReleaseDate != "" && t.ReleaseDate <= today {
+			released++
+		}
+		parts = append(parts, t)
+	}
+	if released < 2 {
+		return nil
+	}
+	// Dated titles in order; announced ones without a date go last.
+	sort.SliceStable(parts, func(i, j int) bool {
+		a, b := parts[i].ReleaseDate, parts[j].ReleaseDate
+		if (a == "") != (b == "") {
+			return b == ""
+		}
+		return a < b
+	})
+	views := make([]titleView, 0, len(parts))
+	for _, t := range parts {
+		views = append(views, viewOf(t, "movie"))
+	}
+	return &franchiseView{ID: f.ID, Name: f.Name, BackdropPath: f.BackdropPath, Titles: s.linkLibrary(ctx, r, views, false)}
 }
 
 // handleTrending lists this week's TMDB trending titles, linked to the

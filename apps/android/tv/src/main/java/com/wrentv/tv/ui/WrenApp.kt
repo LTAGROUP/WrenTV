@@ -74,6 +74,7 @@ import com.wrentv.tv.ui.screens.GenreItemsScreen
 import com.wrentv.tv.ui.screens.HomeScreen
 import com.wrentv.tv.ui.screens.HubScreen
 import com.wrentv.tv.ui.screens.PersonScreen
+import com.wrentv.tv.ui.screens.StudioScreen
 import com.wrentv.tv.ui.screens.KindScreen
 import com.wrentv.tv.ui.screens.LayoutEditorScreen
 import com.wrentv.tv.ui.screens.LayoutsScreen
@@ -241,7 +242,7 @@ private fun Main(state: AppState, nav: Navigator) {
         Box(Modifier.fillMaxSize().onFocusChanged { anyFocus = it.hasFocus }) {
             // Browsing pages take on the focused title's artwork.
             if (route == Route.Home || route == Route.Collections || route == Route.Calendar || route == Route.Movies || route == Route.Shows || route is Route.Library ||
-                route is Route.Hub || route is Route.Collection || route is Route.Watchlist || route is Route.Person) {
+                route is Route.Hub || route is Route.Collection || route is Route.Watchlist || route is Route.Person || route is Route.Studio) {
                 AmbientBackdrop(route.key)
             }
             Box(Modifier.fillMaxSize().focusRequester(page).focusGroup()) {
@@ -286,6 +287,7 @@ private fun Page(route: Route) {
         Route.Watchlist -> WatchlistScreen()
         is Route.Hub -> HubScreen(route.id, route.name)
         is Route.Person -> PersonScreen(route.id, route.name)
+        is Route.Studio -> StudioScreen(route.id, route.name)
         is Route.GenreItems -> GenreItemsScreen(route.genre, route.libraryId)
         is Route.StreamTitle -> StreamTitleScreen(route)
         is Route.Trailer -> TrailerScreen(route.youtubeKey, route.title)

@@ -39,6 +39,11 @@ class AppState(context: Context) {
     var themeMusic: Boolean
         get() = themeMusicOn
         set(v) { themeMusicOn = v; store.setBool("themeMusic", v) }
+    /** What the screensaver shows: "auto" (the library's highlights), "collection:<id>" or "clock". Kept on this TV. */
+    private var screensaverValue by mutableStateOf(store.string("screensaver", "auto"))
+    var screensaver: String
+        get() = screensaverValue
+        set(v) { screensaverValue = v; store.setString("screensaver", v) }
     /** How big posters are on browsing pages: "small", "medium" or "large". Saved to the account so every
      *  device shows the same, and kept here too so the first page opens at the right size. */
     private var posterSizeValue by mutableStateOf(store.string("posterSize", "medium"))

@@ -89,6 +89,26 @@ type Extras struct {
 		IMDBID string `json:"imdb_id"`
 		TVDBID int    `json:"tvdb_id"`
 	} `json:"external_ids"`
+	// BelongsToCollection is the franchise a movie is part of, if any.
+	BelongsToCollection *CollectionRef `json:"belongs_to_collection"`
+	ProductionCompanies []Company      `json:"production_companies"`
+}
+
+// Company is a studio or production company.
+type Company struct {
+	ID            int    `json:"id"`
+	Name          string `json:"name"`
+	LogoPath      string `json:"logo_path"`
+	OriginCountry string `json:"origin_country"`
+	Description   string `json:"description"`
+	Headquarters  string `json:"headquarters"`
+}
+
+// Company looks up a studio by its TMDB id.
+func (c *Client) Company(ctx context.Context, id int) (*Company, error) {
+	var co Company
+	err := c.get(ctx, "/company/"+strconv.Itoa(id), nil, 7*24*time.Hour, &co)
+	return &co, err
 }
 
 const extrasTTL = 3 * 24 * time.Hour
