@@ -4,6 +4,7 @@ package com.wrentv.tv.player
 
 import android.view.ViewGroup
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Icon
@@ -410,7 +411,10 @@ private fun SeekBar(c: PlayerController, modifier: Modifier = Modifier) {
             // Rides above the bar at the scrub point, kept on screen at the ends.
             val w = PreviewWidth
             val x = (barWidth * fraction - w / 2).coerceIn(0.dp, (barWidth - w).coerceAtLeast(0.dp))
-            ScrubPreview(c.thumbUrl(at), at, Modifier.offset(x = x, y = -(PreviewHeight + 44.dp)))
+            // Takes no height, so the panel keeps its size: it hangs above the bar instead.
+            Box(Modifier.offset(x = x).height(0.dp).wrapContentHeight(Alignment.Bottom, unbounded = true)) {
+                ScrubPreview(c.thumbUrl(at), at, Modifier.padding(bottom = 8.dp))
+            }
         }
     }
 }
