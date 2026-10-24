@@ -162,6 +162,8 @@ struct TitleCard: View {
             }
             .buttonStyle(.card)
             .ambient { title.heroEntry }
+            // Ready the hero's logo before the card takes focus.
+            .task(id: title.id) { state.logos.want(title) }
             Text(title.title).font(.caption).lineLimit(1)
             Text(title.role.map { r in [r, title.year.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: " · ") }
                  ?? (title.item != nil ? "In your library" : (title.year.map(String.init) ?? " ")))

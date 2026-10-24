@@ -114,6 +114,8 @@ private struct DiscoverHero: View {
                 }
             }
             .frame(height: 560)
+            // Each title's logo, ready before the banner moves on to it.
+            .task(id: titles.map(\.id)) { titles.forEach { state.logos.want($0) } }
             .frame(maxWidth: .infinity)
             .clipped()
             .overlay(LinearGradient(stops: [.init(color: .clear, location: 0.35), .init(color: .black.opacity(0.55), location: 0.75),
@@ -124,7 +126,7 @@ private struct DiscoverHero: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("TRENDING THIS WEEK").font(.caption.bold()).kerning(1).foregroundStyle(.white.opacity(0.7))
-                if let logo = title.item?.logoPath {
+                if let logo = state.logos[title] {
                     RemoteImage(url: state.api?.imageURL(logo, size: "w500"), contentMode: .fit)
                         .frame(maxWidth: 330, maxHeight: 106, alignment: .bottomLeading)
                         .id(title.id)

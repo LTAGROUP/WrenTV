@@ -219,9 +219,9 @@ fun DiscoverHero(titles: List<TitleView>) {
     val nav = LocalNavigator.current
     val scope = rememberCoroutineScope()
     var opening by remember { mutableStateOf(false) }
-    val slides = remember(titles) {
-        titles.map { Slide(it.id, it.backdropPath, it.item?.logoPath, it.title, metaLine(it.year, it.mediaType == "show", it.rating), it.overview) }
-    }
+    // Each title's logo, ready before the banner moves on to it; a slide takes its logo when it arrives.
+    LaunchedEffect(titles) { titles.forEach { state.logos.want(it) } }
+    val slides = titles.map { Slide(it.id, it.backdropPath, state.logos[it], it.title, metaLine(it.year, it.mediaType == "show", it.rating), it.overview) }
     Hero("TRENDING THIS WEEK", slides) { i ->
         val t = titles[i]
         val item = t.item

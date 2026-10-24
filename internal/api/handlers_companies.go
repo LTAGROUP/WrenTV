@@ -44,6 +44,7 @@ var studioShelves = []struct{ id, title, mediaType, sort string }{
 	{"movie-new", "Recent Movies", "movie", "new"},
 	{"tv-popular", "Popular Shows", "tv", "popular"},
 	{"tv-top", "Top Rated Shows", "tv", "top_rated"},
+	{"tv-new", "Recent Shows", "tv", "new"},
 }
 
 // handleCompany returns a studio's details and its shelves of titles,

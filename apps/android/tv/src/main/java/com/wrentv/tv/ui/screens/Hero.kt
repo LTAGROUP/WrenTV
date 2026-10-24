@@ -117,6 +117,7 @@ fun Hero(entries: List<HeroEntry>, label: String? = null) {
     var focused by remember { mutableStateOf(false) }
     var opening by remember { mutableStateOf(false) }
     val entry = entries[index.coerceIn(0, entries.lastIndex)]
+    LaunchedEffect(entries.map { it.id }) { entries.forEach { e -> e.tmdb?.let { state.logos.want(it) } } }
 
     LaunchedEffect(entries.map { it.id }, focused) {
         while (entries.size > 1 && !focused) {
@@ -171,9 +172,10 @@ fun Hero(entries: List<HeroEntry>, label: String? = null) {
             }
             AnimatedContent(entry, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "hero") { e ->
                 Column {
-                    if (e.logo != null) {
+                    val logo = e.logo ?: e.tmdb?.let { state.logos[it] }
+                    if (logo != null) {
                         AsyncImage(
-                            state.api?.imageUrl(e.logo, "w500"), e.title,
+                            state.api?.imageUrl(logo, "w500"), e.title,
                             Modifier.width(340.dp).height(104.dp),
                             contentScale = ContentScale.Fit, alignment = Alignment.BottomStart,
                         )

@@ -65,6 +65,8 @@ struct TitleCard: View {
                 .opacity(title.item == nil && !state.canStream ? 0.8 : 1)
                 .hoverLift()
                 .ambient(title.backdropPath ?? title.item?.backdropPath) { title.heroEntry }
+                // Ready the hero's logo before the card is hovered.
+                .task(id: title.id) { state.logos.want(title) }
             Text(title.title).font(.callout).lineLimit(1)
             let sub = [title.role ?? "", title.year.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
             if !sub.isEmpty { Text(sub).font(.caption).foregroundStyle(.secondary).lineLimit(1) }

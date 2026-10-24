@@ -163,6 +163,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/discover/browse", s.handleDiscoverBrowse)
 		r.Get("/api/discover/trending", s.handleTrending)
 		r.Get("/api/discover/search", s.handleDiscoverSearch)
+		r.Get("/api/discover/logos", s.handleTitleLogos)
 		r.Post("/api/streaming/titles", s.handleAddStreamTitle)
 		r.Post("/api/items/{id}/download", s.handleDeviceDownload)
 		r.Post("/api/items/{id}/progress", s.handleProgress)

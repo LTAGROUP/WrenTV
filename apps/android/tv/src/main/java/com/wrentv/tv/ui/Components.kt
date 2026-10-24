@@ -65,6 +65,9 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.SingletonImageLoader
+import androidx.compose.ui.platform.LocalContext
 import com.wrentv.tv.data.Item
 import com.wrentv.tv.data.TitleView
 import com.wrentv.tv.data.roleLine
@@ -329,6 +332,13 @@ fun TitleCard(title: TitleView, modifier: Modifier = Modifier, rank: Int? = null
     val notices = LocalNotices.current
     var focused by remember { mutableStateOf(false) }
     val missing = title.item == null && !state.canStream
+    // Ready the hero's logo before the card takes focus: the path, then the image.
+    val context = LocalContext.current
+    val logo = state.logos[title]
+    LaunchedEffect(title.id) { state.logos.want(title) }
+    LaunchedEffect(logo) {
+        state.api?.imageUrl(logo, "w500")?.let { SingletonImageLoader.get(context).enqueue(ImageRequest.Builder(context).data(it).build()) }
+    }
     Column(modifier.width(width)) {
         ArtCard(
             onClick = {

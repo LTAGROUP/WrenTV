@@ -200,6 +200,10 @@ struct WrenTVAPI: Sendable {
                                                       .init(name: "company", value: company.map(String.init) ?? "")])
     }
     func trending() async throws -> TrendingResponse { try await get("/api/discover/trending") }
+    /// Logo paths by title id ("movie:<tmdbId>"), "" for a title without one.
+    func titleLogos(_ ids: [String]) async throws -> [String: String] {
+        try await get("/api/discover/logos", query: [.init(name: "ids", value: ids.joined(separator: ","))])
+    }
     func search(_ q: String) async throws -> [Item] { try await get("/api/search", query: [.init(name: "q", value: q)]) }
 
     /// Returns the play response and whether the source is still pending (HTTP 202).

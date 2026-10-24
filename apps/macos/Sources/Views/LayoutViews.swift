@@ -13,6 +13,8 @@ struct HeroEntry: Equatable {
     var logo: String?
     var meta: String
     var overview: String?
+    /// A TMDB title the server doesn't have, whose logo comes from TitleLogos.
+    var tmdb: String?
 }
 
 /// Opens Movies' or TV Shows' whole catalog.
@@ -192,7 +194,7 @@ private struct HeroText: View {
         VStack(alignment: .leading, spacing: 10) {
             if let e = entry {
                 if let label { Text(label.uppercased()).font(.caption.weight(.bold)).kerning(1.2).foregroundStyle(Color.wrenEmber) }
-                if let logo = e.logo {
+                if let logo = e.logo ?? e.tmdb.flatMap({ state.logos[$0] }) {
                     RemoteImage(url: state.api?.imageURL(logo, size: "w500"), contentMode: .fit)
                         .frame(maxWidth: 310, maxHeight: 78, alignment: .bottomLeading)
                 } else {
@@ -328,7 +330,7 @@ extension TitleView {
         if let year { parts.append(String(year)) }
         parts.append(mediaType == "show" ? "Series" : "Movie")
         if let r = rating, r > 0 { parts.append(String(format: "★ %.1f", r)) }
-        return HeroEntry(id: id, title: title, meta: parts.joined(separator: " · "), overview: overview)
+        return HeroEntry(id: id, title: title, meta: parts.joined(separator: " · "), overview: overview, tmdb: id)
     }
 }
 

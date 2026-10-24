@@ -8,6 +8,8 @@ import Observation
 final class AppState {
     var serverURL: URL?
     var api: WrenTVAPI?
+    /// Clear logos for titles the server doesn't have yet, for heroes.
+    let logos = TitleLogos()
     var user: User?
     var server: ServerInfo?
     var libraries: [Library] = []
@@ -43,6 +45,7 @@ final class AppState {
     var isAdmin: Bool { user.map { $0.isAdmin || $0.role == "owner" || $0.role == "admin" } ?? false }
 
     init() {
+        logos.api = { [weak self] in self?.api }
         Self.adoptLegacyDefaults()
         Task { await restore() }
         watchNetwork()

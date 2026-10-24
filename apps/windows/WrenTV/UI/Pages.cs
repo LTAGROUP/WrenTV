@@ -160,6 +160,8 @@ sealed class DiscoverHero : Grid
     readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(8) };
     int index;
     bool hovering, opening;
+    /// Logos for titles the server doesn't have yet, by TitleView.Key.
+    Dictionary<string, string> logos = [];
 
     readonly string eyebrow;
 
@@ -221,6 +223,17 @@ sealed class DiscoverHero : Grid
         Loaded += (_, _) => timer.Start();
         Unloaded += (_, _) => timer.Stop();
         Show(0);
+        _ = LoadLogos();
+    }
+
+    /// Each title's logo, ready before the banner moves on to it.
+    async Task LoadLogos()
+    {
+        var want = titles.Where(t => t.Item == null).Select(t => t.Key).ToList();
+        if (want.Count == 0 || App.State.Api is not { } api) return;
+        try { logos = await api.TitleLogos(want); }
+        catch { return; }
+        if (titles[index].Item == null) Show(index);
     }
 
     void Show(int i)
@@ -233,7 +246,7 @@ sealed class DiscoverHero : Grid
         var kicker = Ui.Text(eyebrow, 12, FontWeights.Bold, Theme.SecondaryText);
         kicker.CharacterSpacing = 80;
         text.Children.Add(kicker);
-        if (t.Item?.LogoPath is { } logo)
+        if ((t.Item?.LogoPath ?? logos.GetValueOrDefault(t.Key)) is { Length: > 0 } logo)
         {
             var img = Ui.Image(api?.ImageUrl(logo, "w500"), 800, Stretch.Uniform);
             img.MaxWidth = 330;

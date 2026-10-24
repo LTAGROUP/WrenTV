@@ -244,7 +244,8 @@ fun CinematicBrowse(
 /** The focused title's name, details and summary, low on the hero so it sits just above the rows. */
 @Composable
 private fun CinematicHero(entry: HeroEntry?, label: String?, height: Dp) {
-    val api = LocalAppState.current.api
+    val state = LocalAppState.current
+    val api = state.api
     Box(Modifier.fillMaxWidth().height(height)) {
         AnimatedContent(entry, transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) }, contentKey = { it?.id }, label = "hero",
             modifier = Modifier.align(Alignment.BottomStart).padding(start = PageGutter, bottom = 10.dp).widthIn(max = 600.dp)
@@ -266,8 +267,9 @@ private fun CinematicHero(entry: HeroEntry?, label: String?, height: Dp) {
                     Text(label.uppercase(), style = MaterialTheme.typography.labelMedium, color = Wren.ember)
                     Spacer(Modifier.height(6.dp))
                 }
-                if (e.logo != null) {
-                    AsyncImage(api?.imageUrl(e.logo, "w500"), e.title, Modifier.width(264.dp).height(68.dp),
+                val logo = e.logo ?: e.tmdb?.let { state.logos[it] }
+                if (logo != null) {
+                    AsyncImage(api?.imageUrl(logo, "w500"), e.title, Modifier.width(264.dp).height(68.dp),
                         contentScale = ContentScale.Fit, alignment = Alignment.BottomStart)
                 } else {
                     Text(e.title, style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold), color = Wren.text,

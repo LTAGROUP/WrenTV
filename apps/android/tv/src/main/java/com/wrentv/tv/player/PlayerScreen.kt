@@ -413,7 +413,8 @@ private fun SeekBar(c: PlayerController, modifier: Modifier = Modifier) {
             val x = (barWidth * fraction - w / 2).coerceIn(0.dp, (barWidth - w).coerceAtLeast(0.dp))
             // Takes no height, so the panel keeps its size: it hangs above the bar instead.
             Box(Modifier.offset(x = x).height(0.dp).wrapContentHeight(Alignment.Bottom, unbounded = true)) {
-                ScrubPreview(c.thumbUrl(at), at, Modifier.padding(bottom = 8.dp))
+                // Clear of the panel above the bar (its top padding, the buttons and the gap), not over the buttons.
+                ScrubPreview(c.thumbUrl(at), at, Modifier.padding(bottom = 10.dp + 54.dp + 6.dp + 12.dp))
             }
         }
     }

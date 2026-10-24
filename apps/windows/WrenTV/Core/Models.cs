@@ -339,6 +339,8 @@ public sealed class TitleView
         Overview = i.Overview, PosterPath = i.PosterPath, BackdropPath = i.BackdropPath, Rating = i.Rating, Item = i,
     };
 
+    public string Key => $"{MediaType}:{TmdbId}";
+
     public string Caption => Role is { } r ? string.Join(" · ", new[] { r, Year?.ToString() }.Where(x => !string.IsNullOrEmpty(x))) : Year?.ToString() ?? "";
 }
 

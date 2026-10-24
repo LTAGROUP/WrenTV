@@ -84,6 +84,8 @@ class AppState(context: Context) {
     }
     var api by mutableStateOf<WrenTVApi?>(null)
         private set
+    /** Clear logos for titles the server doesn't have yet, for the home hero. */
+    val logos = TitleLogos(scope) { api }
     var user by mutableStateOf<User?>(null)
         private set
     var server by mutableStateOf<ServerInfo?>(null)

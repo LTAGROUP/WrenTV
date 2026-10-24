@@ -261,6 +261,8 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
             "company" to (company?.toString() ?: "")))
 
     suspend fun trending(): TrendingResponse = get("/api/discover/trending")
+    /** Logo paths by title id ("movie:<tmdbId>"), "" for a title without one. */
+    suspend fun titleLogos(ids: List<String>): Map<String, String> = get("/api/discover/logos", mapOf("ids" to ids.joinToString(",")))
     suspend fun search(q: String): List<Item> = get("/api/search", mapOf("q" to q))
 
     suspend fun play(id: String, req: PlayRequest): PlayResponse =
