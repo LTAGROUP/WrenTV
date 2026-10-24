@@ -16,6 +16,8 @@ struct HeroEntry: Equatable {
     var meta: String
     var overview: String?
     var label: String?
+    /// With no backdrop, an image the page takes only a soft colour from.
+    var wash: String?
 }
 
 /// The focused title and row of a cinematic page, set by its cards.
@@ -28,6 +30,11 @@ final class Ambient {
     func show(_ e: HeroEntry, row: String?) {
         if entry != e { withAnimation(.easeOut(duration: 0.25)) { entry = e } }
         if let row, self.row != row { self.row = row }
+    }
+
+    /// Back to the page's own hero.
+    func clear() {
+        if entry != nil { withAnimation(.easeOut(duration: 0.25)) { entry = nil } }
     }
 }
 
@@ -46,18 +53,24 @@ extension EnvironmentValues {
 extension View {
     /// Shows entry in the page's hero while this card has focus.
     func ambient(_ entry: @escaping () -> HeroEntry) -> some View { modifier(AmbientFocus(entry: entry)) }
+
+    /// Puts the page's own hero back while this has focus.
+    func ambientHome() -> some View { modifier(AmbientFocus(entry: nil)) }
 }
 
 private struct AmbientFocus: ViewModifier {
     @Environment(Ambient.self) private var ambient: Ambient?
     @Environment(\.cinematicRow) private var row
-    let entry: () -> HeroEntry
+    let entry: (() -> HeroEntry)?
     @FocusState private var focused: Bool
 
     func body(content: Content) -> some View {
         content
             .focused($focused)
-            .onChange(of: focused) { _, on in if on { ambient?.show(entry(), row: row) } }
+            .onChange(of: focused) { _, on in
+                guard on else { return }
+                if let entry { ambient?.show(entry(), row: row) } else { ambient?.clear() }
+            }
     }
 }
 
@@ -112,6 +125,13 @@ struct CinematicPage<Rows: View>: View {
             if let path = entry?.backdrop {
                 RemoteImage(url: state.api?.imageURL(path, size: "w1280"))
                     .id(path)
+                    .transition(.opacity)
+            } else if let wash = entry?.wash {
+                // Blurred to nothing but its colours, and kept faint.
+                RemoteImage(url: state.api?.imageURL(wash, size: "w185"))
+                    .blur(radius: 140)
+                    .opacity(0.32)
+                    .id(wash)
                     .transition(.opacity)
             }
             // Only as wide as the text needs, so the art stays the focus.
@@ -652,9 +672,10 @@ private let collectionSorts: [(String, String)] = [
 
 // MARK: Person
 
-/// An actor or crew member over their best-known title's artwork: photo,
-/// details and biography up top, then rows of what they're in with the role
-/// under each title. Selecting a title opens its page.
+/// An actor or crew member: photo, details and biography up top over a soft
+/// colour from their photo, then rows of what they're in with the role under
+/// each title. A focused title brings its artwork in; back up at the
+/// biography, the page is theirs again. Selecting a title opens its page.
 struct PersonView: View {
     @Environment(AppState.self) private var state
     let route: PersonRoute
@@ -665,8 +686,9 @@ struct PersonView: View {
     var body: some View {
         let facts = (person?.facts ?? []).filter { !$0.hasPrefix("Known for") }
         CinematicPage(fallback: HeroEntry(id: "person:\(route.id)", title: person?.name ?? route.name,
-                                          backdrop: person?.backdropPath, meta: facts.joined(separator: "  ·  "),
-                                          overview: person?.biography),
+                                          // Not their best-known title's art: that reads as if its poster had focus.
+                                          backdrop: nil, meta: facts.joined(separator: "  ·  "),
+                                          overview: person?.biography, wash: person?.profilePath),
                       label: person?.knownFor ?? "Person") {
             CinematicRow(id: "about") {
                 HStack(alignment: .top, spacing: 40) {
@@ -690,6 +712,7 @@ struct PersonView: View {
                             .padding(24)
                         }
                         .buttonStyle(.card)
+                        .ambientHome()
                     }
                 }
                 .padding(.horizontal, TV.gutter)
