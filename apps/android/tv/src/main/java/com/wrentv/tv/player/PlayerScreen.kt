@@ -4,6 +4,18 @@ package com.wrentv.tv.player
 
 import android.view.ViewGroup
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.tv.material3.Surface
+import androidx.tv.material3.Icon
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.alpha
+import androidx.compose.material.icons.rounded.Forward10
+import androidx.compose.material.icons.rounded.Replay10
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
@@ -70,7 +82,6 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import com.wrentv.tv.ui.Bar
 import com.wrentv.tv.ui.Choice
 import com.wrentv.tv.ui.ChoicePanel
 import com.wrentv.tv.ui.LocalAppState
@@ -78,7 +89,6 @@ import com.wrentv.tv.ui.LocalNavigator
 import com.wrentv.tv.ui.PillButton
 import com.wrentv.tv.ui.PlayTarget
 import com.wrentv.tv.ui.RemoteImage
-import com.wrentv.tv.ui.RoundButton
 import com.wrentv.tv.ui.Spinner
 import com.wrentv.tv.ui.Wren
 import com.wrentv.tv.ui.formatClock
@@ -155,7 +165,21 @@ fun PlayerScreen(target: PlayTarget) {
 
     Box(
         Modifier.fillMaxSize().background(Color.Black)
-            .onPreviewKeyEvent { if (it.type == KeyEventType.KeyDown) touched++; false }
+            .onPreviewKeyEvent { e ->
+                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                touched++
+                // The remote's play/pause works whatever has focus, controls up or not.
+                val media = when (e.key) {
+                    Key.MediaPlayPause -> true
+                    Key.MediaPlay -> c.paused
+                    Key.MediaPause -> !c.paused
+                    else -> return@onPreviewKeyEvent false
+                }
+                if (c.upNext != null) return@onPreviewKeyEvent false
+                if (media) c.togglePause()
+                show()
+                true
+            }
             .focusRequester(root)
             .focusable()
             .onKeyEvent { e ->
@@ -169,7 +193,6 @@ fun PlayerScreen(target: PlayTarget) {
                         }
                         true
                     }
-                    Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> { c.togglePause(); show(); true }
                     Key.DirectionLeft, Key.MediaRewind, Key.DirectionRight, Key.MediaFastForward -> {
                         val dir = if (e.key == Key.DirectionLeft || e.key == Key.MediaRewind) -1 else 1
                         c.scrubBy(dir, e.nativeKeyEvent.repeatCount)
@@ -260,43 +283,91 @@ fun PlayerScreen(target: PlayTarget) {
 @Composable
 private fun Controls(c: PlayerController, playButton: FocusRequester, seekBar: FocusRequester, onPanel: (PlayerPanel) -> Unit, onSkip: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
-        // Scrims keep the text readable over bright scenes.
-        Box(Modifier.fillMaxWidth().height(200.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent))))
+        // Light scrims: just enough for the title and panel over bright scenes.
+        Box(Modifier.fillMaxWidth().height(160.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent))))
         Box(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(300.dp)
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)))),
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(220.dp)
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)))),
         )
-        Column(Modifier.padding(horizontal = 56.dp, vertical = 36.dp)) {
-            Text(c.title, style = MaterialTheme.typography.headlineMedium, color = Wren.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            c.subtitle?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = Wren.secondary, maxLines = 1) }
+        Column(Modifier.padding(horizontal = 56.dp, vertical = 32.dp)) {
+            Text(c.title, style = MaterialTheme.typography.titleLarge, color = Wren.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            c.subtitle?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = Wren.secondary, maxLines = 1) }
             if (c.methodLabel.isNotEmpty()) {
-                Text(c.methodLabel, style = MaterialTheme.typography.bodySmall, color = Wren.tertiary, modifier = Modifier.padding(top = 6.dp))
+                Text(c.methodLabel, style = MaterialTheme.typography.labelSmall, color = Wren.tertiary, modifier = Modifier.padding(top = 4.dp))
             }
         }
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 56.dp, vertical = 36.dp)) {
+        Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 28.dp).width(PanelWidth)) {
             if (c.skip != null) {
-                Box(Modifier.fillMaxWidth().padding(bottom = 18.dp), contentAlignment = Alignment.CenterEnd) {
+                Box(Modifier.fillMaxWidth().padding(bottom = 14.dp), contentAlignment = Alignment.CenterEnd) {
                     PillButton(skipText(c.skip, c.countdown), onSkip, icon = Icons.Rounded.SkipNext, primary = true)
                 }
             }
-            c.currentChapter?.title?.takeIf { it.isNotEmpty() && c.chapters.size > 1 }?.let {
-                Text(it, style = MaterialTheme.typography.labelLarge, color = Wren.secondary, modifier = Modifier.padding(bottom = 8.dp))
-            }
-            SeekBar(c, Modifier.focusRequester(seekBar))
-            Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-                val at = c.scrub
-                Text(formatClock(at ?: c.position), style = MaterialTheme.typography.labelMedium, color = if (at != null) Wren.text else Wren.secondary)
-                Spacer(Modifier.weight(1f))
-                Text(if (c.duration > 0) "-" + formatClock(c.duration - c.position) else "", style = MaterialTheme.typography.labelMedium, color = Wren.secondary)
-            }
-            Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                RoundButton(if (c.paused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause, if (c.paused) "Play" else "Pause", { c.togglePause() }, Modifier.focusRequester(playButton))
-                if (c.audioOptions.size > 1) PillButton("Audio", { onPanel(PlayerPanel.Audio) }, icon = Icons.Rounded.Audiotrack)
-                if (c.subtitleOptions.isNotEmpty()) PillButton("Subtitles", { onPanel(PlayerPanel.Subtitles) }, icon = Icons.Rounded.Subtitles)
-                if (c.versions.size > 1) PillButton("Version", { c.refreshVersions(); onPanel(PlayerPanel.Version) }, icon = Icons.Rounded.Layers)
-                if (c.chapters.size > 1) PillButton("Chapters", { onPanel(PlayerPanel.Chapters) }, icon = Icons.Rounded.Toc)
+            // One floating panel, like the Mac player's: the buttons, then the timeline.
+            Column(
+                Modifier.fillMaxWidth()
+                    .background(Color(0xFF141418).copy(alpha = 0.68f), RoundedCornerShape(20.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(20.dp))
+                    .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 14.dp),
+            ) {
+                Box(Modifier.fillMaxWidth().height(54.dp)) {
+                    c.currentChapter?.title?.takeIf { it.isNotEmpty() && c.chapters.size > 1 }?.let {
+                        Text(it, style = MaterialTheme.typography.labelMedium, color = Wren.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.align(Alignment.CenterStart).widthIn(max = 190.dp))
+                    }
+                    Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                        PlayerButton(Icons.Rounded.Replay10, "Back 10 seconds", { c.seekBy(-10.0) })
+                        PlayerButton(if (c.paused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause, if (c.paused) "Play" else "Pause", { c.togglePause() },
+                            Modifier.focusRequester(playButton), big = true)
+                        PlayerButton(Icons.Rounded.Forward10, "Forward 10 seconds", { c.seekBy(10.0) })
+                    }
+                    // Smaller than the transport, so it stays the centre of the panel.
+                    Row(Modifier.align(Alignment.CenterEnd), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (c.audioOptions.size > 1) PlayerButton(Icons.Rounded.Audiotrack, "Audio", { onPanel(PlayerPanel.Audio) }, small = true)
+                        if (c.subtitleOptions.isNotEmpty()) PlayerButton(Icons.Rounded.Subtitles, "Subtitles", { onPanel(PlayerPanel.Subtitles) }, small = true)
+                        if (c.versions.size > 1) PlayerButton(Icons.Rounded.Layers, "Version", { c.refreshVersions(); onPanel(PlayerPanel.Version) }, small = true)
+                        if (c.chapters.size > 1) PlayerButton(Icons.Rounded.Toc, "Chapters", { onPanel(PlayerPanel.Chapters) }, small = true)
+                    }
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val at = c.scrub
+                    Text(formatClock(at ?: c.position), style = MaterialTheme.typography.labelMedium, color = if (at != null) Wren.text else Wren.secondary,
+                        modifier = Modifier.widthIn(min = 56.dp))
+                    Box(Modifier.weight(1f).padding(horizontal = 14.dp)) { SeekBar(c, Modifier.focusRequester(seekBar)) }
+                    Text(if (c.duration > 0) "-" + formatClock(c.duration - (at ?: c.position)) else "", style = MaterialTheme.typography.labelMedium, color = Wren.secondary,
+                        textAlign = TextAlign.End, modifier = Modifier.widthIn(min = 56.dp))
+                }
             }
         }
+    }
+}
+
+private val PanelWidth = 720.dp
+
+/** A plain icon on the panel, white when focused, with its name in a tip above it. */
+@Composable
+private fun PlayerButton(icon: ImageVector, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, big: Boolean = false, small: Boolean = false) {
+    var focused by remember { mutableStateOf(false) }
+    val tip by animateFloatAsState(if (focused) 1f else 0f, label = "tip")
+    val size = if (big) 54.dp else if (small) 38.dp else 44.dp
+    Box(Modifier.size(size)) {
+        Surface(
+            onClick = onClick,
+            modifier = modifier.size(size).onFocusChanged { focused = it.isFocused },
+            shape = ClickableSurfaceDefaults.shape(CircleShape),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = Color.Transparent, contentColor = Wren.text,
+                focusedContainerColor = Color.White, focusedContentColor = Color.Black,
+            ),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+        ) {
+            Icon(icon, contentDescription = label, modifier = Modifier.align(Alignment.Center).size(if (big) 32.dp else if (small) 21.dp else 27.dp))
+        }
+        // Takes no room, so the buttons stay evenly spaced.
+        Text(
+            label, style = MaterialTheme.typography.labelMedium, color = Wren.text, maxLines = 1,
+            modifier = Modifier.align(Alignment.TopCenter).wrapContentSize(unbounded = true).offset(y = -(size / 2 + 8.dp)).alpha(tip)
+                .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 3.dp),
+        )
     }
 }
 
@@ -326,7 +397,14 @@ private fun SeekBar(c: PlayerController, modifier: Modifier = Modifier) {
                 .focusable(),
             contentAlignment = Alignment.Center,
         ) {
-            Bar(fraction, Modifier.fillMaxWidth().height(if (focused) 10.dp else 5.dp), color = if (focused) Color.White else Wren.ember)
+            // The track shows its full length, so the start of a film doesn't read as an empty gap.
+            Box(Modifier.fillMaxWidth().height(if (focused) 6.dp else 4.dp).background(Color.White.copy(alpha = 0.22f), CircleShape)) {
+                Box(Modifier.fillMaxHeight().fillMaxWidth(fraction.coerceIn(0f, 1f)).background(if (focused) Color.White else Wren.ember, CircleShape))
+            }
+            if (focused) {
+                val x = (barWidth * fraction.coerceIn(0f, 1f) - 7.dp).coerceIn(0.dp, (barWidth - 14.dp).coerceAtLeast(0.dp))
+                Box(Modifier.align(Alignment.CenterStart).offset(x = x).size(14.dp).background(Color.White, CircleShape))
+            }
         }
         if (at != null) {
             // Rides above the bar at the scrub point, kept on screen at the ends.
