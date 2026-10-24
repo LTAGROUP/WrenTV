@@ -3,6 +3,8 @@ package com.wrentv.tv.ui.screens
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import com.wrentv.tv.ui.LocalRouteKey
+import com.wrentv.tv.ui.LocalAmbient
+import androidx.compose.ui.focus.onFocusChanged
 import com.wrentv.tv.ui.LocalNavigator
 import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.remember
@@ -53,21 +55,23 @@ import com.wrentv.tv.ui.rememberFocus
 import com.wrentv.tv.ui.rememberLoaded
 
 /**
- * An actor or crew member over their best-known title's artwork: photo,
- * details and biography, then rows of what they're in with the role under
- * each title. Selecting a title opens its page; Back returns here.
+ * An actor or crew member: photo, details and biography over a soft colour
+ * from their photo, then rows of what they're in with the role under each
+ * title. A focused title brings its artwork in; back up at the top, the page
+ * is theirs again. Selecting a title opens its page; Back returns here.
  */
 @Composable
 fun PersonScreen(id: Int, name: String) {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
     val route = LocalRouteKey.current
+    val ambient = LocalAmbient.current
     val page = rememberLoaded<Person>("person:$id") { state.api?.person(id) }
     val list = rememberLazyListState()
     val p = page.value
     val facts = p?.facts.orEmpty()
     val hero = HeroEntry(
-        id = "person:$id", title = p?.name ?: name, backdrop = p?.backdropPath, logo = null,
+        id = "person:$id", title = p?.name ?: name, backdrop = null, logo = null,
         meta = facts, badges = emptyList(), overview = null, item = null,
     )
     // A biography too long for its card opens up into a page of its own to
@@ -97,6 +101,9 @@ fun PersonScreen(id: Int, name: String) {
         reading = open
         refocus = if (open) bioStart else bioCard
     }
+    // Not their best-known title's art: that reads as if its poster had focus.
+    val atTop = { ambient.clear(route, hero, p?.profilePath) }
+    LaunchedEffect(p?.profilePath) { if (ambient.route != route || ambient.path == null) atTop() }
     val readingRows = if (reading && chunks.isNotEmpty()) chunks.size + if (knownFor) 1 else 0 else 0
     // Back closes the text before it leaves the page.
     BackHandler(enabled = readingRows > 0) { read(false) }
@@ -104,12 +111,12 @@ fun PersonScreen(id: Int, name: String) {
         when {
             p != null -> {
                 if (readingRows > 0) {
-                    row("about") { ReadingHeader(p, chunks[0], bioStart) { read(false) } }
+                    row("about") { Box(Modifier.onFocusChanged { if (it.hasFocus) atTop() }) { ReadingHeader(p, chunks[0], bioStart) { read(false) } } }
                     chunks.drop(1).forEachIndexed { i, text ->
                         row("bio:${i + 1}") { BioChunk(p.id, i + 1, text, last = i + 2 == chunks.size) { read(false) } }
                     }
                 } else {
-                    row("about") { About(p, bioCard) { read(true) } }
+                    row("about") { Box(Modifier.onFocusChanged { if (it.hasFocus) atTop() }) { About(p, bioCard) { read(true) } } }
                 }
                 p.rows.forEach { r ->
                     row("row:${r.title}") {

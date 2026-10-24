@@ -55,7 +55,12 @@ class AmbientState {
     var entry by mutableStateOf<HeroEntry?>(null)
         private set
 
+    /** An image the page takes only its colour from, while no title's art is showing. */
+    var wash by mutableStateOf<String?>(null)
+        private set
+
     fun show(route: String, backdrop: String?, entry: HeroEntry? = null) {
+        if (route != this.route) wash = null
         if (entry != null) {
             this.route = route
             this.entry = entry
@@ -63,6 +68,14 @@ class AmbientState {
         if (backdrop.isNullOrEmpty()) return
         this.route = route
         path = backdrop
+    }
+
+    /** No artwork: just a soft colour taken from [wash], for a page's own top. */
+    fun clear(route: String, entry: HeroEntry?, wash: String?) {
+        this.route = route
+        this.entry = entry
+        this.wash = wash
+        path = null
     }
 }
 
@@ -99,10 +112,12 @@ fun AmbientBackdrop(routeKey: String) {
         }
     }
     val url = shown?.let { api?.imageUrl(it, "w1280") }
+    val wash = ambient.wash.takeIf { ambient.route == routeKey && url == null }?.let { api?.imageUrl(it, "w185") }
     var tint by remember { mutableStateOf<Color?>(null) }
-    LaunchedEffect(url) { tint = url?.let { dominantColor(context, it) } ?: tint.takeIf { url != null } }
+    LaunchedEffect(url, wash) { tint = (url ?: wash)?.let { dominantColor(context, it) } ?: tint.takeIf { url != null || wash != null } }
     val base = Wren.background
-    val bg by animateColorAsState(tint?.let { lerp(base, it, 0.42f) } ?: base, tween(700), label = "ambient")
+    // A wash on its own stays fainter than art's: just a hint of colour.
+    val bg by animateColorAsState(tint?.let { lerp(base, it, if (url != null) 0.42f else 0.26f) } ?: base, tween(700), label = "ambient")
     Box(Modifier.fillMaxSize().background(bg)) {
         Crossfade(url, animationSpec = tween(650), label = "backdrop") { u ->
             if (u == null) return@Crossfade
