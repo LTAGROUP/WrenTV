@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -126,6 +127,67 @@ func Probe(ctx context.Context, ffprobe, input string) (*Info, error) {
 		return nil, fmt.Errorf("ffprobe: %w", err)
 	}
 	return parseProbe(out)
+}
+
+// ProbeURL runs ffprobe against a live URL with the provider's User-Agent and
+// a bounded read timeout, so a stalled stream cannot hold the process. The
+// caller's context still controls the overall deadline.
+func ProbeURL(ctx context.Context, ffprobe, input, userAgent string) (*Info, error) {
+	return ProbeURLWithHeaders(ctx, ffprobe, input, userAgent, nil)
+}
+
+// ProbeURLWithHeaders also sends a provider's allowlisted request headers, so
+// a stream that refuses an anonymous probe is measured the way it is played.
+// The caller is responsible for the allowlist and control-character checks
+// (livetv.SanitizeRequestHeaders); a header name or value containing a newline
+// would otherwise inject another ffprobe argument.
+func ProbeURLWithHeaders(ctx context.Context, ffprobe, input, userAgent string, headers map[string]string) (*Info, error) {
+	args := probeURLArgs(input, userAgent, headers)
+	cmd := exec.CommandContext(ctx, ffprobe, args...)
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("ffprobe: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return nil, fmt.Errorf("ffprobe: %w", err)
+	}
+	return parseProbe(out)
+}
+
+// probeURLArgs builds the ffprobe command. The agent goes through -user_agent
+// (the option ffprobe applies itself); the rest of the identity goes through
+// -headers, CRLF separated and sorted so the command is deterministic.
+func probeURLArgs(input, userAgent string, headers map[string]string) []string {
+	args := []string{"-v", "error", "-hide_banner",
+		"-probesize", "5000000", "-analyzeduration", "5000000", "-rw_timeout", "10000000",
+		"-show_format", "-show_streams", "-of", "json"}
+	if agent := headers["User-Agent"]; agent != "" {
+		userAgent = agent
+	}
+	if userAgent != "" {
+		args = append(args, "-user_agent", userAgent)
+	}
+	if len(headers) > 0 {
+		names := make([]string, 0, len(headers))
+		for name := range headers {
+			if name == "User-Agent" {
+				continue
+			}
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		var b strings.Builder
+		for _, name := range names {
+			b.WriteString(name)
+			b.WriteString(": ")
+			b.WriteString(headers[name])
+			b.WriteString("\r\n")
+		}
+		if b.Len() > 0 {
+			args = append(args, "-headers", b.String())
+		}
+	}
+	return append(args, "-i", input)
 }
 
 func parseProbe(out []byte) (*Info, error) {

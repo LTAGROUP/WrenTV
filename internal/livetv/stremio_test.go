@@ -38,7 +38,7 @@ func TestStremioChannels(t *testing.T) {
 		case strings.HasSuffix(p, "/stream/tv/ch:news.json"):
 			json.NewEncoder(w).Encode(map[string]any{"streams": []map[string]any{
 				{"infoHash": "abc"},
-				{"url": "http://cdn.example/news.m3u8", "behaviorHints": map[string]any{"proxyHeaders": map[string]any{"request": map[string]string{"User-Agent": "Addon/1"}}}},
+				{"url": "http://cdn.example/news.m3u8", "behaviorHints": map[string]any{"proxyHeaders": map[string]any{"request": map[string]string{"User-Agent": "Addon/1", "Referer": "http://cdn.example/", "Cookie": "sid=secret"}}}},
 			}})
 		default:
 			http.NotFound(w, r)
@@ -66,9 +66,17 @@ func TestStremioChannels(t *testing.T) {
 	if c := byName["Sport One"]; c.Group != "Channels" || c.Logo != "http://logo/sport.png" {
 		t.Errorf("sport: %+v", c.Channel)
 	}
-	link, agent, err := s.resolveStremio(ctx, s.Channel(byName["News 24"].ID))
+	link, agent, headers, err := s.resolveStremio(ctx, s.Channel(byName["News 24"].ID))
 	if err != nil || link != "http://cdn.example/news.m3u8" || agent != "Addon/1" {
 		t.Fatalf("resolve = %q, %q, %v", link, agent, err)
+	}
+	// Only the allowlisted identity travels with the stream; a credential the
+	// addon sends is dropped rather than forwarded.
+	if headers["User-Agent"] != "Addon/1" || headers["Referer"] != "http://cdn.example/" {
+		t.Fatalf("headers = %+v", headers)
+	}
+	if _, leaked := headers["Cookie"]; leaked {
+		t.Fatalf("credential forwarded: %+v", headers)
 	}
 	sess, err := s.Play(ctx, "u", byName["News 24"].ID, false)
 	if err != nil || sess.upstream != "http://cdn.example/news.m3u8" || sess.Kind != "hls" {

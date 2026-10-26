@@ -61,6 +61,19 @@ class AppState(context: Context) {
     /** The server's live TV channels, kept for flipping through them in the player. */
     var liveChannels by mutableStateOf<List<LiveChannel>>(emptyList())
         private set
+    /**
+     * The Stremio addon entries the listing carries. They are Live TV entries
+     * like a channel — the same list and the same player — so they are kept
+     * beside the channels rather than in a browsing mode of their own.
+     */
+    var liveEvents by mutableStateOf<List<LiveEvent>>(emptyList())
+        private set
+    /** Every configured provider, addon or not, so a row can name where it comes from. */
+    var liveProviders by mutableStateOf<List<LiveProvider>>(emptyList())
+        private set
+    /** At least one refresh has finished: an empty listing means "nothing", not "still loading". */
+    var livePrepared by mutableStateOf(false)
+        private set
     val liveTv: Boolean get() = server?.liveTv == true
     /** The channel last watched on this TV, where Live TV starts. */
     var lastChannel: String?
@@ -77,10 +90,19 @@ class AppState(context: Context) {
         recentSearches = (listOf(t) + recentSearches.filterNot { it.equals(t, ignoreCase = true) }).take(8)
     }
 
-    /** Fetches the channels and what's on them now. */
+    /**
+     * Fetches the one Live TV listing: channels, addon events and providers,
+     * which the server answers together. A screen then never shows one kind
+     * while the other is still missing.
+     */
     suspend fun loadLiveChannels(): List<LiveChannel> {
         val api = api ?: return liveChannels
-        return api.liveChannels().also { liveChannels = it }
+        val listing = api.liveListing()
+        liveEvents = listing.events
+        liveProviders = listing.providers
+        livePrepared = listing.prepared
+        liveChannels = listing.channels
+        return listing.channels
     }
     var api by mutableStateOf<WrenTVApi?>(null)
         private set

@@ -1,0 +1,327 @@
+{
+  "events": [
+    {
+      "id": "887-2026",
+      "date": "2026-09-12T04:00Z",
+      "name": "Guadalajara Open presentado por Santander",
+      "groupings": [
+        {
+          "competitions": [
+            {
+              "id": "185909",
+              "uid": "s:850~l:900~e:887-2026~c:185909",
+              "date": "2026-09-12T16:05Z",
+              "startDate": "2026-09-12T16:05Z",
+              "timeValid": true,
+              "recent": false,
+              "status": {
+                "period": 2,
+                "type": {
+                  "id": "3",
+                  "name": "STATUS_FINAL",
+                  "state": "post",
+                  "completed": true,
+                  "description": "Final",
+                  "detail": "Final",
+                  "shortDetail": "Final"
+                }
+              },
+              "venue": {
+                "fullName": "Guadalajara, Mexico",
+                "court": "Cancha  2"
+              },
+              "format": {
+                "regulation": {
+                  "periods": 3
+                }
+              },
+              "notes": [
+                {
+                  "text": "Katrina Scott (USA) bt Alexandra Panova (RUS) 6-2 6-4",
+                  "type": "event"
+                }
+              ],
+              "geoBroadcasts": [],
+              "broadcasts": [],
+              "broadcast": "",
+              "competitors": [
+                {
+                  "id": "7812",
+                  "uid": "s:850~l:900~a:7812",
+                  "type": "athlete",
+                  "order": 2,
+                  "homeAway": "away",
+                  "winner": true,
+                  "linescores": [
+                    {
+                      "value": 6.0,
+                      "winner": true
+                    },
+                    {
+                      "value": 6.0,
+                      "winner": true
+                    }
+                  ],
+                  "athlete": {
+                    "displayName": "Katrina Scott",
+                    "shortName": "K. Scott",
+                    "fullName": "Katrina Scott"
+                  },
+                  "statistics": []
+                },
+                {
+                  "id": "1455",
+                  "uid": "s:850~l:900~a:1455",
+                  "type": "athlete",
+                  "order": 1,
+                  "homeAway": "home",
+                  "winner": false,
+                  "linescores": [
+                    {
+                      "value": 2.0,
+                      "winner": false
+                    },
+                    {
+                      "value": 4.0,
+                      "winner": false
+                    }
+                  ],
+                  "athlete": {
+                    "displayName": "Alexandra Panova",
+                    "shortName": "A. Panova",
+                    "fullName": "Alexandra Panova"
+                  },
+                  "statistics": []
+                }
+              ],
+              "tournamentId": 887,
+              "type": {
+                "id": "2",
+                "text": "Women's Singles",
+                "slug": "womens-singles"
+              },
+              "round": {
+                "id": "11",
+                "displayName": "Qualifying 1st Round"
+              },
+              "wasSuspended": false
+            },
+            {
+              "id": "185908",
+              "uid": "s:850~l:900~e:887-2026~c:185908",
+              "date": "2026-09-12T16:05Z",
+              "startDate": "2026-09-12T16:05Z",
+              "timeValid": true,
+              "recent": false,
+              "status": {
+                "period": 3,
+                "type": {
+                  "id": "3",
+                  "name": "STATUS_FINAL",
+                  "state": "post",
+                  "completed": true,
+                  "description": "Final",
+                  "detail": "Final",
+                  "shortDetail": "Final"
+                }
+              },
+              "venue": {
+                "fullName": "Guadalajara, Mexico",
+                "court": "Estadio Skarch"
+              },
+              "format": {
+                "regulation": {
+                  "periods": 3
+                }
+              },
+              "notes": [
+                {
+                  "text": "Nadiia Kichenok (UKR) bt Nicole Melichar-Martinez (USA) 6-3 4-6 7-6 (12-10)",
+                  "type": "event"
+                }
+              ],
+              "geoBroadcasts": [],
+              "broadcasts": [],
+              "broadcast": "",
+              "competitors": [
+                {
+                  "id": "2298",
+                  "uid": "s:850~l:900~a:2298",
+                  "type": "athlete",
+                  "order": 2,
+                  "homeAway": "away",
+                  "winner": false,
+                  "linescores": [
+                    {
+                      "value": 3.0,
+                      "winner": false
+                    },
+                    {
+                      "value": 6.0,
+                      "winner": true
+                    },
+                    {
+                      "value": 6.0,
+                      "tiebreak": 10,
+                      "winner": false
+                    }
+                  ],
+                  "athlete": {
+                    "displayName": "Nicole Melichar-Martinez",
+                    "shortName": "N. Melichar-Martinez",
+                    "fullName": "Nicole Melichar-Martinez"
+                  },
+                  "statistics": []
+                },
+                {
+                  "id": "2777",
+                  "uid": "s:850~l:900~a:2777",
+                  "type": "athlete",
+                  "order": 1,
+                  "homeAway": "home",
+                  "winner": true,
+                  "linescores": [
+                    {
+                      "value": 6.0,
+                      "winner": true
+                    },
+                    {
+                      "value": 4.0,
+                      "winner": false
+                    },
+                    {
+                      "value": 7.0,
+                      "tiebreak": 12,
+                      "winner": true
+                    }
+                  ],
+                  "athlete": {
+                    "displayName": "Nadiia Kichenok",
+                    "shortName": "N. Kichenok",
+                    "fullName": "Nadiia Kichenok"
+                  },
+                  "statistics": []
+                }
+              ],
+              "tournamentId": 887,
+              "type": {
+                "id": "2",
+                "text": "Women's Singles",
+                "slug": "womens-singles"
+              },
+              "round": {
+                "id": "11",
+                "displayName": "Qualifying 1st Round"
+              },
+              "wasSuspended": false
+            }
+          ]
+        },
+        {
+          "competitions": [
+            {
+              "id": "183819",
+              "uid": "s:850~l:900~e:887-2026~c:183819",
+              "date": "2026-09-13T19:20Z",
+              "startDate": "2026-09-13T19:20Z",
+              "timeValid": true,
+              "recent": false,
+              "status": {
+                "period": 2,
+                "type": {
+                  "id": "3",
+                  "name": "STATUS_FINAL",
+                  "state": "post",
+                  "completed": true,
+                  "description": "Final",
+                  "detail": "Final",
+                  "shortDetail": "Final"
+                }
+              },
+              "venue": {
+                "fullName": "Guadalajara, Mexico",
+                "court": "Cancha  2"
+              },
+              "format": {
+                "regulation": {
+                  "periods": 3
+                }
+              },
+              "notes": [
+                {
+                  "text": "(4) Mariia Kozyreva (RUS) & Maia Lumsden (GBR) bt Kayla Day (USA) & Renata Zarazua (MEX) 6-3 6-3",
+                  "type": "event"
+                }
+              ],
+              "geoBroadcasts": [],
+              "broadcasts": [],
+              "broadcast": "",
+              "competitors": [
+                {
+                  "id": "2974-2751",
+                  "uid": "s:850~l:900~t:2974-2751",
+                  "type": "team",
+                  "order": 2,
+                  "homeAway": "away",
+                  "winner": false,
+                  "linescores": [
+                    {
+                      "value": 3.0,
+                      "winner": false
+                    },
+                    {
+                      "value": 3.0,
+                      "winner": false
+                    }
+                  ],
+                  "roster": {
+                    "displayName": "Kayla Day / Renata Zarazua",
+                    "shortDisplayName": "K. Day / R. Zarazua"
+                  },
+                  "statistics": []
+                },
+                {
+                  "id": "15341-2397",
+                  "uid": "s:850~l:900~t:15341-2397",
+                  "type": "team",
+                  "order": 1,
+                  "homeAway": "home",
+                  "winner": true,
+                  "curatedRank": {
+                    "current": 4
+                  },
+                  "linescores": [
+                    {
+                      "value": 6.0,
+                      "winner": true
+                    },
+                    {
+                      "value": 6.0,
+                      "winner": true
+                    }
+                  ],
+                  "roster": {
+                    "displayName": "Mariia Kozyreva / Maia Lumsden",
+                    "shortDisplayName": "M. Kozyreva / M. Lumsden"
+                  },
+                  "statistics": []
+                }
+              ],
+              "tournamentId": 887,
+              "type": {
+                "id": "4",
+                "text": "Women's Doubles",
+                "slug": "womens-doubles"
+              },
+              "round": {
+                "id": "1",
+                "displayName": "Round 1"
+              },
+              "wasSuspended": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

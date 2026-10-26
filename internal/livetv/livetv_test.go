@@ -1,6 +1,11 @@
 package livetv
 
 import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -99,6 +104,19 @@ func TestParseXMLTV(t *testing.T) {
 	}
 }
 
+// A provider can answer a guide request with a 200 HTML error page. That must
+// be an error, not an empty guide that hides the broken link.
+func TestParseXMLTVRejectsNonGuideResponses(t *testing.T) {
+	nilGuide := Guide{}
+	from := time.Now()
+	if err := ParseXMLTV(strings.NewReader("<html><body>Not found</body></html>"), nil, from, from.Add(time.Hour), nilGuide); err == nil {
+		t.Fatal("an HTML page was accepted as an XMLTV guide")
+	}
+	if err := ParseXMLTV(strings.NewReader(""), nil, from, from.Add(time.Hour), nilGuide); err == nil {
+		t.Fatal("an empty guide was accepted")
+	}
+}
+
 func TestRewrite(t *testing.T) {
 	x := &Session{key: []byte("k")}
 	base, _ := url.Parse("http://cdn.example/live/chan/index.m3u8")
@@ -141,5 +159,68 @@ func TestTidyDropsOverlaps(t *testing.T) {
 	g.Tidy()
 	if len(g["a"]) != 2 || g["a"][0].Title != "A" || g["a"][1].Title != "B" {
 		t.Errorf("tidy: %+v", g["a"])
+	}
+}
+
+// Sports search relies on the retained guide: a fixture four days out is
+// searchable, while anything past the seven-day horizon is not kept in memory.
+func TestGuideRetainsSevenDaySearchHorizon(t *testing.T) {
+	now := time.Now()
+	channel := &Channel{ID: "c1", Name: "Sports One", TvgID: "sports1"}
+	entry := func(title string, start time.Time) string {
+		return `<programme start="` + start.Format("20060102150405") + ` +0000" stop="` +
+			start.Add(time.Hour).Format("20060102150405") + ` +0000" channel="sports1"><title>` + title + `</title></programme>`
+	}
+	doc := `<tv><channel id="sports1"><display-name>Sports One</display-name></channel>` +
+		entry("Weekend fixture", now.Add(4*24*time.Hour)) +
+		entry("Next month", now.Add(8*24*time.Hour)) + `</tv>`
+	guide := Guide{}
+	if err := ParseXMLTV(strings.NewReader(doc), []*Channel{channel}, now.Add(-guideBehind), now.Add(guideAhead), guide); err != nil {
+		t.Fatal(err)
+	}
+	guide.Tidy()
+	programs := guide[channel.ID]
+	if len(programs) != 1 || programs[0].Title != "Weekend fixture" {
+		t.Fatalf("seven-day guide = %+v", programs)
+	}
+	// The search helper reads the same retained window.
+	service := &Service{visible: []*Channel{channel}, guide: guide}
+	live, upcoming := service.SearchPrograms(func(title, description string) bool {
+		return strings.Contains(strings.ToLower(title), "fixture")
+	}, 10)
+	if len(live) != 0 || len(upcoming) != 1 || upcoming[0].ChannelID != channel.ID {
+		t.Fatalf("guide search = %+v %+v", live, upcoming)
+	}
+}
+
+// Ephemeral sources use the same session and probe guards as channels, without
+// ever accepting a non-HTTP location from a provider.
+func TestPlayURLAndProbeStreamShareChannelGuards(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		_, _ = io.WriteString(w, "#EXTM3U\n#EXT-X-TARGETDURATION:6\n")
+	}))
+	defer upstream.Close()
+	cfg, err := config.Load(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(cfg, t.TempDir())
+	if _, err := s.PlayURL(context.Background(), "u", "addon:x", "file:///etc/passwd", "", false); err == nil {
+		t.Fatal("non-HTTP source was accepted")
+	}
+	sess, err := s.PlayURL(context.Background(), "u", "addon:x", upstream.URL+"/live.m3u8", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Type() != "hls" {
+		t.Fatalf("stream type = %q", sess.Type())
+	}
+	if !s.Stop(sess.ID, "u", false) || s.Playing() != 0 {
+		t.Fatal("addon session was not stopped")
+	}
+	// Without ffprobe the honest answer is unavailable, never a guessed quality.
+	if _, err := s.ProbeStream(context.Background(), upstream.URL+"/live.m3u8", ""); !errors.Is(err, ErrProbeUnavailable) {
+		t.Fatalf("probe without ffprobe = %v", err)
 	}
 }

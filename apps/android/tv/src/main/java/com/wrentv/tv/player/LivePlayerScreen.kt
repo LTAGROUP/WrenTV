@@ -65,6 +65,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.wrentv.tv.data.LiveChannel
+import com.wrentv.tv.data.LiveEvent
 import com.wrentv.tv.ui.Bar
 import com.wrentv.tv.ui.LocalAppState
 import com.wrentv.tv.ui.LocalNavigator
@@ -83,26 +84,34 @@ import kotlinx.coroutines.delay
  * Live TV, full screen. Up and down (or channel up and down) flip channels,
  * OK opens the channel list, number keys tune straight to a channel, and
  * Back closes whatever is showing, then leaves.
+ *
+ * A Stremio addon's entry plays here too: [event] carries the addon's identity,
+ * and the server picks and starts the feed the same way it does for the browser.
  */
 @Composable
-fun LivePlayerScreen(channelId: String, group: String? = null) {
+fun LivePlayerScreen(channelId: String, group: String? = null, event: LiveEvent? = null) {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
     // Opened from a group, flipping stays in it, in the order the group page shows.
     val pick = { all: List<LiveChannel> -> if (group == null) all else all.inGroup(group, System.currentTimeMillis() / 1000) }
     var channels by remember { mutableStateOf(pick(state.liveChannels)) }
     var error by remember { mutableStateOf<String?>(null) }
-    // Opened without the list loaded (straight from Home, say): fetch it first.
+    // An addon entry isn't in the channel list, so there is nothing to wait for;
+    // a channel opened without the list loaded (straight from Home, say) is
+    // fetched first.
     LaunchedEffect(Unit) {
-        if (channels.none { it.id == channelId }) {
+        if (event == null && channels.none { it.id == channelId }) {
             runCatching { state.loadLiveChannels() }
                 .onSuccess { channels = pick(it); if (it.none { c -> c.id == channelId }) error = "That channel isn't available any more." }
                 .onFailure { error = it.message ?: "Couldn't load channels" }
         }
     }
-    val start = channels.firstOrNull { it.id == channelId }
+    // The event is played as itself: no channel number, no guide and no playlist
+    // entry is invented for it, and its id is the server's own entry id.
+    val start = event?.let { LiveChannel(id = it.id, name = it.name, logo = it.logo, group = it.group, source = it.source) }
+        ?: channels.firstOrNull { it.id == channelId }
     when {
-        start != null -> LivePlayer(channels, start, pick)
+        start != null -> LivePlayer(channels, start, pick, event)
         error != null -> Box(Modifier.fillMaxSize().background(Color.Black)) {
             Failed(error!!, retry = null, back = { nav.back() })
         }
@@ -111,11 +120,11 @@ fun LivePlayerScreen(channelId: String, group: String? = null) {
 }
 
 @Composable
-private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel, pick: (List<LiveChannel>) -> List<LiveChannel>) {
+private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel, pick: (List<LiveChannel>) -> List<LiveChannel>, event: LiveEvent? = null) {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
     val context = LocalContext.current
-    val c = remember { LiveController(context, state.api, channels, start, state.scope) }
+    val c = remember { LiveController(context, state.api, channels, start, state.scope, event) }
     DisposableEffect(c) {
         c.start()
         onDispose { c.stop() }
@@ -126,8 +135,9 @@ private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel, pick: (L
         onDispose { UiSounds.muted = false }
     }
     // Remember where to start next time, once a channel has actually been landed on.
+    // An addon event is not a channel to resume on, so it is not remembered.
     LaunchedEffect(c.channel.id, c.phase) {
-        if (c.phase != LiveController.Phase.Playing) return@LaunchedEffect
+        if (c.phase != LiveController.Phase.Playing || event != null) return@LaunchedEffect
         delay(3_000)
         state.lastChannel = c.channel.id
     }

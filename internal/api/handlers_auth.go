@@ -24,6 +24,7 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 		"localAccounts": s.Local != nil,
 		"streaming":     s.Streaming.Active(),
 		"liveTv":        s.LiveTV.Active(),
+		"sports":        s.Sports != nil && s.Sports.GetStatus().Enabled,
 		"localUrls":     s.advertisedLocalURLs(),
 	}
 	if s.Supa != nil {

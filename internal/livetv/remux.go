@@ -35,8 +35,19 @@ func (m *remuxer) start(x *Session) {
 			close(m.done)
 			return
 		}
-		args := []string{"-hide_banner", "-loglevel", "error", "-nostdin",
-			"-user_agent", ua(x.userAgent),
+		args := []string{"-hide_banner", "-loglevel", "error", "-nostdin"}
+		// A provider that only serves with an allowlisted identity gets the
+		// same headers here as on the direct proxy path. The agent goes through
+		// -user_agent, so it never competes with a default the build supplies.
+		agent := x.headers["User-Agent"]
+		if agent == "" {
+			agent = ua(x.userAgent)
+		}
+		args = append(args, "-user_agent", agent)
+		if block := requestHeaderBlock(x.headers); block != "" {
+			args = append(args, "-headers", block)
+		}
+		args = append(args,
 			"-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
 			"-i", x.upstream,
 			"-map", "0:v:0?", "-map", "0:a:0?",
@@ -45,7 +56,7 @@ func (m *remuxer) start(x *Session) {
 			"-hls_flags", "delete_segments+omit_endlist+independent_segments",
 			"-hls_segment_filename", filepath.Join(m.dir, "seg%05d.ts"),
 			filepath.Join(m.dir, "index.m3u8"),
-		}
+		)
 		cmd := exec.CommandContext(x.ctx, m.ffmpeg, args...)
 		if err := cmd.Start(); err != nil {
 			m.err = err

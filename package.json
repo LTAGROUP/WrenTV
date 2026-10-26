@@ -1,0 +1,12 @@
+{
+  "name": "wrentv-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:web": "node --test internal/web/static/js/*.test.js",
+    "test:e2e": "playwright test -c e2e/playwright.config.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}

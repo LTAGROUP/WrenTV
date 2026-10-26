@@ -5,6 +5,11 @@ import * as manage from './manage.js';
 import * as browse from './browse.js';
 import * as ambient from './ambient.js';
 import * as layouts from './layouts.js';
+import * as sports from './sports.js';
+import { viewRace } from './sports-race.js';
+import { viewCycling } from './sports-cycling.js';
+import * as live from './live.js';
+import * as teamChannels from './team-channels.js';
 import { viewStats } from './stats.js';
 
 const app = $('#app');
@@ -17,6 +22,11 @@ export function go(path, replace = false) {
   render();
 }
 window.addEventListener('popstate', render);
+// A full-screen player that hands over to a page ("Change source") closes
+// itself first, then asks the router to navigate.
+window.addEventListener('wrentv:navigate', (event) => {
+  if (typeof event.detail === 'string' && event.detail) go(event.detail);
+});
 document.addEventListener('click', (e) => {
   const a = e.target.closest('a[href^="/"]');
   if (!a || e.metaKey || e.ctrlKey || e.shiftKey || a.target) return;
@@ -28,6 +38,12 @@ document.addEventListener('click', (e) => {
 const routes = [
   [/^\/$/, () => layouts.viewLayoutPage('home', 'Home', viewHome)],
   [/^\/watchlist$/, viewWatchlist],
+  [/^\/live$/, live.viewLive],
+  [/^\/sports$/, sports.viewSports],
+  [/^\/sports\/event\/([^/]+)$/, (id) => sports.viewEvent(decodeURIComponent(id))],
+  [/^\/sports\/race\/([^/]+)\/([^/]+)(?:\/([^/]+))?$/, (league, event, session) =>
+    viewRace(decodeURIComponent(league), decodeURIComponent(event), session ? decodeURIComponent(session) : '')],
+  [/^\/sports\/cycling\/([^/]+)$/, (id) => viewCycling(decodeURIComponent(id))],
   [/^\/movies$/, () => layouts.viewLayoutPage('movies', 'Movies', () => viewCatalog('movie'), '/movies/all')],
   [/^\/shows$/, () => layouts.viewLayoutPage('shows', 'TV Shows', () => viewCatalog('show'), '/shows/all')],
   [/^\/movies\/all$/, () => viewCatalog('movie')],
@@ -56,6 +72,7 @@ const routes = [
   [/^\/manage\/users$/, manage.viewUsers, true],
   [/^\/manage\/downloads$/, manage.viewDownloads, true],
   [/^\/manage\/settings$/, manage.viewSettings, true],
+  [/^\/manage\/team-channels$/, teamChannels.viewTeamChannels, true],
 ];
 
 export const canStream = () => !!(state.server?.streaming && state.limits?.canStream);
@@ -138,6 +155,9 @@ async function render() {
   }
   // A TV's sign-in code (from its QR code) is approved on its own page.
   if (location.pathname === '/link') return viewLink();
+  // Leaving the sports area stops its feed and detail timers; moving between
+  // sports pages lets the destination page start its own.
+  if (!location.pathname.startsWith('/sports')) sports.stopSports();
   for (const [re, view, admin] of routes) {
     const m = location.pathname.match(re);
     if (!m) continue;
@@ -339,6 +359,8 @@ async function shell(view, seq) {
         <a class="brand" href="/"><img class="logo" src="/brand/wren-symbol-small-on-dark.svg" alt="">${esc(state.server.name || 'Wren TV')}</a>
         <a class="nav" href="/" data-path="/">${icons.home}<span>Home</span></a>
         <a class="nav" href="/watchlist" data-path="/watchlist">${icons.bookmark}<span>Watchlist</span></a>
+        ${state.server?.liveTv ? `<a class="nav" href="/live" data-path="/live">${icons.activity}<span>Live TV</span></a>` : ''}
+        ${state.server?.sports ? `<a class="nav" href="/sports" data-path="/sports">${icons.chart}<span>Sports</span></a>` : ''}
         ${canStream() ? `<a class="nav" href="/movies" data-path="/movies">${icons.movies}<span>Movies</span></a>
           <a class="nav" href="/shows" data-path="/shows">${icons.shows}<span>TV Shows</span></a>
           <a class="nav" href="/collections" data-path="/collections">${icons.stack}<span>Collections</span></a>
@@ -352,6 +374,7 @@ async function shell(view, seq) {
           <a class="nav" href="/manage/stats" data-path="/manage/stats">${icons.chart}<span>Stats</span></a>
           <a class="nav" href="/manage/libraries" data-path="/manage/libraries">${icons.folder}<span>Libraries</span></a>
           <a class="nav" href="/manage/users" data-path="/manage/users">${icons.users}<span>${isSupabase() ? 'Sharing' : 'Users'}</span></a>
+          ${state.server?.sports && state.server?.liveTv ? `<a class="nav" href="/manage/team-channels" data-path="/manage/team-channels">${icons.chart}<span>Team Channels</span></a>` : ''}
           ${state.server.streaming ? `<a class="nav" href="/manage/downloads" data-path="/manage/downloads">${icons.download}<span>Downloads</span></a>` : ''}
           <a class="nav" href="/manage/settings" data-path="/manage/settings">${icons.settings}<span>Settings</span></a>` : ''}
         <div class="spacer"></div>

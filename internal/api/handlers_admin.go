@@ -508,7 +508,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	var liveRefetch, liveRegroup bool
 	if req.LiveTV != nil {
 		var err error
-		if liveRefetch, liveRegroup, err = s.applyLiveTV(req.LiveTV); err != nil {
+		if liveRefetch, liveRegroup, err = s.applyLiveTV(r.Context(), req.LiveTV); err != nil {
 			writeErr(w, 400, err.Error())
 			return
 		}

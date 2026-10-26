@@ -36,6 +36,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/metadata/omdb"
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 	"github.com/LTAGROUP/wrentv/internal/simkl"
+	"github.com/LTAGROUP/wrentv/internal/sports"
 	"github.com/LTAGROUP/wrentv/internal/stream"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
 	"github.com/LTAGROUP/wrentv/internal/sysstat"
@@ -221,12 +222,18 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 
 	live := livetv.New(cfg, dataDir)
 	live.FFmpeg = cfg.Transcode.FFmpegPath
+	live.FFprobe = cfg.Transcode.FFprobePath
 	live.Start(ctx)
+
+	// Sports Hub: scoreboard cache next to the other caches, polling only the
+	// leagues configured server-wide.
+	sportsSvc := sports.New(filepath.Join(dataDir, "cache"))
+	sportsSvc.SetEnabledLeagueIDs(cfg.Sports.PollingLeagueIDs())
 
 	srv := &api.Server{
 		Version: version, Cfg: cfg, DB: d, Scanner: scanner, Watcher: watcher, TMDB: tm, Streams: streams,
 		OMDb: omdb.New(func() string { return cfg.Metadata.OMDbAPIKey }, d), Markers: analyzer,
-		Streaming: streamer, LiveTV: live, Hub: hub, Hooks: hooks, Tracking: tracker, Images: images.New(filepath.Join(dataDir, "images")),
+		Streaming: streamer, LiveTV: live, Sports: sportsSvc, Hub: hub, Hooks: hooks, Tracking: tracker, Images: images.New(filepath.Join(dataDir, "images")),
 		Thumbs: thumbs.New(filepath.Join(cfg.DataDir, "cache", "thumbs"), cfg.Transcode.FFmpegPath),
 		Sys:    sysstat.Start(),
 	}
@@ -243,6 +250,7 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 		slog.Warn("server is not claimed yet: open the web app, sign in and enter this claim code",
 			"claim_code", cfg.Auth.Supabase.ClaimCode)
 	}
+	go srv.RunSportsBackground(ctx)
 	srv.Direct = direct.New(cfg, func() []string { return api.LocalURLs(cfg) }, func() { go srv.HeartbeatNow() })
 	go srv.Direct.Run(ctx)
 	go srv.RunHeartbeat(ctx)

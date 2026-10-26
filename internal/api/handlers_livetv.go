@@ -1,11 +1,15 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
+	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -16,17 +20,32 @@ import (
 
 // ---------- viewers ----------
 
+// handleLiveChannels is the one Live TV list. Channels and addon events share
+// it so a Stremio-backed provider is used through the ordinary interface: the
+// events carry the same source id as channels for the provider filter, but no
+// channel number and no guide rows are invented for them.
 func (s *Server) handleLiveChannels(w http.ResponseWriter, r *http.Request) {
-	if !s.LiveTV.Active() {
-		writeJSON(w, 200, map[string]any{"channels": []any{}})
-		return
+	source := strings.TrimSpace(r.URL.Query().Get("source"))
+	providers := s.LiveTV.Providers()
+	status := s.LiveTV.Status()
+	// The readiness fields let a caller tell an empty list during the first
+	// refresh apart from a provider that genuinely has nothing to show.
+	out := map[string]any{
+		"channels": []any{}, "events": []any{}, "providers": providers,
+		"refreshing": status.Refreshing, "prepared": status.Prepared,
+		"revision": s.LiveTV.Revision(),
 	}
-	writeJSON(w, 200, map[string]any{"channels": s.LiveTV.Channels()})
+	if s.LiveTV.Active() {
+		out["channels"] = s.LiveTV.ChannelsFor(source)
+		out["events"] = s.LiveTV.EventsFor(source)
+	}
+	writeJSON(w, 200, out)
 }
 
 func (s *Server) handleLiveGuide(w http.ResponseWriter, r *http.Request) {
 	hours := min(max(queryInt(r, "hours", 6), 1), 36)
-	writeJSON(w, 200, map[string]any{"channels": s.LiveTV.Schedule(hours)})
+	source := strings.TrimSpace(r.URL.Query().Get("source"))
+	writeJSON(w, 200, map[string]any{"channels": s.LiveTV.ScheduleFor(hours, source)})
 }
 
 func (s *Server) handleLivePlay(w http.ResponseWriter, r *http.Request) {
@@ -91,8 +110,10 @@ type liveTVPatch struct {
 }
 
 // applyLiveTV validates and applies a live TV patch. It reports whether the
-// playlists need fetching again, and whether only the groups changed.
-func (s *Server) applyLiveTV(p *liveTVPatch) (refetch, regroup bool, err error) {
+// playlists need fetching again, and whether only the groups changed. Addon
+// sources have their capabilities discovered here so they are saved with the
+// configuration and survive a restart without asking the addon again.
+func (s *Server) applyLiveTV(ctx context.Context, p *liveTVPatch) (refetch, regroup bool, err error) {
 	c := &s.Cfg.LiveTV
 	if p.Enabled != nil && *p.Enabled != c.Enabled {
 		c.Enabled = *p.Enabled
@@ -114,24 +135,67 @@ func (s *Server) applyLiveTV(p *liveTVPatch) (refetch, regroup bool, err error) 
 			old[src.ID] = src
 		}
 		var out []config.LiveTVSource
+		seenIDs := map[string]bool{}
 		for _, src := range *p.Sources {
 			src, err := cleanSource(src, old[src.ID])
 			if err != nil {
 				return false, false, err
 			}
+			// IDs key the playlist cache and the channel/guide identities. A
+			// duplicated id would make two providers share those things, so a
+			// duplicate gets a fresh identity instead of being merged.
+			for seenIDs[src.ID] {
+				src.ID = db.NewID()[:8]
+			}
+			seenIDs[src.ID] = true
 			out = append(out, src)
 		}
-		if !slices.Equal(out, c.Sources) {
+		if !sourcesEqual(out, c.Sources) {
 			refetch = true
 		}
 		c.Sources = out
 	}
+	// Discover addon capabilities that are missing (a new addon, a changed
+	// manifest link, or one saved before capabilities were stored). This is
+	// best-effort: an addon that is offline right now is still saved, and the
+	// next refresh reports its error without discarding the admin's input.
+	if s.LiveTV != nil {
+		for i := range c.Sources {
+			if !livetv.IsAddonKind(c.Sources[i].Kind) || c.Sources[i].Capabilities != nil {
+				continue
+			}
+			dctx, cancel := context.WithTimeout(ctx, addonSaveWait)
+			caps, err := s.LiveTV.AddonCapabilities(dctx, c.Sources[i])
+			cancel()
+			if err == nil {
+				c.Sources[i].Capabilities = caps
+			}
+		}
+	}
 	return refetch, regroup, nil
+}
+
+// addonSaveWait bounds the manifest fetch done while saving settings. It is
+// short enough that an offline addon doesn't hold the settings page open.
+const addonSaveWait = 6 * time.Second
+
+// sourcesEqual compares sources including their discovered capabilities.
+func sourcesEqual(a, b []config.LiveTVSource) bool {
+	return reflect.DeepEqual(a, b)
 }
 
 func cleanSource(src, old config.LiveTVSource) (config.LiveTVSource, error) {
 	src.Name = strings.TrimSpace(src.Name)
 	src.URL = strings.TrimSpace(src.URL)
+	// Capabilities are the server's discovery, never the client's claim: keep
+	// the stored ones only while the manifest link and the source kind match.
+	// A changed link (or another kind) invalidates them, and they are
+	// discovered again when saved.
+	if src.URL == strings.TrimSpace(old.URL) && src.Kind == old.Kind {
+		src.Capabilities = old.Capabilities
+	} else {
+		src.Capabilities = nil
+	}
 	src.Username = strings.TrimSpace(src.Username)
 	src.EPGURL = strings.TrimSpace(src.EPGURL)
 	src.UserAgent = strings.TrimSpace(src.UserAgent)
@@ -148,7 +212,11 @@ func cleanSource(src, old config.LiveTVSource) (config.LiveTVSource, error) {
 			return src, errors.New("a playlist link starts with http:// or https://")
 		}
 		src.Username, src.Password = "", ""
-	case "stremio":
+		src.Capabilities = nil
+	case "stremio", "sport":
+		// Both names are Stremio addons. The kind is a legacy hint: what the
+		// addon can do comes from its manifest, so a manifest with only sport,
+		// only other catalogs, or no catalogs is accepted the same way.
 		if !strings.HasPrefix(src.URL, "http://") && !strings.HasPrefix(src.URL, "https://") && !strings.HasPrefix(src.URL, "stremio://") {
 			return src, errors.New("an addon link starts with https:// or stremio://")
 		}
@@ -162,6 +230,15 @@ func cleanSource(src, old config.LiveTVSource) (config.LiveTVSource, error) {
 	}
 	if src.Name == "" {
 		src.Name = "IPTV"
+	}
+	// A guide is optional, but an explicit one must be fetchable rather than a
+	// placeholder. An unavailable host is not rejected here: the refresh
+	// reports it beside the provider without disabling its channels.
+	if src.EPGURL != "" {
+		u, err := url.Parse(src.EPGURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return src, errors.New("a guide link starts with http:// or https://")
+		}
 	}
 	return src, nil
 }
@@ -192,10 +269,17 @@ func (s *Server) handleLiveTVCheck(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	n, guides, err := s.LiveTV.Check(r.Context(), src)
-	if err != nil {
-		writeErr(w, 422, err.Error())
+	// An addon is validated against its own manifest, whatever it declares:
+	// tv channels, sport events, another catalog type or no catalogs at all.
+	// Checking it as an IPTV provider would reject a perfectly usable addon.
+	if livetv.IsAddonKind(src.Kind) {
+		s.checkAddon(w, r, src)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"channels": n, "guide": len(guides) > 0})
+	n, guides, err := s.LiveTV.Check(r.Context(), src)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"kind": src.Kind, "channels": n, "guide": len(guides) > 0, "guideCount": len(guides)})
 }

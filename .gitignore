@@ -8,3 +8,9 @@ wrentv.yaml
 .env
 .DS_Store
 supabase/.temp/
+# Local verification scratch directories
+.tmp-*/
+# Development-only gate tooling (Playwright is not part of the server build)
+node_modules/
+test-results/
+playwright-report/

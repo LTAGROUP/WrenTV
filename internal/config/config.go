@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -38,6 +39,7 @@ type Config struct {
 	Transcode    TranscodeConfig    `yaml:"transcode"`
 	Streaming    StreamingConfig    `yaml:"streaming"`
 	LiveTV       LiveTVConfig       `yaml:"live_tv"`
+	Sports       SportsConfig       `yaml:"sports"`
 	Users        UserLimitsConfig   `yaml:"users"`
 	Webhooks     []WebhookConfig    `yaml:"webhooks"`
 	Simkl        SimklConfig        `yaml:"simkl"`
@@ -136,12 +138,198 @@ type LiveTVConfig struct {
 	MaxStreams int `yaml:"max_streams,omitempty"`
 }
 
+// NormalizeSourceIDs makes every provider independently addressable. An empty
+// or duplicated id would make two providers share playlist caches, channel
+// identities and guide rows, so it gets a fresh id instead.
+func (l *LiveTVConfig) NormalizeSourceIDs() bool {
+	seen := map[string]bool{}
+	changed := false
+	for i := range l.Sources {
+		id := strings.TrimSpace(l.Sources[i].ID)
+		if id != l.Sources[i].ID {
+			l.Sources[i].ID = id
+			changed = true
+		}
+		if id == "" || seen[id] {
+			for {
+				id = randHex(4)
+				if !seen[id] {
+					break
+				}
+			}
+			l.Sources[i].ID = id
+			changed = true
+		}
+		seen[id] = true
+	}
+	return changed
+}
+
+// SportsConfig turns the Sports Hub on and selects the competitions polled
+// server-wide. An empty league list with Enabled true means every catalog
+// league, matching MediaStorm's default.
+type SportsConfig struct {
+	// Enabled is nil in configs written before the hub existed, which preserves
+	// the enabled default.
+	Enabled       *bool                        `yaml:"enabled" json:"enabled"`
+	Leagues       []string                     `yaml:"leagues,omitempty" json:"enabledLeagues"`
+	FavoriteTeams []string                     `yaml:"favorite_teams,omitempty" json:"favoriteTeamIds"`
+	Sources       []string                     `yaml:"sources,omitempty" json:"defaultSourceIds"`
+	Groups        []string                     `yaml:"groups,omitempty" json:"defaultCategoryIds"`
+	Overrides     map[string]SportsSearchScope `yaml:"overrides,omitempty" json:"leagueSearchOverrides"`
+}
+
+// SportsSearchScope limits automatic sports stream discovery for one league.
+// Empty lists mean every enabled Live TV source/category.
+type SportsSearchScope struct {
+	SourceIDs []string `yaml:"sources,omitempty" json:"sourceIds,omitempty"`
+	Groups    []string `yaml:"groups,omitempty" json:"categoryIds,omitempty"`
+}
+
+// Normalize backfills nil fields so every consumer sees a consistent, non-nil
+// shape. It never replaces an explicitly empty league selection.
+func (s *SportsConfig) Normalize() {
+	if s.Enabled == nil {
+		enabled := true
+		s.Enabled = &enabled
+	}
+	if s.Leagues == nil {
+		s.Leagues = []string{}
+	}
+	if s.FavoriteTeams == nil {
+		s.FavoriteTeams = []string{}
+	}
+	if s.Sources == nil {
+		s.Sources = []string{}
+	}
+	if s.Groups == nil {
+		s.Groups = []string{}
+	}
+	if s.Overrides == nil {
+		s.Overrides = map[string]SportsSearchScope{}
+	}
+}
+
+// IsEnabled reports the effective switch.
+func (s SportsConfig) IsEnabled() bool { return s.Enabled == nil || *s.Enabled }
+
+// PollingLeagueIDs is the effective server-wide polling selection. An empty
+// list selects the whole catalog; a disabled hub polls nothing.
+func (s SportsConfig) PollingLeagueIDs() []string {
+	if !s.IsEnabled() {
+		return []string{}
+	}
+	if len(s.Leagues) == 0 {
+		return []string{"*"}
+	}
+	return append([]string(nil), s.Leagues...)
+}
+
+// AddonCatalog is one catalog a Stremio addon declares, with the parts of its
+// declaration that decide whether Wren TV can browse it without guessing.
+type AddonCatalog struct {
+	Type string `yaml:"type" json:"type"`
+	ID   string `yaml:"id" json:"id"`
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// Searchable: the catalog accepts a search extra. Browsable: it also lists
+	// items without a query. Unsupported names any required extra Wren TV
+	// cannot supply, which makes the catalog unusable rather than absent.
+	Searchable  bool     `yaml:"searchable,omitempty" json:"searchable"`
+	Browsable   bool     `yaml:"browsable,omitempty" json:"browsable"`
+	Skip        bool     `yaml:"skip,omitempty" json:"skip"`
+	Unsupported []string `yaml:"unsupported,omitempty" json:"unsupported,omitempty"`
+}
+
+// AddonTypeModel is what one declared content type can do on this addon.
+// Model is the browsing model the viewer UI uses: "channels" for television
+// channels imported into Live TV, "events" for sports events and "catalog"
+// for any other content type that lists items and plays streams.
+type AddonTypeModel struct {
+	Type     string `yaml:"type" json:"type"`
+	Model    string `yaml:"model" json:"model"`
+	Catalogs int    `yaml:"catalogs,omitempty" json:"catalogs"`
+	Catalog  bool   `yaml:"catalog,omitempty" json:"catalog"`
+	Meta     bool   `yaml:"meta,omitempty" json:"meta"`
+	Stream   bool   `yaml:"stream,omitempty" json:"stream"`
+}
+
+// AddonCapabilities is what an addon's manifest declares, discovered once and
+// stored with the source. It separates a valid manifest from a usable one: an
+// addon may be accepted with no TV channels, no catalogs, or no streams, and
+// the limitations say so without pretending it is an invalid manifest.
+type AddonCapabilities struct {
+	ID          string   `yaml:"id,omitempty" json:"id,omitempty"`
+	Name        string   `yaml:"name,omitempty" json:"name,omitempty"`
+	Version     string   `yaml:"version,omitempty" json:"version,omitempty"`
+	Description string   `yaml:"description,omitempty" json:"description,omitempty"`
+	Logo        string   `yaml:"logo,omitempty" json:"logo,omitempty"`
+	Types       []string `yaml:"types,omitempty" json:"types"`
+	// Resources are the resource names the addon declares: catalog, meta and
+	// stream are the ones Wren TV uses; others are recorded but not requested.
+	Resources []string         `yaml:"resources,omitempty" json:"resources"`
+	Catalogs  []AddonCatalog   `yaml:"catalogs,omitempty" json:"catalogs"`
+	Models    []AddonTypeModel `yaml:"models,omitempty" json:"models"`
+	// Browsable is true when at least one catalog can be listed, with or
+	// without a search query. Playable is true when a declared content type
+	// offers the stream resource.
+	Browsable bool `yaml:"browsable,omitempty" json:"browsable"`
+	Playable  bool `yaml:"playable,omitempty" json:"playable"`
+	// ConfigurationRequired is the manifest's own behaviorHints flag: the addon
+	// is valid but its manifest link is not the configured one yet.
+	ConfigurationRequired bool      `yaml:"configuration_required,omitempty" json:"configurationRequired"`
+	Limitations           []string  `yaml:"limitations,omitempty" json:"limitations"`
+	Checked               time.Time `yaml:"checked,omitempty" json:"checked,omitzero"`
+}
+
+// HasTVChannels reports whether any declared catalog is a TV channel list.
+func (c *AddonCapabilities) HasTVChannels() bool {
+	if c == nil {
+		return false
+	}
+	for _, cat := range c.Catalogs {
+		if strings.EqualFold(strings.TrimSpace(cat.Type), "tv") {
+			return true
+		}
+	}
+	return false
+}
+
+// SportCatalogs counts the declarative sport shelves.
+func (c *AddonCapabilities) SportCatalogs() int {
+	if c == nil {
+		return 0
+	}
+	n := 0
+	for _, cat := range c.Catalogs {
+		if strings.EqualFold(strings.TrimSpace(cat.Type), "sport") {
+			n++
+		}
+	}
+	return n
+}
+
+// HasBrowsableModel reports whether the addon has content that is not imported
+// as television channels: sports events or any other browsable catalog type.
+func (c *AddonCapabilities) HasBrowsableModel() bool {
+	if c == nil {
+		return false
+	}
+	for _, model := range c.Models {
+		if model.Model != "channels" && model.Catalogs > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 type LiveTVSource struct {
 	ID      string `yaml:"id" json:"id"`
 	Name    string `yaml:"name" json:"name"`
 	Enabled bool   `yaml:"enabled" json:"enabled"`
 	// Kind is "m3u" (a playlist URL), "xtream" (a server with a username
-	// and password) or "stremio" (an addon manifest with TV catalogs).
+	// and password) or "stremio" / "sport" (a Stremio addon manifest). The
+	// addon kinds are legacy hints: what an addon can do is read from its
+	// manifest into Capabilities, not from the kind the admin picked.
 	Kind string `yaml:"kind" json:"kind"`
 	// URL is the playlist, the Xtream server's address, or the addon's manifest.
 	URL      string `yaml:"url" json:"url"`
@@ -151,6 +339,11 @@ type LiveTVSource struct {
 	// url-tvg header, or the Xtream server's guide.
 	EPGURL    string `yaml:"epg_url,omitempty" json:"epgUrl"`
 	UserAgent string `yaml:"user_agent,omitempty" json:"userAgent"`
+	// Capabilities is the discovered manifest for an addon source. It is kept
+	// so the settings page and the Live TV picker describe the addon without
+	// asking it again; a missing value means "not discovered yet", never
+	// "invalid". Playlists and Xtream sources leave it empty.
+	Capabilities *AddonCapabilities `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
 }
 
 // addons to releases that are already cached on the owner's debrid accounts.
@@ -323,6 +516,7 @@ func defaults() Config {
 			DownloadQuality: "2160p",
 			Limits:          StreamingLimits{MaxDownloads: 2, PrefetchWorkers: 2, MinFreeGB: 20},
 		},
+		Sports:  SportsConfig{},
 		Users:   UserLimitsConfig{DeviceDownloads: true, MaxDownloads: 2},
 		Scanner: ScannerConfig{Watch: true, IntervalMin: 30, ProbeWorkers: 4},
 		Markers: MarkersConfig{Fingerprint: true},
@@ -381,6 +575,10 @@ func Load(dataDir string) (*Config, error) {
 			c.Streaming.RealDebridKey = lt.Debrid.APIKey
 		}
 		c.LegacyTorrents = nil
+		dirty = true
+	}
+	c.Sports.Normalize()
+	if c.LiveTV.NormalizeSourceIDs() {
 		dirty = true
 	}
 	if len(c.Streaming.ProviderOrder) == 0 {
@@ -448,6 +646,9 @@ func (c *Config) applyEnv() {
 	}
 	if v, err := strconv.ParseBool(Getenv("STREAMING")); err == nil {
 		c.Streaming.Enabled = v
+	}
+	if v, err := strconv.ParseBool(Getenv("SPORTS")); err == nil {
+		c.Sports.Enabled = &v
 	}
 }
 
