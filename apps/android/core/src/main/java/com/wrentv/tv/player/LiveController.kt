@@ -18,18 +18,40 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import com.wrentv.tv.data.LiveChannel
+import com.wrentv.tv.data.LiveEvent
+import com.wrentv.tv.data.LivePlayResponse
 import com.wrentv.tv.data.WrenTVApi
+import com.wrentv.tv.data.WrenTVException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+
+/** How many feeds one automatic attempt tries before it reports honestly. */
+private const val EVENT_ROUNDS = 8
+
+/** How long a feed has to start before the next candidate gets a turn. */
+private const val EVENT_START_WAIT = 15_000L
+
+/**
+ * The answers another round can improve. A dead feed, a feed that timed out and
+ * an addon that still has untried feeds are worth asking again; a rate limit or
+ * an unreachable addon would answer the same way, so the attempt stops.
+ */
+private val EVENT_RETRYABLE = setOf("no_working_stream", "timeout")
 
 /**
  * Plays live channels. The server hands back a stream for each channel (its
  * own proxy of the provider's, HLS or plain MPEG-TS); flipping channels waits
  * for the remote to settle before tuning, and a dropped stream reconnects on
  * its own, as IPTV streams often drop.
+ *
+ * A Stremio event plays through the same player: the server picks, proves and
+ * starts the addon's feed, and a feed that fails to start is released before
+ * the next candidate is tried.
  */
 class LiveController(
     private val context: Context,
@@ -38,6 +60,8 @@ class LiveController(
     start: LiveChannel,
     /** Outlives the screen, so the last session stop gets sent. */
     private val appScope: CoroutineScope,
+    /** The addon entry this player opened on, when it is an event rather than a channel. */
+    private val event: LiveEvent? = null,
 ) {
     sealed interface Phase {
         data object Tuning : Phase
@@ -64,19 +88,29 @@ class LiveController(
     private var tuneJob: Job? = null
     private var retries = 0
     private var stopped = false
+    // awaiting is set while an automatic attempt waits for a feed to start: its
+    // answer is that one feed's, not a failure of the channel being watched.
+    private var awaiting: CompletableDeferred<Boolean>? = null
 
     init {
         player.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 buffering = state == Player.STATE_BUFFERING
                 when (state) {
-                    Player.STATE_READY -> { retries = 0; phase = Phase.Playing }
+                    Player.STATE_READY -> { retries = 0; awaiting?.complete(true); phase = Phase.Playing }
                     // A live stream doesn't end: the connection dropped.
-                    Player.STATE_ENDED -> reconnect("The stream ended.")
+                    Player.STATE_ENDED -> if (awaiting != null) awaiting?.complete(false) else reconnect("The stream ended.")
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                // A feed an automatic attempt is trying counts its own failure:
+                // the next candidate gets a turn instead of the whole attempt
+                // reconnecting to the same stream.
+                if (awaiting != null) {
+                    awaiting?.complete(false)
+                    return
+                }
                 if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
                     player.seekToDefaultPosition()
                     player.prepare()
@@ -155,9 +189,15 @@ class LiveController(
         val api = api ?: run { phase = Phase.Failed("Not connected to the server."); return }
         phase = Phase.Tuning
         paused = false
+        // Switching starts by releasing what was playing: a channel flipped away
+        // from must not keep its provider connection open.
         endSession()
         player.stop()
         tuned = ch.id
+        if (event != null && ch.id == event.id) {
+            openEvent(ch, api)
+            return
+        }
         val resp = try {
             api.playChannel(ch.id, DeviceCaps.current(context))
         } catch (e: Exception) {
@@ -184,6 +224,87 @@ class LiveController(
         player.setMediaItem(item.build())
         player.prepare()
         player.playWhenReady = true
+    }
+
+    /**
+     * Plays a Stremio event. The server ranks the addon's feeds, proves each one
+     * starts and hands back a Live TV session, so this loop is bounded: ask for
+     * the best untried feed, try it, and release it before the next candidate
+     * when it never starts. A rate limit or a timeout ends the attempt with the
+     * server's own message instead of repeating requests the addon just refused.
+     */
+    private suspend fun openEvent(ch: LiveChannel, api: WrenTVApi) {
+        val entry = event ?: return
+        var tried = emptyList<String>()
+        for (round in 0 until EVENT_ROUNDS) {
+            if (stopped) return
+            val resp = try {
+                api.playAddonEvent(entry.source, entry.type, entry.itemId, tried)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: WrenTVException) {
+                // The server names the feeds this attempt already tried, so a
+                // further round never asks for one that just failed.
+                tried = (tried + e.tried).distinct()
+                if (e.code in EVENT_RETRYABLE && e.remaining > 0 && round + 1 < EVENT_ROUNDS) continue
+                tuned = null
+                phase = Phase.Failed(e.message ?: "Couldn't tune to ${ch.name}")
+                return
+            } catch (e: Exception) {
+                tuned = null
+                phase = Phase.Failed(e.message ?: "Couldn't tune to ${ch.name}")
+                return
+            }
+            if (stopped) {
+                release(resp.sessionId, api)
+                return
+            }
+            sessionId = resp.sessionId
+            if (awaitStart(api, resp)) return
+            // The feed answered but the player never got a frame. Release that
+            // session before the next candidate, so switching leaves nothing
+            // running on the provider.
+            endSession()
+            player.stop()
+            resp.feed?.key?.takeIf { it.isNotEmpty() }?.let { key -> tried = (tried + key).distinct() }
+            if (resp.remaining <= 0) {
+                tuned = null
+                phase = Phase.Failed("That stream did not start, and the addon has no other feed available.")
+                return
+            }
+        }
+        tuned = null
+        phase = Phase.Failed("No stream from this addon started. Try again in a moment.")
+    }
+
+    /**
+     * Points the player at one attempt's stream and waits for it to be ready.
+     * Ready is the playlist or the first packets of a TS stream: waiting for a
+     * decoded frame would discard a live stream that is merely slow to buffer.
+     */
+    private suspend fun awaitStart(api: WrenTVApi, resp: LivePlayResponse): Boolean {
+        val url = resp.url ?: return false
+        val item = MediaItem.Builder().setUri(api.absolute(url))
+        when (resp.type) {
+            "hls" -> item.setMimeType(MimeTypes.APPLICATION_M3U8)
+            "ts" -> item.setMimeType(MimeTypes.VIDEO_MP2T)
+        }
+        val started = CompletableDeferred<Boolean>()
+        awaiting = started
+        return try {
+            player.setMediaItem(item.build())
+            player.prepare()
+            player.playWhenReady = true
+            withTimeoutOrNull(EVENT_START_WAIT) { started.await() } ?: false
+        } finally {
+            awaiting = null
+        }
+    }
+
+    /** Ends one session the server already created, by id. */
+    private fun release(id: String?, api: WrenTVApi) {
+        if (id.isNullOrEmpty()) return
+        appScope.launch { runCatching { api.stopSession(id) } }
     }
 
     /** Tries the channel again a few times, waiting longer each time, before giving up. */

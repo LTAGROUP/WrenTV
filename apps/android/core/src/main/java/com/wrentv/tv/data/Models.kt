@@ -981,10 +981,61 @@ data class LiveChannel(
     val group: String? = null,
     val now: LiveProgram? = null,
     val next: LiveProgram? = null,
+    /** The configured provider this channel came from, for telling two providers' channels apart. */
+    val source: String? = null,
 )
 
+/**
+ * One selectable entry from a Stremio addon's event catalogs. It is a Live TV
+ * entry like a channel — the same list, the same player — but it is not a
+ * station: no channel number and no guide programmes are invented for it.
+ * [id] is the server's stable entry id, and [source], [type] and [itemId] are
+ * the context the server needs to resolve the addon's stream again.
+ */
 @Serializable
-data class LiveChannelsResponse(val channels: List<LiveChannel> = emptyList())
+data class LiveEvent(
+    val id: String,
+    val itemId: String = "",
+    val type: String = "",
+    val source: String = "",
+    val sourceName: String? = null,
+    val name: String = "",
+    /** The addon's catalog or genre, the event's equivalent of a channel group. */
+    val group: String? = null,
+    val logo: String? = null,
+    val description: String? = null,
+    val releaseInfo: String? = null,
+)
+
+/**
+ * A configured Live TV provider — a playlist, an Xtream login or a Stremio
+ * manifest — with what it contributes. An addon is a provider like any other.
+ */
+@Serializable
+data class LiveProvider(
+    val id: String,
+    val name: String = "",
+    val kind: String = "",
+    val addon: Boolean = false,
+    val enabled: Boolean = true,
+    val channels: Int = 0,
+    val events: Int = 0,
+)
+
+/**
+ * The one Live TV listing: channels and addon events share it, so they are
+ * filtered, grouped and played through the same screen. [prepared] tells an
+ * empty list during the first provider refresh apart from a provider that
+ * genuinely has nothing.
+ */
+@Serializable
+data class LiveChannelsResponse(
+    val channels: List<LiveChannel> = emptyList(),
+    val events: List<LiveEvent> = emptyList(),
+    val providers: List<LiveProvider> = emptyList(),
+    val refreshing: Boolean = false,
+    val prepared: Boolean = false,
+)
 
 /** One channel's programmes over the next few hours. */
 @Serializable
@@ -997,6 +1048,14 @@ data class LiveGuideResponse(val channels: List<LiveGuideChannel> = emptyList())
 data class LivePlayRequest(val caps: ClientCaps)
 
 /**
+ * One automatic playback attempt for an addon entry. [skip] is the feeds this
+ * playback attempt already tried, so a failed stream is never resolved or
+ * requested twice.
+ */
+@Serializable
+data class LiveAutoRequest(val hls: Boolean = false, val skip: List<String> = emptyList())
+
+/**
  * How to play a channel. The server proxies (or remuxes) the provider's
  * stream, so the URL is the server's, session-scoped like a film's.
  */
@@ -1007,7 +1066,19 @@ data class LivePlayResponse(
     val type: String? = null,
     val sessionId: String? = null,
     val message: String? = null,
+    /** The addon feed automatic playback picked, without its provider URL. */
+    val feed: LiveFeed? = null,
+    /** Feeds automatic playback hasn't tried yet. */
+    val remaining: Int = 0,
 )
+
+/** The addon feed a session was started on, as the viewer's player sees it. */
+@Serializable
+data class LiveFeed(val key: String = "", val name: String? = null, val title: String? = null, val quality: Int = 0)
+
+/** What one automatic feed attempt returns for the viewer's error state. */
+@Serializable
+data class LiveAttempt(val key: String = "", val name: String? = null, val title: String? = null, val error: String = "")
 
 /** A hub as a tile: a genre, a streaming service or an admin's own. */
 @Serializable

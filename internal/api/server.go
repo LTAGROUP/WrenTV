@@ -27,6 +27,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/markers"
 	"github.com/LTAGROUP/wrentv/internal/metadata/omdb"
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
+	"github.com/LTAGROUP/wrentv/internal/sports"
 	"github.com/LTAGROUP/wrentv/internal/stream"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
 	"github.com/LTAGROUP/wrentv/internal/sysstat"
@@ -48,6 +49,7 @@ type Server struct {
 	Streams   *stream.Manager
 	Streaming *streaming.Service
 	LiveTV    *livetv.Service
+	Sports    *sports.Service
 	Hub       *library.Hub
 	Hooks     *webhook.Sender
 	Tracking  *tracking.Service // Simkl and playback webhooks
@@ -57,6 +59,18 @@ type Server struct {
 	thumbJobs sync.Map
 	Direct    *direct.Manager  // automatic HTTPS addresses (supabase mode)
 	Sys       *sysstat.Sampler // CPU and memory for the stats dashboard
+
+	// sportsStreams is a 15 second cache of matched feeds per event/scope.
+	sportsStreams streamMatchCache
+	// addonCache holds event-scoped addon discovery; addonRegistry holds the
+	// opaque identities clients probe and play. Neither ever contains a URL a
+	// client can read.
+	addonCache    addonDiscoveryCache
+	addonRegistry addonRegistry
+	// addonFeeds holds the opaque ids of addon feeds browsed through Live TV,
+	// by source, content type and item. Like addonRegistry it never contains a
+	// provider URL.
+	addonFeeds addonFeedRegistry
 
 	// activity keeps each playback's latest progress and the streams an
 	// admin stopped.
@@ -180,6 +194,52 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/livetv/channels", s.handleLiveChannels)
 		r.Get("/api/livetv/guide", s.handleLiveGuide)
 		r.Post("/api/livetv/channels/{id}/play", s.handleLivePlay)
+		// Sports-event addons are browsed as events, not channels, but they
+		// belong to the same Live TV experience and player.
+		// Addon browsing: any declared catalog type, with the sports routes
+		// kept as the event-specific names the viewer UI already uses.
+		r.Get("/api/livetv/addons", s.handleLiveAddons)
+		r.Get("/api/livetv/addons/{source}", s.handleLiveAddonSource)
+		r.Get("/api/livetv/addons/{source}/catalog/{type}/{catalog}", s.handleLiveAddonCatalog)
+		r.Get("/api/livetv/addons/{source}/item/{type}/{id}", s.handleLiveAddonItem)
+		r.Post("/api/livetv/addons/{source}/item/{type}/{id}/play", s.handleLiveAddonAutoPlay)
+		r.Post("/api/livetv/addons/streams/{id}/play", s.handleLiveAddonPlay)
+		r.Get("/api/livetv/sports", s.handleLiveSports)
+		r.Get("/api/livetv/sports/{source}", s.handleLiveSportSource)
+		r.Get("/api/livetv/sports/{source}/catalog/{catalog}", s.handleLiveSportCatalog)
+		r.Get("/api/livetv/sports/{source}/event/{event}", s.handleLiveSportEvent)
+		r.Post("/api/livetv/sports/streams/{id}/play", s.handleLiveSportPlay)
+		r.Get("/api/sports/status", s.handleSportsStatus)
+		r.Get("/api/sports/leagues", s.handleSportsLeagues)
+		r.Get("/api/sports/scoreboard", s.handleSportsScoreboard)
+		r.Get("/api/sports/hub", s.handleSportsHub)
+		r.Get("/api/sports/races", s.handleSportsRaces)
+		r.Get("/api/sports/races/{league}/{event}", s.handleSportsRaceSession)
+		r.Get("/api/sports/races/{league}/{event}/{session}", s.handleSportsRaceSession)
+		r.Get("/api/sports/races/{league}/{event}/{session}/archive", s.handleSportsF1Archive)
+		r.Get("/api/sports/cycling", s.handleSportsCycling)
+		r.Get("/api/sports/cycling/{race}/{year}/{stage}", s.handleSportsCyclingStage)
+		r.Get("/api/sports/motogp/standings", s.handleSportsMotoGPStandings)
+		r.Get("/api/sports/motogp/circuit/{event}", s.handleSportsMotoGPCircuit)
+		r.Get("/api/sports/cricket/series", s.handleSportsCricketSeries)
+		r.Get("/api/sports/leagues/{league}/standings", s.handleSportsLeagueStandings)
+		r.Get("/api/sports/events/{id}", s.handleSportsEvent)
+		r.Get("/api/sports/search", s.handleSportsSearch)
+		r.Get("/api/sports/events/{id}/streams", s.handleSportsEventStreams)
+		r.Get("/api/sports/events/{id}/providers", s.handleSportsEventProviders)
+		r.Get("/api/sports/events/{id}/addons", s.handleSportsAddons)
+		r.Post("/api/sports/addons/{id}/quality", s.handleSportsAddonQuality)
+		r.Post("/api/sports/addons/{id}/play", s.handleSportsAddonPlay)
+		r.Post("/api/sports/streams/quality", s.handleSportsStreamQuality)
+		r.Get("/api/sports/match", s.handleSportsEventStreamsByQuery)
+		r.Get("/api/sports/logo", s.handleSportsLogo)
+		r.Get("/api/sports/preferences", s.handleGetSportsPreferences)
+		r.Put("/api/sports/preferences", s.handlePutSportsPreferences)
+		r.Get("/api/sports/teams", s.handleSportsTeams)
+		r.Get("/api/sports/teams/linked", s.handleSportsLinkedChannels)
+		r.Get("/api/sports/teams/{id}/links", s.handleSportsTeamLinks)
+		r.Get("/api/sports/teams/{id}/suggestions", s.handleSportsTeamSuggestions)
+		r.Get("/api/sports/leagues/{league}/auto-link/preview", s.handleSportsAutoLinkPreview)
 		r.Get("/api/me/prefs", s.handleGetPrefs)
 		r.Patch("/api/me/prefs", s.handlePatchPrefs)
 		r.Get("/api/me/simkl", s.handleSimklStatus)
@@ -225,6 +285,18 @@ func (s *Server) Router() http.Handler {
 			r.Patch("/api/admin/settings", s.handlePatchSettings)
 			r.Get("/api/admin/stats", s.handleStats)
 			r.Get("/api/admin/livetv", s.handleLiveTVAdmin)
+			r.Get("/api/admin/sports", s.handleAdminSports)
+			r.Put("/api/admin/sports", s.handleAdminSportsUpdate)
+			r.Post("/api/admin/sports/refresh", s.handleAdminSportsRefresh)
+			r.Post("/api/admin/sports/logo-cache/clear", s.handleAdminSportsLogoCacheClear)
+			r.Post("/api/admin/sports/teams/sync", s.handleAdminSportsTeams)
+			r.Put("/api/sports/teams/{id}/links/primary", s.handleSportsSetPrimaryLink)
+			r.Post("/api/sports/teams/{id}/links", s.handleSportsAddBackupLink)
+			r.Delete("/api/sports/teams/{id}/links/{linkId}", s.handleSportsDeleteLink)
+			r.Post("/api/sports/teams/{id}/links/order", s.handleSportsReorderLinks)
+			r.Post("/api/sports/leagues/{league}/auto-link/apply", s.handleSportsAutoLinkApply)
+			r.Get("/api/admin/users/{id}/sports/preferences", s.handleAdminUserSportsPreferences)
+			r.Put("/api/admin/users/{id}/sports/preferences", s.handleAdminPutUserSportsPreferences)
 			r.Post("/api/admin/livetv/refresh", s.handleLiveTVRefresh)
 			r.Post("/api/admin/livetv/check", s.handleLiveTVCheck)
 			r.Get("/api/admin/history", s.handleHistory)

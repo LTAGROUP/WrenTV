@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -35,12 +36,15 @@ type Session struct {
 	Started   time.Time
 	upstream  string
 	userAgent string
-	key       []byte   // signs the upstream URLs in rewritten playlists
-	remux     *remuxer // a TS channel repackaged as HLS, for players that need it
-	ctx       context.Context
-	cancel    context.CancelFunc
-	last      atomic.Int64 // Unix seconds of the last request
-	open      atomic.Int32 // requests in flight
+	// headers are the allowlisted provider headers this stream asked for
+	// (referer/origin/player agent). They never contain credentials.
+	headers map[string]string
+	key     []byte   // signs the upstream URLs in rewritten playlists
+	remux   *remuxer // a TS channel repackaged as HLS, for players that need it
+	ctx     context.Context
+	cancel  context.CancelFunc
+	last    atomic.Int64 // Unix seconds of the last request
+	open    atomic.Int32 // requests in flight
 }
 
 type sessions struct {
@@ -69,6 +73,57 @@ func (s *Service) Play(ctx context.Context, userID, channelID string, wantHLS bo
 	if c == nil {
 		return nil, errors.New("channel not found")
 	}
+	streamURL, userAgent := c.URL, c.UserAgent
+	var headers map[string]string
+	if c.stremio {
+		link, agent, addonHeaders, err := s.resolveStremio(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		streamURL, userAgent, headers = link, agent, addonHeaders
+	}
+	// An addon resolves its feeds again on every tune, and the same channel can
+	// be HLS on one tune and MPEG-TS on the next, so its stream type is measured
+	// afresh each time: a remembered type would hand the player the wrong shape
+	// and every reconnect would fail the same way.
+	return s.play(ctx, userID, channelID, streamURL, userAgent, headers, wantHLS, !c.stremio)
+}
+
+// PlayURL starts a session for a server-resolved stream. It exists for
+// ephemeral sports sources: the provider URL never leaves the server, and the
+// caller passes an opaque key so the session is reaped like any channel.
+func (s *Service) PlayURL(ctx context.Context, userID, key, streamURL, userAgent string, wantHLS bool) (*Session, error) {
+	return s.PlayURLWithHeaders(ctx, userID, key, streamURL, userAgent, nil, wantHLS)
+}
+
+// PlayURLWithHeaders is PlayURL for a provider that also wants an allowlisted
+// browser identity (referer/origin). The set is sanitized here, so an addon can
+// never inject a request header the proxy would otherwise send.
+//
+// A key that names an addon feed ("addon:…", "addons:…") is resolved fresh by
+// its caller every time and never remembers its stream type, so one playback
+// attempt cannot leave a stale type behind for the next one.
+func (s *Service) PlayURLWithHeaders(ctx context.Context, userID, key, streamURL, userAgent string, headers map[string]string, wantHLS bool) (*Session, error) {
+	return s.play(ctx, userID, key, streamURL, userAgent, headers, wantHLS, !isAddonSessionKey(key))
+}
+
+// isAddonSessionKey reports whether a session key names a resolved addon feed
+// rather than a channel in the playlist. Those keys are opaque and per-viewer.
+func isAddonSessionKey(key string) bool {
+	key = strings.TrimSpace(key)
+	return strings.HasPrefix(key, "addon:") || strings.HasPrefix(key, "addons:")
+}
+
+// play starts one session. [remember] says whether the stream's type may be
+// cached for this key: a channel whose URL is fixed may, a key the caller
+// resolves again for every attempt may not.
+func (s *Service) play(ctx context.Context, userID, key, streamURL, userAgent string, headers map[string]string, wantHLS, remember bool) (*Session, error) {
+	headers = SanitizeRequestHeaders(headers)
+	if !strings.HasPrefix(streamURL, "http://") && !strings.HasPrefix(streamURL, "https://") {
+		return nil, errors.New("stream is not playable")
+	}
+	started := time.Now()
+	channelID := key
 	ss := &s.sessions
 	limit := s.cfg.LiveTV.MaxStreams
 	ss.mu.Lock()
@@ -89,26 +144,20 @@ func (s *Service) Play(ctx context.Context, userID, channelID string, wantHLS bo
 		}
 		ss.stopLocked(oldest.ID)
 	}
-	kind := ss.kinds[channelID]
-	ss.mu.Unlock()
-
-	if c.stremio {
-		link, agent, err := s.resolveStremio(ctx, c)
-		if err != nil {
-			return nil, err
-		}
-		cc := *c
-		cc.URL, cc.UserAgent = link, agent
-		c = &cc
-		kind = "" // the addon may send another kind of stream next time
+	kind := ""
+	if remember {
+		kind = ss.kinds[channelID]
 	}
+	ss.mu.Unlock()
+	c := &Channel{ID: channelID, URL: streamURL, UserAgent: userAgent}
 	if kind == "" {
-		kind = s.probe(ctx, c)
+		kind = s.probe(ctx, c, headers)
 	}
 	sctx, cancel := context.WithCancel(context.Background())
 	sess := &Session{
 		ID: randomHex(16), UserID: userID, ChannelID: channelID, Kind: kind, Started: time.Now(),
-		upstream: c.URL, userAgent: c.UserAgent, key: []byte(randomHex(16)), ctx: sctx, cancel: cancel,
+		upstream: streamURL, userAgent: userAgent, headers: headers,
+		key: []byte(randomHex(16)), ctx: sctx, cancel: cancel,
 	}
 	if kind == "ts" && wantHLS && s.FFmpeg != "" {
 		sess.remux = &remuxer{ffmpeg: s.FFmpeg, dir: filepath.Join(s.dir, "remux", sess.ID)}
@@ -116,8 +165,16 @@ func (s *Service) Play(ctx context.Context, userID, channelID string, wantHLS bo
 	sess.last.Store(time.Now().Unix())
 	ss.mu.Lock()
 	ss.byID[sess.ID] = sess
-	ss.kinds[channelID] = kind
+	if remember {
+		ss.kinds[channelID] = kind
+	}
+	open := len(ss.byID)
 	ss.mu.Unlock()
+	// Diagnostics for playback and switching: the kind, whether this is an addon
+	// feed, how long resolving it took and how many sessions are open. The key
+	// itself is never logged: an addon key is a per-viewer token.
+	slog.Debug("live session started", "kind", kind, "addon", isAddonSessionKey(key),
+		"ms", time.Since(started).Milliseconds(), "sessions", open)
 	return sess, nil
 }
 
@@ -140,8 +197,9 @@ func (x *Session) URL() string {
 	return "/live/" + x.ID + "/stream.ts"
 }
 
-// probe looks at the start of a stream to tell HLS from MPEG-TS.
-func (s *Service) probe(ctx context.Context, c *Channel) string {
+// probe looks at the start of a stream to tell HLS from MPEG-TS. A stream that
+// only answers with its allowlisted headers is read with them.
+func (s *Service) probe(ctx context.Context, c *Channel, headers map[string]string) string {
 	p := strings.ToLower(strings.SplitN(c.URL, "?", 2)[0])
 	if strings.HasSuffix(p, ".m3u8") || strings.HasSuffix(p, ".m3u") {
 		return "hls"
@@ -151,7 +209,7 @@ func (s *Service) probe(ctx context.Context, c *Channel) string {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	resp, err := get(ctx, c.URL, c.UserAgent)
+	resp, err := get(ctx, c.URL, c.UserAgent, headers)
 	if err != nil {
 		return "ts"
 	}
@@ -216,6 +274,9 @@ func (ss *sessions) stopLocked(id string) {
 	if x := ss.byID[id]; x != nil {
 		x.cancel()
 		delete(ss.byID, id)
+		// Stopping the session cancels its upstream requests too (see
+		// ServeHTTP), so a switched-away stream stops fetching from the provider.
+		slog.Debug("live session stopped", "kind", x.Kind, "sessions", len(ss.byID))
 	}
 }
 
@@ -281,7 +342,7 @@ func (x *Session) ServeHTTP(w http.ResponseWriter, r *http.Request, file string)
 
 // serveTS passes a continuous MPEG-TS stream through.
 func (x *Session) serveTS(ctx context.Context, w http.ResponseWriter) {
-	resp, err := get(ctx, x.upstream, x.userAgent)
+	resp, err := get(ctx, x.upstream, x.userAgent, x.headers)
 	if err != nil {
 		http.Error(w, "the channel didn't answer", http.StatusBadGateway)
 		return
@@ -316,7 +377,7 @@ func (x *Session) serveTS(ctx context.Context, w http.ResponseWriter) {
 // servePlaylist fetches an HLS playlist and points everything in it back
 // through this session, so the player only ever talks to the server.
 func (x *Session) servePlaylist(ctx context.Context, w http.ResponseWriter, target string) {
-	resp, err := get(ctx, target, x.userAgent)
+	resp, err := get(ctx, target, x.userAgent, x.headers)
 	if err != nil {
 		http.Error(w, "the channel didn't answer", http.StatusBadGateway)
 		return
@@ -400,7 +461,7 @@ func (x *Session) verify(enc, sig string) (string, bool) {
 
 // serveBytes passes one segment (or key) through.
 func (x *Session) serveBytes(ctx context.Context, w http.ResponseWriter, r *http.Request, target string) {
-	resp, err := get(ctx, target, x.userAgent)
+	resp, err := get(ctx, target, x.userAgent, x.headers)
 	if err != nil {
 		http.Error(w, "the channel didn't answer", http.StatusBadGateway)
 		return
@@ -419,12 +480,18 @@ func (x *Session) serveBytes(ctx context.Context, w http.ResponseWriter, r *http
 	_, _ = io.Copy(w, resp.Body)
 }
 
-func get(ctx context.Context, target, userAgent string) (*http.Response, error) {
+// get fetches upstream with the channel's agent plus any allowlisted headers
+// the stream asked for. Callers pass headers that already went through
+// SanitizeRequestHeaders.
+func get(ctx context.Context, target, userAgent string, headers map[string]string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", ua(userAgent))
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 	return streamClient.Do(req)
 }
 

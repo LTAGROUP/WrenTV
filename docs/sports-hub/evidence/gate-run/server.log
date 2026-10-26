@@ -1,0 +1,20 @@
+time=2026-10-25T19:24:28.223-06:00 level=INFO msg="starting Wren TV" version=0.1.0-dev data=/tmp/wrentv-gate listen=127.0.0.1:8099
+time=2026-10-25T19:24:28.225-06:00 level=WARN msg="no TMDB API key configured: items will use names parsed from files (set metadata.tmdb_api_key)"
+time=2026-10-25T19:24:28.226-06:00 level=INFO msg="using software transcoding (libx264)"
+time=2026-10-25T19:24:28.228-06:00 level=INFO msg=listening url=http://172.20.20.7:8099
+time=2026-10-25T19:24:28.230-06:00 level=INFO msg="live tv refreshed" channels=0 guide=0 errors=1
+time=2026-10-25T19:24:28.455-06:00 level=WARN msg="heartbeat failed" err="server_heartbeat: invalid input syntax for type uuid: \"gate-local\""
+time=2026-10-25T19:24:28.489-06:00 level=WARN msg="sports scoreboard fetch" league=nba err="espn scoreboard nba: status 403"
+time=2026-10-25T19:24:28.489-06:00 level=WARN msg="sports scoreboard fetch" league=soccer-eng.1 err="espn scoreboard soccer-eng.1: status 403"
+time=2026-10-25T19:24:28.489-06:00 level=WARN msg="sports scoreboard fetch" league=mlb err="espn scoreboard mlb: status 403"
+time=2026-10-25T19:24:28.489-06:00 level=WARN msg="sports scoreboard fetch" league=nhl err="espn scoreboard nhl: status 403"
+time=2026-10-25T19:24:28.523-06:00 level=WARN msg="sports scoreboard fetch" league=college-football err="espn scoreboard college-football: status 403"
+time=2026-10-25T19:24:28.529-06:00 level=WARN msg="sports scoreboard fetch" league=nfl err="espn scoreboard nfl: status 403"
+time=2026-10-25T19:24:28.529-06:00 level=WARN msg="sports scoreboard cycle" err="espn scoreboard nba: status 403"
+time=2026-10-25T19:24:28.582-06:00 level=WARN msg="sports team catalog fetch" league=college-football err="espn teams college-football: status 403"
+time=2026-10-25T19:24:28.582-06:00 level=WARN msg="sports team catalog fetch" league=nfl err="espn teams nfl: status 403"
+time=2026-10-25T19:24:28.582-06:00 level=WARN msg="sports team catalog fetch" league=soccer-eng.1 err="espn teams soccer-eng.1: status 403"
+time=2026-10-25T19:24:28.582-06:00 level=WARN msg="sports team catalog fetch" league=nba err="espn teams nba: status 403"
+time=2026-10-25T19:24:28.617-06:00 level=WARN msg="sports team catalog fetch" league=nhl err="espn teams nhl: status 403"
+time=2026-10-25T19:24:28.618-06:00 level=WARN msg="sports team catalog fetch" league=mlb err="espn teams mlb: status 403"
+time=2026-10-25T19:24:28.618-06:00 level=WARN msg="sports team catalog cycle" err="sports team catalog: espn teams college-football: status 403"

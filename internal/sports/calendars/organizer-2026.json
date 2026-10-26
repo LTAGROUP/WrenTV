@@ -1,0 +1,115 @@
+[
+  {
+    "id": "cro-race",
+    "name": "CRO Race",
+    "category": "men",
+    "kind": "stage-race",
+    "year": 2026,
+    "sourceURL": "https://crorace.com/en/stages/",
+    "verifiedAt": "2026-09-23T17:49:36Z",
+    "stages": [
+      {
+        "name": "Stage 1",
+        "date": "2026-09-22",
+        "departure": "Split",
+        "arrival": "Seget"
+      },
+      {
+        "name": "Stage 2",
+        "date": "2026-09-23",
+        "departure": "Biograd na Moru",
+        "arrival": "Novalja"
+      },
+      {
+        "name": "Stage 3",
+        "date": "2026-09-24",
+        "departure": "Krk",
+        "arrival": "Labin"
+      },
+      {
+        "name": "Stage 4",
+        "date": "2026-09-25",
+        "departure": "Pula",
+        "arrival": "Rijeka"
+      },
+      {
+        "name": "Stage 5",
+        "date": "2026-09-26",
+        "departure": "Karlovac",
+        "arrival": "Sveta Nedelja"
+      },
+      {
+        "name": "Stage 6",
+        "date": "2026-09-27",
+        "departure": "Samobor",
+        "arrival": "Zagreb"
+      }
+    ]
+  },
+  {
+    "id": "road-worlds",
+    "name": "UCI Road World Championships — Montréal",
+    "category": "unknown",
+    "kind": "championship",
+    "year": 2026,
+    "sourceURL": "https://www.montreal2026.org/epreuves/",
+    "verifiedAt": "2026-09-23T17:49:36Z",
+    "restDays": [
+      "2026-09-23"
+    ],
+    "stages": [
+      {
+        "name": "Women Elite individual time trial",
+        "date": "2026-09-20"
+      },
+      {
+        "name": "Men Elite individual time trial",
+        "date": "2026-09-20"
+      },
+      {
+        "name": "Women U23 individual time trial",
+        "date": "2026-09-21"
+      },
+      {
+        "name": "Men U23 individual time trial",
+        "date": "2026-09-21"
+      },
+      {
+        "name": "Mixed team time trial relay",
+        "date": "2026-09-22"
+      },
+      {
+        "name": "Men Junior individual time trial",
+        "date": "2026-09-22"
+      },
+      {
+        "name": "Women Junior individual time trial",
+        "date": "2026-09-22"
+      },
+      {
+        "name": "Women U23 road race",
+        "date": "2026-09-24"
+      },
+      {
+        "name": "Men Junior road race",
+        "date": "2026-09-24"
+      },
+      {
+        "name": "Men U23 road race",
+        "date": "2026-09-25"
+      },
+      {
+        "name": "Women Junior road race",
+        "date": "2026-09-25"
+      },
+      {
+        "name": "Women Elite road race",
+        "date": "2026-09-26"
+      },
+      {
+        "name": "Men Elite road race",
+        "date": "2026-09-27"
+      }
+    ]
+  }
+]

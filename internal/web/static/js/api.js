@@ -6,7 +6,14 @@ const LS = {
 };
 
 export class ApiError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, data = null) {
+    super(message);
+    this.status = status;
+    // The server's error body carries a machine-readable code and, for
+    // automatic playback, what it already tried and what is left.
+    this.data = data;
+    this.code = data?.code || '';
+  }
 }
 
 export const state = {
@@ -91,19 +98,19 @@ export { accessToken };
 
 // ---------- Wren TV server ----------
 
-export async function api(path, { method = 'GET', body, form } = {}) {
+export async function api(path, { method = 'GET', body, form, signal } = {}) {
   const headers = {};
   const tok = await accessToken().catch(() => '');
   if (tok) headers.Authorization = 'Bearer ' + tok;
   let payload;
   if (form) payload = form;
   else if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
-  const res = await fetch(path, { method, headers, body: payload });
+  const res = await fetch(path, { method, headers, body: payload, signal });
   if (res.status === 204) return null;
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  if (!res.ok) throw new ApiError(res.status, data?.error || res.statusText);
+  if (!res.ok) throw new ApiError(res.status, data?.error || res.statusText, data);
   return data;
 }
 api.raw = async (path, opts) => {

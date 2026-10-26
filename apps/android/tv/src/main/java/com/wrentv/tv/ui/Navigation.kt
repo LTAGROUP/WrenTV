@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wrentv.tv.data.AppState
 import com.wrentv.tv.data.Item
+import com.wrentv.tv.data.LiveEvent
 import com.wrentv.tv.data.TitleView
 import com.wrentv.tv.data.WrenCollection
 
@@ -47,8 +48,12 @@ sealed interface Route {
     data class StreamTitle(val tmdbId: Int, val mediaType: String, val title: String, val seed: TitleView? = null) : Route { override val key = "stream:$mediaType:$tmdbId" }
     data class Trailer(val youtubeKey: String, val title: String) : Route { override val key = "trailer:$youtubeKey" }
     data class Player(val target: PlayTarget) : Route { override val key = "player:${target.itemId}" }
-    /** Live TV, full screen, starting on a channel; up and down change it, within [group] when set. */
-    data class LivePlayer(val channelId: String, val group: String? = null) : Route { override val key = "live-player" }
+    /**
+     * Live TV, full screen, starting on a channel; up and down change it, within
+     * [group] when set. [event] is the Stremio addon entry the player was opened
+     * on, when it is an event rather than a channel.
+     */
+    data class LivePlayer(val channelId: String, val group: String? = null, val event: LiveEvent? = null) : Route { override val key = "live-player" }
 }
 
 class Navigator {

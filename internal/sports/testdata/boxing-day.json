@@ -1,0 +1,24 @@
+{
+  "events": [
+    {
+      "idEvent": "2548283",
+      "idLeague": "4445",
+      "strEvent": "John Hedges vs Pat Brown",
+      "strTimestamp": "2026-09-19T16:00:00",
+      "strVenue": "Co-op Live",
+      "strStatus": "",
+      "strResult": "",
+      "strPostponed": "no"
+    },
+    {
+      "idEvent": "2607379",
+      "idLeague": "4445",
+      "strEvent": "Isaac Cruz vs Nestor Bravo",
+      "strTimestamp": "2026-09-19T20:45:00",
+      "strVenue": "Pechanga Arena",
+      "strStatus": "",
+      "strResult": "",
+      "strPostponed": "no"
+    }
+  ]
+}

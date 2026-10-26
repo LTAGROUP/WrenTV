@@ -1,0 +1,328 @@
+{
+  "id": "community.sports.streamed",
+  "version": "1.3.0",
+  "name": "Sports Streams",
+  "description": "Live and upcoming sports matches — football, basketball, cricket, UFC, tennis, and more.",
+  "logo": "https://cdn.highfly.to/logo.ico",
+  "resources": [
+    {
+      "name": "catalog",
+      "types": [
+        "sport"
+      ]
+    },
+    {
+      "name": "meta",
+      "types": [
+        "sport"
+      ],
+      "idPrefixes": [
+        "streamed",
+        "sf",
+        "recap",
+        "leaf"
+      ]
+    },
+    {
+      "name": "stream",
+      "types": [
+        "sport"
+      ],
+      "idPrefixes": [
+        "streamed",
+        "sf",
+        "recap",
+        "leaf"
+      ]
+    }
+  ],
+  "types": [
+    "sport"
+  ],
+  "catalogs": [
+    {
+      "type": "sport",
+      "id": "sports_live",
+      "name": "Live Now",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_today",
+      "name": "Today",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_basketball",
+      "name": "Basketball",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_football",
+      "name": "Football",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_american_football",
+      "name": "American Football",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_hockey",
+      "name": "Hockey",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_baseball",
+      "name": "Baseball",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_motor_sports",
+      "name": "Motor Sports",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_fight",
+      "name": "Fight (UFC, Boxing)",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_tennis",
+      "name": "Tennis",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_rugby",
+      "name": "Rugby",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_golf",
+      "name": "Golf",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_billiards",
+      "name": "Billiards",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_afl",
+      "name": "AFL",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_darts",
+      "name": "Darts",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_cricket",
+      "name": "Cricket",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    },
+    {
+      "type": "sport",
+      "id": "sports_other",
+      "name": "Other",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ],
+      "showInHome": true
+    }
+  ],
+  "idPrefixes": [
+    "streamed",
+    "sf",
+    "recap",
+    "leaf"
+  ],
+  "behaviorHints": {
+    "adult": false,
+    "p2p": false,
+    "configurable": true,
+    "configurationRequired": false
+  }
+}

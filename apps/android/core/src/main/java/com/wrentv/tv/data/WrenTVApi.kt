@@ -12,8 +12,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.serializer
 import okhttp3.Call
@@ -30,7 +28,25 @@ import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resumeWithException
 
-class WrenTVException(message: String, val status: Int = 0) : Exception(message)
+/** The error body the server sends with a failed request. */
+@kotlinx.serialization.Serializable
+private data class ApiErrorBody(
+    val error: String? = null,
+    val code: String = "",
+    val tried: List<String> = emptyList(),
+    val remaining: Int = 0,
+)
+
+class WrenTVException(
+    message: String,
+    val status: Int = 0,
+    /** The server's error code, when it sent one ("no_working_stream", "rate_limited"…). */
+    val code: String = "",
+    /** Feeds one automatic playback attempt already tried, so they are never asked for twice. */
+    val tried: List<String> = emptyList(),
+    /** Feeds still untried after the attempt that failed. */
+    val remaining: Int = 0,
+) : Exception(message)
 
 val json = Json {
     ignoreUnknownKeys = true
@@ -95,8 +111,14 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
         return resp.use { r ->
             val text = withContext(Dispatchers.IO) { r.body?.string() ?: "" }
             if (r.code >= 400) {
-                val msg = runCatching { json.parseToJsonElement(text).jsonObject["error"]?.jsonPrimitive?.content }.getOrNull()
-                throw WrenTVException(msg ?: r.message.ifEmpty { "HTTP ${r.code}" }, r.code)
+                // The server's error body carries the code and how much is left
+                // to try, which is what keeps a retry loop bounded and a failed
+                // stream from being requested again.
+                val detail = runCatching { json.decodeFromString(serializer<ApiErrorBody>(), text) }.getOrNull()
+                throw WrenTVException(
+                    detail?.error ?: r.message.ifEmpty { "HTTP ${r.code}" }, r.code,
+                    detail?.code.orEmpty(), detail?.tried.orEmpty(), detail?.remaining ?: 0,
+                )
             }
             text
         }
@@ -109,6 +131,9 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
         json.decodeFromString(serializer<T>(), send("POST", path, body = body))
 
     private inline fun <reified T> enc(v: T): JsonElement = json.encodeToJsonElement(serializer<T>(), v)
+
+    /** One path segment of a request, escaped like the web client escapes them. */
+    private fun pathSegment(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
     // Endpoints
 
@@ -292,11 +317,24 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     suspend fun calendar(from: String? = null, to: String? = null): CalendarResponse =
         get("/api/calendar", buildMap { from?.let { put("from", it) }; to?.let { put("to", it) } })
 
-    suspend fun liveChannels(): List<LiveChannel> = get<LiveChannelsResponse>("/api/livetv/channels").channels
+    suspend fun liveListing(): LiveChannelsResponse = get("/api/livetv/channels")
+    suspend fun liveChannels(): List<LiveChannel> = liveListing().channels
     suspend fun liveGuide(hours: Int): List<LiveGuideChannel> =
         get<LiveGuideResponse>("/api/livetv/guide", mapOf("hours" to hours.toString())).channels
 
     suspend fun playChannel(id: String, caps: ClientCaps): LivePlayResponse = post("/api/livetv/channels/$id/play", enc(LivePlayRequest(caps)))
+
+    /**
+     * One automatic attempt at an addon entry (a Stremio event, say). The server
+     * ranks the item's feeds, proves each one starts and answers with the best
+     * working one, so the client never sees or sends a provider URL. Playback
+     * gets the slow timeout: resolving and proving several feeds takes longer
+     * than an ordinary request.
+     */
+    suspend fun playAddonEvent(source: String, type: String, id: String, skip: List<String>, hls: Boolean = false): LivePlayResponse {
+        val path = "/api/livetv/addons/${pathSegment(source)}/item/${pathSegment(type)}/${pathSegment(id)}/play"
+        return json.decodeFromString(serializer<LivePlayResponse>(), send("POST", path, body = enc(LiveAutoRequest(hls = hls, skip = skip)), http = Http.slow))
+    }
 
     suspend fun stopSession(sid: String) {
         runCatching { send("DELETE", "/api/sessions/$sid") }

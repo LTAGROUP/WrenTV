@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"compress/gzip"
 	"encoding/xml"
+	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -72,6 +74,7 @@ func ParseXMLTV(r io.Reader, channels []*Channel, from, to time.Time, into Guide
 	dec.Strict = false
 	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil }
 	lo, hi := from.Unix(), to.Unix()
+	root := ""
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -83,6 +86,15 @@ func ParseXMLTV(r io.Reader, channels []*Channel, from, to time.Time, into Guide
 		se, ok := tok.(xml.StartElement)
 		if !ok {
 			continue
+		}
+		if root == "" {
+			root = se.Name.Local
+			// A 404 page or a provider's HTML error page is often served
+			// with 200. Reporting that as an unreadable guide is honest;
+			// silently returning no programmes is not.
+			if !strings.EqualFold(root, "tv") {
+				return fmt.Errorf("not an XMLTV guide: root element is %q", root)
+			}
 		}
 		switch se.Name.Local {
 		case "channel":
@@ -143,6 +155,9 @@ func ParseXMLTV(r io.Reader, channels []*Channel, from, to time.Time, into Guide
 				into[id] = append(into[id], prog)
 			}
 		}
+	}
+	if root == "" {
+		return errors.New("the guide is empty")
 	}
 	return nil
 }

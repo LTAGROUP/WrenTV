@@ -28,7 +28,12 @@ type Channel struct {
 	TvgName   string `json:"-"`
 	URL       string `json:"-"`
 	UserAgent string `json:"-"`
-	Source    string `json:"-"`
+	// Source is the configured provider id. It is public because the viewer
+	// filters by it, but never contains a credential.
+	Source string `json:"source,omitempty"`
+	// Metadata is an addon's description of the channel. Sports matching uses it
+	// only to reject a contradiction (a snooker listing for a golf event).
+	Metadata string `json:"-"`
 	// numbered: the playlist gave the number (tvg-chno), rather than its place in the list.
 	numbered bool
 	// stremio: URL is a Stremio addon's stream request, asked when played.
@@ -174,11 +179,19 @@ func PlaylistURL(s config.LiveTVSource) string {
 
 // GuideURLs is where a source's guide is: the owner's, else the Xtream
 // server's, else what the playlist names.
+//
+// A Stremio manifest has no XMLTV in it: the protocol describes catalogs,
+// metadata and streams only. An addon-backed provider therefore uses the guide
+// link the owner associated with it, and works without one. That link can be
+// the same XMLTV file another provider uses; each guide is parsed against its
+// own source's channels, so sharing it cannot mix two providers' programmes.
 func GuideURLs(s config.LiveTVSource, pl *Playlist) []string {
 	if u := strings.TrimSpace(s.EPGURL); u != "" {
 		return []string{u}
 	}
-	if s.Kind == "stremio" {
+	// An addon has no playlist header to detect a guide from, and the manifest
+	// itself never supplies one, so nothing is invented here.
+	if IsAddonKind(s.Kind) {
 		return nil
 	}
 	if s.Kind == "xtream" {

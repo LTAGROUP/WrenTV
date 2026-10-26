@@ -59,6 +59,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.wrentv.tv.data.LiveChannel
+import com.wrentv.tv.data.LiveEvent
 import com.wrentv.tv.data.LiveProgram
 import com.wrentv.tv.data.WrenTVApi
 import com.wrentv.tv.ui.Bar
@@ -96,6 +97,10 @@ private val RowHeight = 66.dp
  * provider's groups as filters, then channels down the side and their
  * programmes across a two-hour window. Left and right move along the
  * schedule, paging it half an hour at a time at the edges.
+ *
+ * A Stremio addon's entries are rows in this same guide, beside the channels:
+ * they have no channel number and no programmes, so their own description
+ * stands in for the schedule, and the group chips and the search cover both.
  */
 @Composable
 fun LiveTvScreen() {
@@ -112,6 +117,9 @@ fun LiveTvScreen() {
         state.api?.liveGuide(GUIDE_HOURS)?.associate { it.id to it.programs }
     }.value.orEmpty()
     val channels = loaded.value
+    // The addon entries the same listing carries, filtered and played as channels are.
+    val events = state.liveEvents
+    val providers = state.liveProviders
     val now = remember(tick) { System.currentTimeMillis() / 1000 }
     val base = now - now % STEP
     var paged by rememberSaveable { mutableLongStateOf(base) }
@@ -121,21 +129,35 @@ fun LiveTvScreen() {
 
     var query by rememberSaveable { mutableStateOf("") }
     var group by rememberSaveable { mutableStateOf<String?>(null) }
-    var focused by remember { mutableStateOf<Pair<LiveChannel, LiveProgram?>?>(null) }
+    var focused by remember { mutableStateOf<Pair<Entry, LiveProgram?>?>(null) }
     val last = state.lastChannel?.let { id -> channels?.firstOrNull { it.id == id } }
-    val groups = remember(channels) { channels?.map { it.groupName }?.distinct().orEmpty() }
-    val programs = { ch: LiveChannel -> guide[ch.id]?.takeIf { it.isNotEmpty() } ?: listOfNotNull(ch.now, ch.next) }
-    val shown = remember(channels, guide, query, group, now) {
-        val q = query.trim().lowercase()
-        channels.orEmpty()
-            // A search looks across every channel, whatever group is picked.
-            .filter { q.isNotEmpty() || group == null || it.groupName == group }
-            .filter { ch ->
-                q.isEmpty() || ch.name.lowercase().contains(q) || ch.number == q || ch.groupName.lowercase().contains(q) ||
-                    programs(ch).any { it.title.lowercase().contains(q) }
-            }
-            .sortedBy { !it.onAir(now) }
+    // Two providers can publish the same channel or event name, so a row names
+    // its provider once there is more than one to tell apart.
+    val named = providers.count { it.enabled } > 1
+    fun providerOf(source: String?): String? {
+        if (!named) return null
+        val found = providers.firstOrNull { it.id == source } ?: return source?.takeIf { it.isNotEmpty() }
+        return found.name.ifBlank { found.id }
     }
+    val entries = remember(channels, events, providers) {
+        channels.orEmpty().map { Entry.Channel(it, providerOf(it.source)) } +
+            events.map { Entry.Event(it, providerOf(it.source)) }
+    }
+    val groups = remember(entries) { entries.map { it.groupName }.distinct().sorted() }
+    val programs = { entry: Entry -> entry.channel?.let { ch -> guide[ch.id]?.takeIf { it.isNotEmpty() } ?: listOfNotNull(ch.now, ch.next) }.orEmpty() }
+    val shown = remember(entries, guide, query, group, now) {
+        val q = query.trim().lowercase()
+        entries
+            // A search looks across every channel and event, whatever group is picked.
+            .filter { q.isNotEmpty() || group == null || it.groupName == group }
+            .filter { entry ->
+                q.isEmpty() || entry.matches(q) || programs(entry).any { it.title.lowercase().contains(q) }
+            }
+            // Channels keep the guide's order (those on air first); addon entries
+            // follow, in the addon's own catalog order.
+            .let { list -> list.filterIsInstance<Entry.Channel>().sortedBy { !it.onAir(now) } + list.filterIsInstance<Entry.Event>() }
+    }
+    val livePrepared = state.livePrepared
 
     val top by animateDpAsState(if (bar.atTop || bar.focused) TopBarSpace else 28.dp, label = "guide-top")
     Column(Modifier.fillMaxSize().padding(top = top)) {
@@ -181,8 +203,13 @@ fun LiveTvScreen() {
         when {
             channels == null && loaded.error != null -> EmptyState("Couldn't load channels", loaded.error, icon = Icons.Rounded.LiveTv)
             channels == null -> Loading()
-            channels.isEmpty() -> EmptyState("No channels yet", "Your server's admin can add an IPTV playlist in the web dashboard.", icon = Icons.Rounded.LiveTv)
-            shown.isEmpty() -> EmptyState("Nothing matches “${query.trim()}”", "Try a channel name, number or show.", icon = Icons.Rounded.Search)
+            entries.isEmpty() -> EmptyState(
+                if (!livePrepared && providers.isNotEmpty()) "Loading your providers" else "No channels yet",
+                if (!livePrepared && providers.isNotEmpty()) "Live TV is still fetching playlists and Stremio catalogs. This list fills in as soon as they arrive."
+                else "Your server's admin can add an IPTV playlist or a Stremio manifest in the web dashboard.",
+                icon = Icons.Rounded.LiveTv,
+            )
+            shown.isEmpty() -> EmptyState("Nothing matches “${query.trim()}”", "Try a channel, event, number or show.", icon = Icons.Rounded.Search)
             else -> BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = PageGutter)) {
                 val timeline = maxWidth - ChannelColumn - 8.dp
                 Column {
@@ -192,16 +219,20 @@ fun LiveTvScreen() {
                         contentPadding = PaddingValues(bottom = 48.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        items(shown, key = { "row:${it.id}" }) { ch ->
+                        items(shown, key = { "row:${it.id}" }) { entry ->
                             GuideRow(
-                                ch, programs(ch), state.api, now, windowStart, timeline,
-                                first = ch === shown.first() && last == null,
-                                onFocus = { p -> focused = ch to p },
+                                entry, programs(entry), state.api, now, windowStart, timeline,
+                                first = entry === shown.first() && last == null,
+                                onFocus = { p -> focused = entry to p },
                                 onPage = { delta ->
                                     val next = (windowStart + delta).coerceIn(base, maxOf(base, lastStart))
                                     if (next != windowStart) { paged = next; true } else false
                                 },
-                                onClick = { nav.push(Route.LivePlayer(ch.id, group.takeIf { query.isBlank() })) },
+                                onClick = {
+                                    val event = entry.liveEvent
+                                    if (event != null) nav.push(Route.LivePlayer(event.id, null, event))
+                                    else nav.push(Route.LivePlayer(entry.id, group.takeIf { query.isBlank() }))
+                                },
                             )
                         }
                     }
@@ -211,27 +242,79 @@ fun LiveTvScreen() {
     }
 }
 
+/**
+ * One row of the guide. A channel carries programmes; an addon entry has none,
+ * so its own description stands in for the schedule and it keeps the addon's
+ * name instead of a channel number.
+ */
+private sealed interface Entry {
+    val id: String
+    val name: String
+    val logo: String?
+    /** The channel group, or the addon catalog an event came from. */
+    val groupName: String
+    /** The provider's name, when there is more than one to tell apart. */
+    val provider: String?
+    /** The channel behind this row, for its guide programmes; null for an event. */
+    val channel: LiveChannel?
+    /** The addon entry behind this row; null for a channel. */
+    val liveEvent: LiveEvent?
+    fun onAir(at: Long): Boolean
+    fun matches(needle: String): Boolean
+
+    class Channel(override val channel: LiveChannel, override val provider: String?) : Entry {
+        override val id: String get() = channel.id
+        override val name: String get() = channel.name
+        override val logo: String? get() = channel.logo
+        override val groupName: String get() = channel.groupName
+        override val liveEvent: LiveEvent? get() = null
+        override fun onAir(at: Long): Boolean = channel.onAir(at)
+        override fun matches(needle: String): Boolean =
+            channel.name.lowercase().contains(needle) || channel.number == needle || channel.groupName.lowercase().contains(needle)
+    }
+
+    /** An addon's event: a Live TV entry, never a station with an invented number. */
+    class Event(override val liveEvent: LiveEvent, override val provider: String?) : Entry {
+        override val id: String get() = liveEvent.id
+        override val name: String get() = liveEvent.name
+        override val logo: String? get() = liveEvent.logo
+        override val groupName: String get() = liveEvent.group?.takeIf { it.isNotBlank() } ?: "Events"
+        override val channel: LiveChannel? get() = null
+        override fun onAir(at: Long): Boolean = false
+        override fun matches(needle: String): Boolean =
+            liveEvent.name.lowercase().contains(needle) || groupName.lowercase().contains(needle) ||
+                liveEvent.description?.lowercase()?.contains(needle) == true || liveEvent.releaseInfo?.lowercase()?.contains(needle) == true ||
+                liveEvent.sourceName?.lowercase()?.contains(needle) == true
+
+        /** The addon's own line for the row: what the event is and when. */
+        val detail: String get() = listOfNotNull(
+            liveEvent.releaseInfo?.takeIf { it.isNotBlank() },
+            liveEvent.description?.takeIf { it.isNotBlank() },
+        ).joinToString(" · ")
+    }
+}
+
 /** The focused programme: the guide's preview, like YouTube TV's top panel. */
 @Composable
-private fun Details(sel: Pair<LiveChannel, LiveProgram?>?, api: WrenTVApi?, now: Long) {
+private fun Details(sel: Pair<Entry, LiveProgram?>?, api: WrenTVApi?, now: Long) {
     Row(
         Modifier.fillMaxWidth().height(124.dp).padding(horizontal = PageGutter, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         if (sel == null) return@Row
-        val (ch, p) = sel
-        ChannelLogo(ch, api, Modifier.width(150.dp).fillMaxHeight().background(Wren.surface, RoundedCornerShape(12.dp)))
+        val (entry, p) = sel
+        ChannelLogo(entry.name, entry.logo, api, Modifier.width(150.dp).fillMaxHeight().background(Wren.surface, RoundedCornerShape(12.dp)))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (p != null && p.airing(now)) LiveBadge()
                 Text(
-                    // With no programme the channel's name is the title below: say where it lives instead.
-                    listOfNotNull(ch.number?.takeIf { it.isNotEmpty() }, if (p == null) ch.groupName else ch.name).joinToString("  "),
+                    // With no programme the entry's own name is the title below, so say where it lives instead.
+                    listOfNotNull(entry.channel?.number?.takeIf { it.isNotEmpty() }, if (p == null) entry.groupName else entry.name, entry.provider).joinToString("  "),
                     style = MaterialTheme.typography.labelLarge, color = Wren.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
             Text(
-                p?.title ?: ch.name, style = MaterialTheme.typography.headlineMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                p?.title ?: entry.name, style = MaterialTheme.typography.headlineMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 4.dp),
             )
             if (p != null) {
@@ -249,7 +332,10 @@ private fun Details(sel: Pair<LiveChannel, LiveProgram?>?, api: WrenTVApi?, now:
                     Text(it, style = MaterialTheme.typography.bodyMedium, color = Wren.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
                 }
             } else {
-                Text("No guide information", style = MaterialTheme.typography.bodyMedium, color = Wren.secondary, modifier = Modifier.padding(top = 2.dp))
+                // An addon entry has no guide: its own description is the most
+                // useful thing to show, and an event with none says so plainly.
+                val note = (entry as? Entry.Event)?.detail?.takeIf { it.isNotEmpty() } ?: "No guide information"
+                Text(note, style = MaterialTheme.typography.bodyMedium, color = Wren.secondary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
             }
         }
     }
@@ -296,7 +382,7 @@ private fun Ruler(start: Long, now: Long, width: Dp) {
 
 @Composable
 private fun GuideRow(
-    ch: LiveChannel,
+    entry: Entry,
     programs: List<LiveProgram>,
     api: WrenTVApi?,
     now: Long,
@@ -310,30 +396,36 @@ private fun GuideRow(
 ) {
     val end = start + SPAN
     val visible = programs.filter { it.end > start && it.start < end }
+    // What a channel shows when its provider published no guide; an addon entry
+    // carries no schedule at all, so it says what it is instead.
+    val empty = when {
+        entry is Entry.Event -> entry.detail.ifEmpty { entry.provider?.let { "Event · $it" } ?: "Event" }
+        else -> "No guide information"
+    }
     Row(Modifier.fillMaxWidth().height(RowHeight), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         GuideCell(
-            onClick, Modifier.width(ChannelColumn).onFocusChanged { if (it.isFocused) onFocus(ch.current(programs, now)) }
-                .rememberFocus("ch:${ch.id}"),
+            onClick, Modifier.width(ChannelColumn).onFocusChanged { if (it.isFocused) onFocus(entry.current(programs, now)) }
+                .rememberFocus("ch:${entry.id}"),
         ) {
             Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    ChannelLogo(ch, api, Modifier.width(60.dp).height(34.dp))
-                    ch.number?.takeIf { it.isNotEmpty() }?.let {
+                    ChannelLogo(entry.name, entry.logo, api, Modifier.width(60.dp).height(34.dp))
+                    entry.channel?.number?.takeIf { it.isNotEmpty() }?.let {
                         Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 1, color = LocalContentColor.current.copy(alpha = 0.6f))
                     }
                 }
                 // Two lines: provider names are long ("F1 TV 01: Racing …") and the end is what tells them apart.
-                Text(ch.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Text(entry.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             }
         }
         Box(Modifier.width(width).fillMaxHeight()) {
             if (visible.isEmpty()) {
                 GuideCell(
                     onClick, Modifier.fillMaxSize().onFocusChanged { if (it.isFocused) onFocus(null) }
-                        .rememberFocus("p:${ch.id}:none", default = first),
+                        .rememberFocus("p:${entry.id}:none", default = first),
                 ) {
                     Text(
-                        "No guide information", style = MaterialTheme.typography.bodyMedium, maxLines = 1,
+                        empty, style = MaterialTheme.typography.bodyMedium, maxLines = 1,
                         color = LocalContentColor.current.copy(alpha = 0.6f), modifier = Modifier.align(Alignment.CenterStart).padding(horizontal = 14.dp),
                     )
                 }
@@ -356,7 +448,7 @@ private fun GuideRow(
                                 else -> false
                             }
                         }
-                        .rememberFocus("p:${ch.id}:${p.start}", default = first && i == 0),
+                        .rememberFocus("p:${entry.id}:${p.start}", default = first && i == 0),
                     airing = airing,
                 ) {
                     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalArrangement = Arrangement.Center) {
@@ -397,13 +489,22 @@ private fun GuideCell(
 /** A channel's logo on a dark tile, or its name when there's no logo. */
 @Composable
 fun ChannelLogo(ch: LiveChannel, api: WrenTVApi?, modifier: Modifier = Modifier) {
-    val url = ch.logo?.takeIf { it.isNotEmpty() }?.let { if (it.startsWith("http")) it else api?.absolute(it) }
+    ChannelLogo(ch.name, ch.logo, api, modifier)
+}
+
+/**
+ * The same tile for anything in the Live TV list: a channel or an addon entry,
+ * which has a name and a logo and no channel object behind it.
+ */
+@Composable
+fun ChannelLogo(name: String, logo: String?, api: WrenTVApi?, modifier: Modifier = Modifier) {
+    val url = logo?.takeIf { it.isNotEmpty() }?.let { if (it.startsWith("http")) it else api?.absolute(it) }
     Box(modifier.clip(RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
         if (url != null) {
             RemoteImage(url, Modifier.fillMaxSize().padding(6.dp), contentScale = ContentScale.Fit)
         } else {
             Text(
-                ch.name.take(4).uppercase(), style = MaterialTheme.typography.labelLarge, maxLines = 1,
+                name.take(4).uppercase(), style = MaterialTheme.typography.labelLarge, maxLines = 1,
                 color = Wren.secondary, modifier = Modifier.padding(4.dp),
             )
         }
@@ -417,12 +518,12 @@ private fun LiveProgram.airing(at: Long): Boolean = at >= start && at < end
 /** The guide has a programme airing on it now. */
 fun LiveChannel.onAir(at: Long): Boolean = now?.airing(at) == true
 
-private fun LiveChannel.current(programs: List<LiveProgram>, at: Long): LiveProgram? =
-    programs.firstOrNull { it.airing(at) } ?: now
+private fun Entry.current(programs: List<LiveProgram>, at: Long): LiveProgram? =
+    programs.firstOrNull { it.airing(at) } ?: channel?.now
 
 /** [group]'s channels, those on air first, otherwise in the provider's order. */
 fun List<LiveChannel>.inGroup(group: String, now: Long): List<LiveChannel> =
-    filter { it.groupName == group }.sortedBy { !it.onAir(now) }
+    filter { (it.group?.takeIf { g -> g.isNotBlank() } ?: "Channels") == group }.sortedBy { !it.onAir(now) }
 
 private val clock: DateFormat = DateFormat.getTimeInstance(DateFormat.SHORT)
 

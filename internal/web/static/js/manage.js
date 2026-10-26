@@ -2,6 +2,7 @@
 import { api, account, state, isSupabase, usingAccount } from './api.js';
 import { esc, $, $$, el, toast, modal, confirmDialog, fmtSize, timeAgo } from './ui.js';
 import { setTitle, refreshLibraries, render, isAdmin } from './app.js';
+import { addonCapabilitySummary } from './addon-model.js';
 
 // ---------------------------------------------------------------- dashboard
 
@@ -225,15 +226,22 @@ async function viewLocalUsers(alongsideAccounts = false) {
       <td>${limitsSummary(u.effective)}</td>
       <td style="text-align:right;white-space:nowrap"><button class="btn small" data-edit="${u.id}">Edit</button>
       ${u.id !== state.user.id ? `<button class="btn small danger" data-del="${u.id}">Remove</button>` : ''}</td></tr>`).join('')}</table></div>`}
-    ${alongsideAccounts ? '' : `<p class="small muted">Defaults for everyone are in <a href="/manage/settings#users" style="color:var(--accent)">Settings → Users</a>. Streamed titles are visible to anyone allowed to stream.</p>`}</div>`);
-
-  const edit = async (u) => {
-    const body = `${u ? '' : '<div class="field"><label>Username</label><input name="username" required></div>'}
-      <div class="field"><label>Name</label><input name="displayName" value="${esc(u?.displayName || '')}"></div>
+    ${alongsideAccounts ? '' : `<p class="small muted">Defaults for everyone are in <a href="/manage/settings#users" style="color:var(--accent)">Settings → Users</a>. Streamed titles are visible to anyone allowed to stream.</p>`}</div>`);  const edit = async (u) => {
+    // Sports favorites are private to the user. An admin can inspect and
+    // correct the document, but its revision guards against overwriting a
+    // change made on that person's device meanwhile.
+    let sports = null;
+    if (u) sports = await api(`/api/admin/users/${encodeURIComponent(u.id)}/sports/preferences`).catch(() => null);
+    const body = `${u ? '' : '<div class="field"><label>Username</label><input name="username" required></div>'}<
+div class="field"><label>Name</label><input name="displayName" value="${esc(u?.displayName || '')}"></div>
       <div class="field"><label>${u ? 'New password (optional)' : 'Password'}</label><input name="password" type="password" minlength="8" ${u ? '' : 'required'} autocomplete="new-password"></div>
       ${u?.id === state.user.id ? '' : `<label class="check"><input type="checkbox" name="isAdmin" ${u?.isAdmin ? 'checked' : ''}> Admin (manages the server, sees every library)</label>`}
       <div class="field" style="margin-top:12px"><label>Libraries</label>${fileLibs.map((l) => `<label class="check"><input type="checkbox" name="lib" value="${l.id}" ${u?.libraryIds?.includes(l.id) ? 'checked' : ''}> ${esc(l.name)}</label>`).join('') || '<span class="small muted">No libraries yet</span>'}</div>
-      ${limitsFields(u || { allowStreaming: true }, defaults)}`;
+      ${limitsFields(u || { allowStreaming: true }, defaults)}
+      ${u ? `<fieldset><legend>Sports favorites</legend>
+        <p class="small muted" style="margin-top:0">Pinned sports, followed competitions and teams. Edit only at their request; saving requires the revision loaded here.</p>
+        ${sports ? `<input type="hidden" name="sportsRevision" value="${sports.revision}"><div class="field"><label>Preference document (JSON)</label><textarea name="sportsPrefs" spellcheck="false">${esc(JSON.stringify(sports.preferences, null, 2))}</textarea></div>` : '<p class="small muted">Sports favorites are unavailable.</p>'}
+      </fieldset>` : ''}`;
     const ok = await modal(u ? `Edit ${u.displayName}` : 'Add user', body, {
       onOk: async (f) => {
         const v = Object.fromEntries(new FormData(f));
@@ -245,6 +253,13 @@ async function viewLocalUsers(alongsideAccounts = false) {
           if (isAdminBox) patch.isAdmin = isAdminBox.checked;
           if (v.password) patch.password = v.password;
           await api('/api/users/' + u.id, { method: 'PATCH', body: patch });
+          if (sports && v.sportsPrefs !== undefined) {
+            let preferences;
+            try { preferences = JSON.parse(v.sportsPrefs); } catch { throw new Error('Sports favorites are not valid JSON'); }
+            await api(`/api/admin/users/${encodeURIComponent(u.id)}/sports/preferences`, {
+              method: 'PUT', body: { revision: Number(v.sportsRevision), preferences },
+            });
+          }
         } else {
           await api('/api/users', { method: 'POST', body: { username: v.username, password: v.password, displayName: v.displayName, isAdmin: !!isAdminBox?.checked, libraryIds, limits } });
         }
@@ -507,15 +522,51 @@ function streamingTab(s, libs) {
 
 // ---------------------------------------------------------------- live TV
 
+// Per-provider refresh results keep an optional guide failure beside the
+// provider it belongs to, instead of making one shared error look fatal.
+function liveErrorLines(st = {}) {
+  const sources = st.sources || [];
+  if (sources.length) {
+    return sources.flatMap((src) => {
+      const name = src.name || src.id;
+      const lines = [];
+      if (src.error) lines.push(`${name}: ${src.error}`);
+      // Guide failures are optional: label them so they are not mistaken for a
+      // provider that cannot supply channels.
+      for (const guide of src.guideErrors || []) lines.push(`Optional guide for ${name}: ${guide}`);
+      return lines;
+    });
+  }
+  return st.errors || [];
+}
+
 function liveStatusLine(lt) {
   const st = lt.status || {};
   if (!lt.enabled) return '<span class="muted">Off</span>';
   if (st.refreshing && !st.channels) return '<span class="muted">Loading playlists…</span>';
   if (!lt.sources.length) return '<span class="error">Add a playlist below</span>';
-  if (!st.channels) return '<span class="error">No channels found</span>';
+  // A Stremio addon can contribute events instead of channels. An addon-only
+  // setup is working, and saying "no channels found" would be wrong.
+  const events = st.events || 0;
+  if (!st.channels && !events) {
+    const addons = st.addonSources || st.sportSources || 0;
+    if (addons) return `<span class="ok">On</span> <span class="small muted">· ${addons} addon${addons === 1 ? '' : 's'} · nothing listed right now</span>`;
+    return '<span class="error">No channels found</span>';
+  }
+  if (!st.channels) {
+    return `<span class="ok">On</span> <span class="small muted">· ${events} event${events === 1 ? '' : 's'} in Live TV · no channels</span>`;
+  }
   const guide = st.guideChannels ? `guide for ${st.guideChannels}` : 'no guide';
+  const eventsNote = events ? ` · ${events} event${events === 1 ? '' : 's'}` : '';
+  const sources = st.sources || [];
+  const failed = sources.filter((src) => src.error).length;
+  const guideIssues = sources.reduce((n, src) => n + (src.guideErrors?.length || 0), 0);
+  const notes = [];
+  if (failed) notes.push(`${failed} provider${failed === 1 ? '' : 's'} needs attention`);
+  if (guideIssues) notes.push(`${guideIssues} optional guide issue${guideIssues === 1 ? '' : 's'}`);
+  const attention = notes.length ? ` · ${notes.join(' · ')}` : '';
   const when = st.refreshed ? ` · updated ${timeAgo(Date.parse(st.refreshed) / 1000)}` : '';
-  return `<span class="ok">On</span> <span class="small muted">· ${st.visible} of ${st.channels} channels shown · ${guide}${when}${st.refreshing ? ' · refreshing…' : ''}</span>`;
+  return `<span class="ok">On</span> <span class="small muted">· ${st.visible} of ${st.channels} channels shown${eventsNote} · ${guide}${when}${st.refreshing ? ' · refreshing…' : ''}${attention}</span>`;
 }
 
 function liveTvTab(lt) {
@@ -525,15 +576,16 @@ function liveTvTab(lt) {
         the guide is found and matched to them, and both are refreshed in the background. Streams play through this server, so your login never reaches the apps.</p>
       <p data-lt-status>${liveStatusLine(lt)}</p>
       <label class="check"><input type="checkbox" name="ltEnabled" ${lt.enabled ? 'checked' : ''}> Enable live TV</label>
-      <ul class="small error" data-lt-errors ${(lt.status?.errors || []).length ? '' : 'hidden'}>${(lt.status?.errors || []).map((e) => `<li>${esc(e)}</li>`).join('')}</ul>
+      <ul class="small error" data-lt-errors ${liveErrorLines(lt.status).length ? '' : 'hidden'}>${liveErrorLines(lt.status).map((e) => `<li>${esc(e)}</li>`).join('')}</ul>
       <button type="button" class="btn small" data-lt-refresh ${lt.sources.length ? '' : 'disabled'}>Refresh now</button>
     </div>
 
-    <div class="panel"><h2>Playlists</h2>
-      <p class="small muted">An M3U playlist link, an Xtream Codes login (server, username and password) from your provider, or a Stremio addon with TV channels (its manifest link).
-        The guide is found on its own; only fill in a guide link if your provider gave you a separate one.</p>
+    <div class="panel"><h2>Providers</h2>
+      <p class="small muted">Add an M3U playlist link, an Xtream Codes login (server, username and password) or a Stremio manifest link. They are all providers and appear together in the Live TV source picker.
+        TV channel catalogs become channels, event catalogs become selectable entries in the same Live TV list, and a manifest that declares neither adds nothing.
+        A guide is found on its own; only fill in a guide link if your provider gave you a separate XMLTV file. A Stremio manifest never contains XMLTV, so an addon-backed provider uses the guide link you supply here, or works without one.</p>
       <div class="lt-sources"></div>
-      <button type="button" class="btn" data-lt-add>Add playlist</button>
+      <button type="button" class="btn" data-lt-add>Add provider</button>
     </div>
 
     <div class="panel"><h2>Channel groups</h2>
@@ -550,6 +602,15 @@ function liveTvTab(lt) {
   </div>`;
 }
 
+// looksLikeManifest is how the settings page keeps adding a Stremio addon as
+// simple as adding a playlist: pasting a manifest link into the URL field picks
+// the addon integration instead of failing as an M3U playlist. The kind stays a
+// stored detail, not a separate workflow.
+function looksLikeManifest(url) {
+  const value = String(url || '').trim();
+  return /^stremio:\/\//i.test(value) || /\/manifest\.json(?:[?#]|$)/i.test(value);
+}
+
 function setupLiveTv(node, lt, groups) {
   let sources = lt.sources.map((x) => ({ ...x }));
   const box = $('.lt-sources', node);
@@ -557,19 +618,20 @@ function setupLiveTv(node, lt, groups) {
     box.innerHTML = sources.length ? '' : '<p class="muted small">No playlists yet.</p>';
     sources.forEach((src) => {
       const x = src.kind === 'xtream';
-      const sa = src.kind === 'stremio';
+      // Both addon kinds are the same thing now: the manifest decides.
+      const addon = src.kind === 'stremio' || src.kind === 'sport';
       const r = el(`<div class="lt-source">
         <div class="form-grid">
           <div class="field"><label>Name</label><input data-k="name" value="${esc(src.name || '')}" placeholder="My provider"></div>
-          <div class="field"><label>Type</label><select data-k="kind"><option value="m3u" ${x || sa ? '' : 'selected'}>M3U playlist link</option><option value="xtream" ${x ? 'selected' : ''}>Xtream Codes login</option><option value="stremio" ${sa ? 'selected' : ''}>Stremio addon</option></select></div>
+          <div class="field"><label>Type</label><select data-k="kind"><option value="m3u" ${x || addon ? '' : 'selected'}>M3U playlist link</option><option value="xtream" ${x ? 'selected' : ''}>Xtream Codes login</option><option value="stremio" ${addon ? 'selected' : ''}>Stremio manifest link</option></select></div>
         </div>
         <div class="form-grid">
-          <div class="field"><label>${x ? 'Server' : sa ? 'Addon manifest link' : 'Playlist link'}</label><input data-k="url" value="${esc(src.url || '')}" placeholder="${x ? 'http://provider.example:8080' : sa ? 'https://…/manifest.json' : 'https://…/playlist.m3u'}" autocomplete="off"></div>
+          <div class="field"><label>${x ? 'Server' : addon ? 'Addon manifest link' : 'Playlist link'}</label><input data-k="url" value="${esc(src.url || '')}" placeholder="${x ? 'http://provider.example:8080' : addon ? 'https://…/manifest.json' : 'https://…/playlist.m3u'}" autocomplete="off"></div>
           ${x ? `<div class="field"><label>Username</label><input data-k="username" value="${esc(src.username || '')}" autocomplete="off"></div>
           <div class="field"><label>Password</label><input data-k="password" type="password" value="${esc(src.password || '')}" autocomplete="new-password"></div>` : ''}
         </div>
         <details ${src.epgUrl || src.userAgent ? 'open' : ''}><summary class="small muted">Advanced</summary><div class="form-grid">
-          <div class="field"><label>Guide (XMLTV) link</label><input data-k="epgUrl" value="${esc(src.epgUrl || '')}" placeholder="Found automatically" autocomplete="off"></div>
+          <div class="field"><label>Guide (XMLTV) link</label><input data-k="epgUrl" value="${esc(src.epgUrl || '')}" placeholder="${addon ? 'Optional: XMLTV guide for these channels' : 'Found automatically'}" autocomplete="off"></div>
           <div class="field"><label>User agent</label><input data-k="userAgent" value="${esc(src.userAgent || '')}" placeholder="VLC (most providers expect it)" autocomplete="off"></div>
         </div></details>
         <div class="lt-acts"><label class="check" style="margin:0"><input type="checkbox" data-k="enabled" ${src.enabled !== false ? 'checked' : ''}> Use this playlist</label>
@@ -581,6 +643,14 @@ function setupLiveTv(node, lt, groups) {
           src[inp.dataset.k] = inp.type === 'checkbox' ? inp.checked : inp.value;
           if (inp.dataset.k === 'kind') draw();
         };
+        if (inp.dataset.k === 'url') {
+          inp.addEventListener('change', () => {
+            if (src.kind === 'm3u' && looksLikeManifest(src.url)) {
+              src.kind = 'stremio';
+              draw();
+            }
+          });
+        }
       }
       $('[data-del]', r).onclick = () => { sources = sources.filter((y) => y !== src); draw(); };
       $('[data-check]', r).onclick = async (e) => {
@@ -590,7 +660,26 @@ function setupLiveTv(node, lt, groups) {
         res.innerHTML = '<span class="muted">Checking…</span>';
         try {
           const c = await api('/api/admin/livetv/check', { method: 'POST', body: src });
-          res.innerHTML = `<span class="ok">${c.channels} channels</span> <span class="muted">· ${c.guide ? 'guide found' : 'no guide found'}</span>`;
+          if (c.kind === 'addon') {
+            // An addon answers with what its manifest declares. Reporting
+            // "0 channels" for a working sport addon would be misleading; its
+            // limitations are shown too, and none of them is a rejection.
+            src.capabilities = c.capabilities || src.capabilities;
+            const summary = addonCapabilitySummary(c.capabilities);
+            const samples = (c.samples || [])
+              .filter((sample) => typeof sample.items === 'number')
+              .map((sample) => `${sample.items} in ${sample.name || sample.catalog}`);
+            const parts = [summary.headline, ...summary.details];
+            if (c.channels) parts.push(`${c.channels} channel${c.channels === 1 ? '' : 's'}`);
+            if (c.events) parts.push(`${c.events} event${c.events === 1 ? '' : 's'} in Live TV`);
+            const limits = summary.limitations.length
+              ? `<div class="small muted">${summary.limitations.map((line) => esc(line)).join(' ')}</div>`
+              : '';
+            res.innerHTML = `<span class="ok">${esc(parts.join(' · '))}</span>${samples.length ? ` <span class="muted">· ${esc(samples.join(' · '))}</span>` : ''}${limits}`;
+          } else {
+            const guide = c.guideCount ? `${c.guideCount} guide source${c.guideCount === 1 ? '' : 's'} configured` : 'no guide configured';
+            res.innerHTML = `<span class="ok">${c.channels} channels</span> <span class="muted">· ${guide}</span>`;
+          }
         } catch (ex) { res.innerHTML = `<span class="error">${esc(ex.message)}</span>`; }
         btn.disabled = false;
       };
@@ -625,7 +714,7 @@ function setupLiveTv(node, lt, groups) {
     try {
       const r = await api('/api/admin/livetv');
       statusEl.innerHTML = liveStatusLine(r.liveTv);
-      const errs = r.liveTv.status?.errors || [];
+      const errs = liveErrorLines(r.liveTv.status);
       errEl.innerHTML = errs.map((e) => `<li>${esc(e)}</li>`).join('');
       errEl.hidden = !errs.length;
       if (r.liveTv.status?.refreshing && n < 60) setTimeout(() => poll(n + 1), 2000);
@@ -653,12 +742,169 @@ function setupLiveTv(node, lt, groups) {
   };
 }
 
+// Sports administration: server-wide enablement, league selection, favorite
+// teams, discovery scope and per-league overrides. It saves independently of
+// the main settings form, using PUT /api/admin/sports.
+function sportsTab(leagues, sports, live, settings) {
+  if (!sports) {
+    return `<div data-tab="sports"><div class="panel"><h2>Sports</h2><p class="muted small">Sports settings are unavailable. Start the Sports service and reload.</p></div></div>`;
+  }
+  const enabled = sports.status?.enabled !== false;
+  const selected = new Set(sports.enabledLeagues || []);
+  const all = !selected.size;
+  const sources = settings?.liveTv?.sources || [];
+  const groups = live?.groups || [];
+  const defaultSources = new Set(sports.defaultSourceIds || []);
+  const defaultGroups = new Set(sports.defaultCategoryIds || []);
+  const overrides = sports.leagueSearchOverrides || {};
+  const grouped = new Map();
+  for (const league of leagues) {
+    const sport = league.applicationSport || league.sport || 'other';
+    if (!grouped.has(sport)) grouped.set(sport, []);
+    grouped.get(sport).push(league);
+  }
+  const status = sports.status || {};
+  return `<div data-tab="sports">
+    <div class="panel"><h2>Sports Hub</h2>
+      <label class="check"><input type="checkbox" name="sportsEnabled" ${enabled ? 'checked' : ''}> Show Sports and poll competitions</label>
+      <p class="small muted">Scores come from ESPN every 90 seconds. Turning Sports off stops polling and hides the tab; the last scores are kept.</p>
+      <div class="kv">
+        <span class="muted">Last refresh</span><span>${status.lastRefresh ? new Date(status.lastRefresh).toLocaleString() : 'Never'}</span>
+        <span class="muted">Events</span><span>${status.gameCount ?? 0}</span>
+        <span class="muted">Health</span><span>${status.lastError ? `<span class="error">${esc(status.lastError)}</span>` : '<span class="ok">OK</span>'}</span>
+      </div>
+      <div class="sports-actions" style="margin-top:10px"><button type="button" class="btn small" data-sports-refresh>Refresh now</button>
+        <button type="button" class="btn small" data-sports-logos>Clear logo cache</button>
+        <span class="small muted" data-sports-op></span></div>
+    </div>
+
+    <div class="panel"><h2>Competitions</h2>
+      <p class="small muted">Choose which competitions the server polls. An empty selection means every supported competition.</p>
+      <div class="form-grid"><div class="field"><label>Filter competitions</label><input type="search" data-sports-filter placeholder="NBA, soccer, rugby…"></div></div>
+      <label class="check"><input type="checkbox" data-sports-all ${all ? 'checked' : ''}> All supported competitions</label>
+      <div class="sports-league-list" data-sports-leagues style="max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px 10px">
+        ${[...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([sport, items]) => `<div class="follow-head">${esc(sport.replace(/-/g, ' '))}</div>
+          <div class="follow-list">${items.map((league) => `<label class="check" data-sports-label="${esc(`${league.name} ${league.id} ${sport}`.toLowerCase())}">
+            <input type="checkbox" data-sports-league value="${esc(league.id)}" ${all || selected.has(league.id) ? 'checked' : ''} ${all ? 'disabled' : ''}> ${esc(league.name)}
+            ${league.implementationStatus === 'limited' ? '<span class="small muted">limited</span>' : ''}</label>`).join('')}</div>`).join('')}
+      </div>
+    </div>
+
+    <div class="panel"><h2>Favorites and discovery scope</h2>
+      <div class="field"><label>Server-wide favorite teams</label><input data-sports-favorites value="${esc((sports.favoriteTeamIds || []).join(', '))}" placeholder="nba:2, mlb:135">
+        <span class="small muted">Team ids are <code>league:providerTeamId</code>. These are independent of each person's follows.</span></div>
+      <div class="form-grid">
+        <div class="field"><label>Default Live TV sources</label>${sources.length ? sources.map((source) => `<label class="check"><input type="checkbox" data-sports-source value="${esc(source.id)}" ${defaultSources.has(source.id) ? 'checked' : ''}> ${esc(source.name || source.id)}</label>`).join('') : '<span class="small muted">No Live TV sources.</span>'}</div>
+        <div class="field"><label>Default channel groups</label>${groups.length ? groups.map((group) => `<label class="check"><input type="checkbox" data-sports-group value="${esc(group.name)}" ${defaultGroups.has(group.name) ? 'checked' : ''}> ${esc(group.name)} <span class="small muted">${group.channels}</span></label>`).join('') : '<span class="small muted">No channel groups loaded.</span>'}</div>
+      </div>
+      <p class="small muted">Scope is saved and applies to automatic team-channel linking when any source or group is selected. Event stream discovery still searches every visible channel (tracked as a P1 gap).</p>
+      <h3 style="margin-top:12px">Per-competition overrides</h3>
+      <div data-sports-overrides>${Object.entries(overrides).map(([league, scope]) => sportsOverrideRow(leagues, league, scope)).join('')}</div>
+      <button type="button" class="btn small" data-sports-add-override>Add override</button>
+    </div>
+
+    <div class="prefs-actions"><button type="button" class="btn primary" data-sports-save>Save sports settings</button>
+      <span class="small muted" data-sports-result></span></div>
+  </div>`;
+}
+
+function sportsOverrideRow(leagues, league = '', scope = {}) {
+  return `<div class="form-grid sports-override" style="align-items:end;margin-bottom:8px">
+    <div class="field"><label>Competition</label><select data-override-league>${leagues.map((item) => `<option value="${esc(item.id)}"${item.id === league ? ' selected' : ''}>${esc(item.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Source ids</label><input data-override-sources value="${esc((scope.sourceIds || []).join(', '))}" placeholder="Leave blank for all"></div>
+    <div class="field"><label>Groups</label><input data-override-groups value="${esc((scope.categoryIds || []).join(', '))}" placeholder="Leave blank for all"></div>
+    <div class="field"><label>&nbsp;</label><button type="button" class="btn small danger" data-override-remove>Remove</button></div>
+  </div>`;
+}
+
+function setupSportsTab(node, leagues, sports, live, settings) {
+  if (!sports) return;
+  const all = $('[data-sports-all]', node);
+  const syncAll = () => {
+    for (const box of $$('[data-sports-league]', node)) {
+      box.disabled = all.checked;
+      if (all.checked) box.checked = true;
+    }
+  };
+  all.onchange = syncAll;
+  syncAll();
+  $('[data-sports-filter]', node).oninput = (e) => {
+    const query = e.target.value.trim().toLowerCase();
+    for (const label of $$('[data-sports-label]', node)) label.hidden = !!query && !label.dataset.sportsLabel.includes(query);
+  };
+  for (const box of $$('[data-sports-league]', node)) box.onchange = () => {
+    if (!$$('[data-sports-league]', node).some((item) => item.checked)) all.checked = true;
+    syncAll();
+  };
+  const route = (selector) => $(selector, node);
+  route('[data-sports-refresh]').onclick = async (e) => {
+    e.currentTarget.disabled = true;
+    route('[data-sports-op]').textContent = 'Refreshing…';
+    try {
+      await api('/api/admin/sports/refresh', { method: 'POST' });
+      route('[data-sports-op]').textContent = 'Refresh started.';
+      toast('Refreshing sports scores');
+    } catch (err) { route('[data-sports-op]').textContent = err.message; }
+    e.currentTarget.disabled = false;
+  };
+  route('[data-sports-logos]').onclick = async (e) => {
+    e.currentTarget.disabled = true;
+    try {
+      await api('/api/admin/sports/logo-cache/clear', { method: 'POST' });
+      route('[data-sports-op]').textContent = 'Logo cache cleared.';
+      toast('Sports logo cache cleared');
+    } catch (err) { route('[data-sports-op]').textContent = err.message; }
+    e.currentTarget.disabled = false;
+  };
+  const overrides = () => $('[data-sports-overrides]', node);
+  const bindOverride = (row) => { $('[data-override-remove]', row).onclick = () => row.remove(); };
+  for (const row of $$('.sports-override', node)) bindOverride(row);
+  route('[data-sports-add-override]').onclick = () => {
+    const wrap = el(sportsOverrideRow(leagues));
+    overrides().append(wrap);
+    bindOverride(wrap);
+  };
+  route('[data-sports-save]').onclick = async (e) => {
+    const result = route('[data-sports-result]');
+    result.textContent = 'Saving…';
+    e.currentTarget.disabled = true;
+    const body = {
+      enabled: $('input[name=sportsEnabled]', node).checked,
+      enabledLeagues: all.checked ? [] : $$('[data-sports-league]', node).filter((box) => box.checked).map((box) => box.value),
+      favoriteTeamIds: route('[data-sports-favorites]').value.split(',').map((id) => id.trim()).filter(Boolean),
+      defaultSourceIds: $$('[data-sports-source]', node).filter((box) => box.checked).map((box) => box.value),
+      defaultCategoryIds: $$('[data-sports-group]', node).filter((box) => box.checked).map((box) => box.value),
+      leagueSearchOverrides: {},
+    };
+    for (const row of $$('.sports-override', node)) {
+      const league = $('[data-override-league]', row).value;
+      if (!league) continue;
+      body.leagueSearchOverrides[league] = {
+        sourceIds: $('[data-override-sources]', row).value.split(',').map((id) => id.trim()).filter(Boolean),
+        categoryIds: $('[data-override-groups]', row).value.split(',').map((id) => id.trim()).filter(Boolean),
+      };
+    }
+    try {
+      await api('/api/admin/sports', { method: 'PUT', body });
+      result.textContent = 'Saved.';
+      toast('Sports settings saved');
+    } catch (err) {
+      result.textContent = err.message;
+      result.classList.add('error');
+    }
+    e.currentTarget.disabled = false;
+  };
+}
+
 export async function viewSettings() {
   setTitle('Settings');
-  const [s, libs, live] = await Promise.all([api('/api/admin/settings'), api('/api/libraries'), api('/api/admin/livetv').catch(() => null)]);
+  const [s, libs, live, sportsCatalog, sportsSettings] = await Promise.all([
+    api('/api/admin/settings'), api('/api/libraries'), api('/api/admin/livetv').catch(() => null),
+    api('/api/sports/leagues').catch(() => ({ leagues: [] })), api('/api/admin/sports').catch(() => null),
+  ]);
   const hw = ['auto', 'videotoolbox', 'nvenc', 'qsv', 'vaapi', 'amf', 'none'];
   const ud = s.userDefaults || {};
-  const tabs = [['general', 'General'], ['streaming', 'Streaming'], ['livetv', 'Live TV'], ['users', 'Users'], ['integrations', 'Integrations']];
+  const tabs = [['general', 'General'], ['streaming', 'Streaming'], ['livetv', 'Live TV'], ['sports', 'Sports'], ['users', 'Users'], ['integrations', 'Integrations']];
   const node = el(`<form class="settings"><div class="page-head"><h1>Settings</h1><button class="btn primary" data-save>Save changes</button></div>
     <div class="tabs" role="tablist">${tabs.map(([k, label]) => `<button type="button" role="tab" data-tabbtn="${k}">${label}</button>`).join('')}</div>
     <p class="error" data-err hidden></p>
@@ -683,6 +929,8 @@ export async function viewSettings() {
     ${streamingTab(s, libs)}
 
     ${liveTvTab(s.liveTv)}
+
+    ${sportsTab(sportsCatalog.leagues || [], sportsSettings, live, s)}
 
     <div data-tab="users">
       <div class="panel"><h2>Defaults for everyone</h2>
@@ -717,6 +965,7 @@ export async function viewSettings() {
   show(location.hash.slice(1));
 
   const readLiveTv = setupLiveTv(node, s.liveTv, live?.groups || []);
+  setupSportsTab(node, sportsCatalog.leagues || [], sportsSettings, live, s);
 
   // Webhooks
   const hooks = $('.hooks', node);

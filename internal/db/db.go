@@ -405,6 +405,54 @@ var migrations = []string{
 		PRIMARY KEY (user_id, kind, tmdb_id, season, episode)
 	);
 	CREATE INDEX items_tmdb ON items(kind, tmdb_id);`,
+	// Persisted sports team identities, keyed on league+provider team ID rather
+	// than name so a rebrand upstream does not orphan a linked channel.
+	`CREATE TABLE sports_teams (
+		id TEXT PRIMARY KEY,
+		league TEXT NOT NULL,
+		provider_team_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		location TEXT NOT NULL DEFAULT '',
+		nickname TEXT NOT NULL DEFAULT '',
+		abbreviation TEXT NOT NULL DEFAULT '',
+		logo_url TEXT NOT NULL DEFAULT '',
+		updated_at INTEGER NOT NULL,
+		UNIQUE (league, provider_team_id)
+	);
+	CREATE INDEX sports_teams_league ON sports_teams(league, name);`,
+	// Team channel links plus provenance. The channel snapshot is stored by tvg
+	// id/name rather than playlist id: Wren TV regenerates channel IDs on every
+	// playlist parse, so links resolve against the current list at read time and
+	// never point at a silently stale id.
+	`CREATE TABLE sports_team_channel_links (
+		id TEXT PRIMARY KEY,
+		team_id TEXT NOT NULL REFERENCES sports_teams(id) ON DELETE CASCADE,
+		slot TEXT NOT NULL CHECK (slot IN ('primary','backup')),
+		position INTEGER NOT NULL DEFAULT 0,
+		channel_ref TEXT NOT NULL DEFAULT '',
+		channel_tvg_id TEXT NOT NULL DEFAULT '',
+		channel_name TEXT NOT NULL,
+		channel_logo TEXT NOT NULL DEFAULT '',
+		source_id TEXT NOT NULL DEFAULT '',
+		source_name TEXT NOT NULL DEFAULT '',
+		auto_linked INTEGER NOT NULL DEFAULT 0,
+		link_confidence REAL NOT NULL DEFAULT 0,
+		match_reason TEXT NOT NULL DEFAULT '',
+		last_verified_at INTEGER,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL,
+		UNIQUE (team_id, slot, position)
+	);
+	CREATE INDEX sports_team_channel_links_team ON sports_team_channel_links(team_id);
+	CREATE INDEX sports_team_channel_links_tvg ON sports_team_channel_links(channel_tvg_id) WHERE channel_tvg_id <> '';`,
+	// One revisioned sports preference document per authenticated user. No
+	// profile layer exists in Wren TV, so the user id is the whole key.
+	`CREATE TABLE sports_preferences (
+		user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		revision INTEGER NOT NULL DEFAULT 0,
+		document TEXT NOT NULL,
+		updated_at INTEGER NOT NULL
+	);`,
 }
 
 // fkOff lists migrations (1-based) that rebuild tables. They run with

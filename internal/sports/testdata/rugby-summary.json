@@ -1,0 +1,2566 @@
+{
+  "header": {
+    "id": "600262",
+    "uid": "s:300~l:8323~e:600262",
+    "season": {
+      "year": 2025,
+      "current": false,
+      "type": 1
+    },
+    "timeValid": true,
+    "competitions": [
+      {
+        "id": "600262",
+        "uid": "s:300~l:8323~e:600262~c:600262",
+        "date": "2025-03-15T14:15Z",
+        "neutralSite": false,
+        "conferenceCompetition": false,
+        "boxscoreAvailable": true,
+        "commentaryAvailable": false,
+        "liveAvailable": false,
+        "onWatchESPN": false,
+        "recent": false,
+        "wallclockAvailable": false,
+        "boxscoreSource": "full",
+        "playByPlaySource": "full",
+        "competitors": [
+          {
+            "id": "20",
+            "uid": "s:300~l:8323~t:20",
+            "order": 0,
+            "homeAway": "home",
+            "winner": false,
+            "team": {
+              "id": "20",
+              "guid": "8f1df596-f841-35c8-9008-fd413f288bd0",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy",
+              "shortDisplayName": "Italy",
+              "color": "3366FF",
+              "logos": [
+                {
+                  "href": "https://a.espncdn.com/i/teamlogos/rugby/teams/500/20.png",
+                  "width": 500,
+                  "height": 500,
+                  "alt": "",
+                  "rel": [
+                    "full",
+                    "default"
+                  ],
+                  "lastUpdated": "2018-06-05T12:12Z"
+                }
+              ],
+              "links": [
+                {
+                  "rel": [
+                    "clubhouse",
+                    "desktop",
+                    "team"
+                  ],
+                  "href": "https://www.espn.com/rugby/team/_/id/20/italy",
+                  "text": "Clubhouse"
+                }
+              ]
+            },
+            "score": "17",
+            "linescores": [
+              {
+                "displayValue": "10"
+              },
+              {
+                "displayValue": "7"
+              },
+              {
+                "displayValue": "0"
+              },
+              {
+                "displayValue": "0"
+              }
+            ],
+            "record": [
+              {
+                "type": "total",
+                "summary": "LLLLW",
+                "displayValue": "LLLLW"
+              }
+            ],
+            "possession": false,
+            "form": "LLLLW"
+          },
+          {
+            "id": "3",
+            "uid": "s:300~l:8323~t:3",
+            "order": 1,
+            "homeAway": "away",
+            "winner": true,
+            "team": {
+              "id": "3",
+              "guid": "7023429b-7933-3a8f-b808-61b842f93c78",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland",
+              "shortDisplayName": "Ireland",
+              "color": "009900",
+              "logos": [
+                {
+                  "href": "https://a.espncdn.com/i/teamlogos/rugby/teams/500/3.png",
+                  "width": 500,
+                  "height": 500,
+                  "alt": "",
+                  "rel": [
+                    "full",
+                    "default"
+                  ],
+                  "lastUpdated": "2018-06-05T12:12Z"
+                }
+              ],
+              "links": [
+                {
+                  "rel": [
+                    "clubhouse",
+                    "desktop",
+                    "team"
+                  ],
+                  "href": "https://www.espn.com/rugby/team/_/id/3/ireland",
+                  "text": "Clubhouse"
+                }
+              ]
+            },
+            "score": "22",
+            "linescores": [
+              {
+                "displayValue": "12"
+              },
+              {
+                "displayValue": "10"
+              },
+              {
+                "displayValue": "0"
+              },
+              {
+                "displayValue": "0"
+              }
+            ],
+            "record": [
+              {
+                "type": "total",
+                "summary": "LWWWW",
+                "displayValue": "LWWWW"
+              }
+            ],
+            "possession": false,
+            "form": "LWWWW"
+          }
+        ],
+        "status": {
+          "type": {
+            "id": "3",
+            "name": "STATUS_FINAL",
+            "state": "post",
+            "completed": true,
+            "description": "FT",
+            "detail": "FT",
+            "shortDetail": "FT"
+          }
+        },
+        "details": [
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "1",
+              "text": "try"
+            },
+            "awayScore": 0,
+            "homeScore": 5,
+            "period": {
+              "number": 1
+            },
+            "clock": {
+              "value": 673.0,
+              "displayValue": "12'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "239153",
+                  "displayName": "Monty Ioane"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "12'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "2",
+              "text": "conversion"
+            },
+            "awayScore": 0,
+            "homeScore": 7,
+            "period": {
+              "number": 1
+            },
+            "clock": {
+              "value": 738.0,
+              "displayValue": "13'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "158708",
+                  "displayName": "Tommaso Allan"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "13'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 0,
+            "homeScore": 7,
+            "period": {
+              "number": 1
+            },
+            "clock": {
+              "value": 1108.0,
+              "displayValue": "19'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "295323",
+                  "displayName": "Niccolo Cannone"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "19'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 0,
+            "homeScore": 7,
+            "period": {
+              "number": 1
+            },
+            "clock": {
+              "value": 1108.0,
+              "displayValue": "19'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "290933",
+                  "displayName": "Dino Lamb"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "19'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "1",
+              "text": "try"
+            },
+            "awayScore": 5,
+            "homeScore": 7,
+            "period": {
+              "number": 1
+            },
+            "clock": {
+              "value": 1383.0,
+              "displayValue": "24'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "285683",
+                  "displayName": "Hugo Keenan"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "24'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "2",
+              "text": "conversion"
+            },
+            "awayScore": 7,
+            "homeScore": 7,
+            "period": {
+              "number": 1
+            },
+            "clock": {
+              "value": 1419.0,
+              "displayValue": "24'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "298855",
+                  "displayName": "Jack Crowley"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "24'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 7,
+            "homeScore": 7,
+            "period": {
+              "number": 1
+            },
+            "clock": {
+              "value": 1753.0,
+              "displayValue": "30'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "301497",
+                  "displayName": "Ross Vintcent"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "30'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 7,
+            "homeScore": 7,
+            "period": {
+              "number": 1
+            },
+            "clock": {
+              "value": 1753.0,
+              "displayValue": "30'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "300916",
+                  "displayName": "Lorenzo Cannone"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "30'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 7,
+            "homeScore": 7,
+            "period": {
+              "number": 1
+            },
+            "clock": {
+              "value": 1754.0,
+              "displayValue": "30'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "295064",
+                  "displayName": "Michele Lamaro"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "30'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 7,
+            "homeScore": 7,
+            "period": {
+              "number": 1
+            },
+            "clock": {
+              "value": 1754.0,
+              "displayValue": "30'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "212725",
+                  "displayName": "Sebastian Negri"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "30'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "3",
+              "text": "penalty goal"
+            },
+            "awayScore": 7,
+            "homeScore": 10,
+            "period": {
+              "number": 1
+            },
+            "clock": {
+              "value": 1959.0,
+              "displayValue": "33'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "158708",
+                  "displayName": "Tommaso Allan"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "33'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "5",
+              "text": "yellow card"
+            },
+            "awayScore": 7,
+            "homeScore": 10,
+            "period": {
+              "number": 1
+            },
+            "clock": {
+              "value": 2301.0,
+              "displayValue": "39'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "295064",
+                  "displayName": "Michele Lamaro"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "39'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "1",
+              "text": "try"
+            },
+            "awayScore": 12,
+            "homeScore": 10,
+            "period": {
+              "number": 1
+            },
+            "clock": {
+              "value": 2363.0,
+              "displayValue": "40'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "295194",
+                  "displayName": "Dan Sheehan"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "40'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 12,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 2727.0,
+              "displayValue": "46'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "296829",
+                  "displayName": "Stephen Varney"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "46'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 12,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 2727.0,
+              "displayValue": "46'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "300681",
+                  "displayName": "Martin Page-Relo"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "46'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 12,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 2785.0,
+              "displayValue": "47'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "301292",
+                  "displayName": "Joe McCarthy"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "47'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 12,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 2785.0,
+              "displayValue": "47'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "285691",
+                  "displayName": "James Ryan"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "47'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 12,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 2786.0,
+              "displayValue": "47'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "136576",
+                  "displayName": "Tadhg Furlong"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "47'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 12,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 2786.0,
+              "displayValue": "47'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "134572",
+                  "displayName": "Finlay Bealham"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "47'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "1",
+              "text": "try"
+            },
+            "awayScore": 17,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 2800.0,
+              "displayValue": "47'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "295194",
+                  "displayName": "Dan Sheehan"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "47'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "6",
+              "text": "red card"
+            },
+            "awayScore": 17,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 2890.0,
+              "displayValue": "49'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "301497",
+                  "displayName": "Ross Vintcent"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "49'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 17,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3103.0,
+              "displayValue": "52'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "107693",
+                  "displayName": "Peter O'Mahony"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "52'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 17,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3103.0,
+              "displayValue": "52'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "165575",
+                  "displayName": "Josh van der Flier"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "52'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 17,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3346.0,
+              "displayValue": "56'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "301516",
+                  "displayName": "Mirco Spagnolo"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "56'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 17,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3346.0,
+              "displayValue": "56'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "295850",
+                  "displayName": "Danilo Fischetti"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "56'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 17,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3349.0,
+              "displayValue": "56'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "285825",
+                  "displayName": "Giosue Zilocchi"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "56'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 17,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3349.0,
+              "displayValue": "56'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "176654",
+                  "displayName": "Simone Ferrari"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "56'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 17,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3353.0,
+              "displayValue": "56'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "145340",
+                  "displayName": "Bundee Aki"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "56'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 17,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3353.0,
+              "displayValue": "56'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "169067",
+                  "displayName": "Robbie Henshaw"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "56'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "1",
+              "text": "try"
+            },
+            "awayScore": 22,
+            "homeScore": 10,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3457.0,
+              "displayValue": "58'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "295194",
+                  "displayName": "Dan Sheehan"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "58'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "1",
+              "text": "try"
+            },
+            "awayScore": 22,
+            "homeScore": 15,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3779.0,
+              "displayValue": "63'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "296829",
+                  "displayName": "Stephen Varney"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "63'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "2",
+              "text": "conversion"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3841.0,
+              "displayValue": "65'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "158708",
+                  "displayName": "Tommaso Allan"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "65'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3856.0,
+              "displayValue": "65'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "301913",
+                  "displayName": "Sam Prendergast"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "65'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3856.0,
+              "displayValue": "65'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "298855",
+                  "displayName": "Jack Crowley"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "65'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3857.0,
+              "displayValue": "65'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "303103",
+                  "displayName": "Jack Boyle"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "65'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 3857.0,
+              "displayValue": "65'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "258957",
+                  "displayName": "Andrew Porter"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "65'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 4013.0,
+              "displayValue": "67'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "96413",
+                  "displayName": "Conor Murray"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "67'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 4013.0,
+              "displayValue": "67'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "172719",
+                  "displayName": "Jamison Gibson-Park"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "67'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 4094.0,
+              "displayValue": "69'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "299022",
+                  "displayName": "Giacomo Nicotera"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "69'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 4094.0,
+              "displayValue": "69'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "301497",
+                  "displayName": "Ross Vintcent"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "69'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 4256.0,
+              "displayValue": "71'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "305413",
+                  "displayName": "Gus McCarthy"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "71'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 4256.0,
+              "displayValue": "71'"
+            },
+            "team": {
+              "id": "3",
+              "uid": "s:300~t:3",
+              "name": "Ireland",
+              "abbreviation": "IRE",
+              "displayName": "Ireland"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "295194",
+                  "displayName": "Dan Sheehan"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "71'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "8",
+              "text": "substitute on"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 4525.0,
+              "displayValue": "76'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "300917",
+                  "displayName": "Leonardo Marin"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "76'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "7",
+              "text": "player substituted"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 4525.0,
+              "displayValue": "76'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "158708",
+                  "displayName": "Tommaso Allan"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "76'"
+            }
+          },
+          {
+            "sequenceNumber": "0",
+            "type": {
+              "id": "6",
+              "text": "red card"
+            },
+            "awayScore": 22,
+            "homeScore": 17,
+            "period": {
+              "number": 2
+            },
+            "clock": {
+              "value": 4690.0,
+              "displayValue": "79'"
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:300~t:20",
+              "name": "Italy",
+              "abbreviation": "ITA",
+              "displayName": "Italy"
+            },
+            "participants": [
+              {
+                "athlete": {
+                  "id": "299022",
+                  "displayName": "Giacomo Nicotera"
+                }
+              }
+            ],
+            "addedClock": {
+              "value": 0.0,
+              "displayValue": "79'"
+            }
+          }
+        ],
+        "boxscoreMinutes": false
+      }
+    ],
+    "links": [
+      {
+        "rel": [
+          "recap",
+          "desktop",
+          "event"
+        ],
+        "href": "http://www.espn.co.uk/rugby/report?gameId=600262&league=180659",
+        "text": "Recap",
+        "shortText": "Recap",
+        "isExternal": false,
+        "isPremium": false
+      }
+    ],
+    "league": {
+      "id": "8323",
+      "uid": "s:300~l:8323",
+      "name": "Six Nations",
+      "abbreviation": "Six Nations",
+      "shortName": "Six Nations",
+      "midsizeName": "180659",
+      "slug": "180659",
+      "isTournament": true,
+      "links": [
+        {
+          "rel": [
+            "scores",
+            "desktop",
+            "league"
+          ],
+          "href": "https://www.espn.com/rugby/scoreboard/_/league/180659",
+          "text": "Scores"
+        },
+        {
+          "rel": [
+            "fixtures",
+            "desktop",
+            "league"
+          ],
+          "href": "https://www.espn.co.uk/rugby/fixtures/_/league/180659",
+          "text": "Fixtures"
+        }
+      ],
+      "logos": [
+        {
+          "href": "https://a.espncdn.com/combiner/i?img=/redesign/assets/img/icons/ESPN-icon-rugby.png",
+          "rel": [
+            "full",
+            "default"
+          ]
+        },
+        {
+          "href": "https://a.espncdn.com/guid/3c68c9b2-7e7c-3a78-9f96-cb954d22809d/logos/default-dark.png",
+          "rel": [
+            "full",
+            "dark"
+          ]
+        }
+      ]
+    }
+  },
+  "boxscore": {
+    "teams": [
+      {
+        "team": {
+          "id": "20",
+          "uid": "s:300~t:20",
+          "slug": "italy",
+          "name": "Italy",
+          "abbreviation": "ITA",
+          "displayName": "Italy",
+          "shortDisplayName": "Italy",
+          "color": "3366FF",
+          "logo": "https://a.espncdn.com/i/teamlogos/rugby/teams/500/20.png"
+        },
+        "statistics": [
+          {
+            "name": "general",
+            "displayName": "General",
+            "shortDisplayName": "General",
+            "abbreviation": "gen",
+            "summary": "",
+            "stats": [
+              {
+                "name": "cleanBreaks",
+                "displayName": "Clean Breaks",
+                "shortDisplayName": "CB",
+                "description": "Clean Breaks",
+                "abbreviation": "CB",
+                "type": "cleanbreaks",
+                "value": 6.0,
+                "displayValue": "6"
+              },
+              {
+                "name": "conversionGoals",
+                "displayName": "Conversion Goals",
+                "shortDisplayName": "CG",
+                "description": "Conversion Goals",
+                "abbreviation": "CG",
+                "type": "conversiongoals",
+                "value": 2.0,
+                "displayValue": "2"
+              },
+              {
+                "name": "defendersBeaten",
+                "displayName": "Defenders Beaten",
+                "shortDisplayName": "DB",
+                "description": "Defenders Beaten",
+                "abbreviation": "DB",
+                "type": "defendersbeaten",
+                "value": 28.0,
+                "displayValue": "28"
+              },
+              {
+                "name": "kickPercentSuccess",
+                "displayName": "Kick Percent Success",
+                "shortDisplayName": "KPS",
+                "description": "Kick Percent Success",
+                "abbreviation": "KPS",
+                "type": "kickpercentsuccess",
+                "value": 1.0,
+                "displayValue": "1.000"
+              },
+              {
+                "name": "kicks",
+                "displayName": "Kicks",
+                "shortDisplayName": "Kicks",
+                "description": "",
+                "abbreviation": "K",
+                "type": "kicks",
+                "value": 0.0,
+                "displayValue": "0"
+              },
+              {
+                "name": "kicksFromHand",
+                "displayName": "Kicks From Hand",
+                "shortDisplayName": "KFH",
+                "description": "Kicks From Hand",
+                "abbreviation": "KFH",
+                "type": "kicksfromhand",
+                "value": 28.0,
+                "displayValue": "28"
+              },
+              {
+                "name": "lineoutsWon",
+                "displayName": "Lineouts Won",
+                "shortDisplayName": "LW",
+                "description": "Lineouts Won",
+                "abbreviation": "LW",
+                "type": "lineoutswon",
+                "value": 15.0,
+                "displayValue": "15"
+              },
+              {
+                "name": "lineoutWonSteal",
+                "displayName": "Lineout Won Steal",
+                "shortDisplayName": "LWS",
+                "description": "Lineout Won Steal",
+                "abbreviation": "LWS",
+                "type": "lineoutwonsteal",
+                "value": 0.0,
+                "displayValue": "0"
+              },
+              {
+                "name": "maulsTotal",
+                "displayName": "Mauls Total",
+                "shortDisplayName": "MT",
+                "description": "Mauls Total",
+                "abbreviation": "MT",
+                "type": "maulstotal",
+                "value": 2.0,
+                "displayValue": "2"
+              },
+              {
+                "name": "maulsWon",
+                "displayName": "Mauls Won",
+                "shortDisplayName": "MW",
+                "description": "Mauls Won",
+                "abbreviation": "MW",
+                "type": "maulswon",
+                "value": 2.0,
+                "displayValue": "2"
+              },
+              {
+                "name": "metres",
+                "displayName": "Meters Run",
+                "shortDisplayName": "MR",
+                "description": "Meters Run",
+                "abbreviation": "MR",
+                "type": "metres",
+                "value": 301.0,
+                "displayValue": "301"
+              },
+              {
+                "name": "missedTackles",
+                "displayName": "Missed Tackles",
+                "shortDisplayName": "MT",
+                "description": "Missed Tackles",
+                "abbreviation": "MT",
+                "type": "missedtackles",
+                "value": 22.0,
+                "displayValue": "22"
+              },
+              {
+                "name": "offload",
+                "displayName": "Offload",
+                "shortDisplayName": "O",
+                "description": "Offload",
+                "abbreviation": "O",
+                "type": "offload",
+                "value": 3.0,
+                "displayValue": "3"
+              },
+              {
+                "name": "passes",
+                "displayName": "Passes",
+                "shortDisplayName": "P",
+                "description": "Passes",
+                "abbreviation": "P",
+                "type": "passes",
+                "value": 143.0,
+                "displayValue": "143"
+              },
+              {
+                "name": "pcPossessionFirst",
+                "displayName": "Pc Possession First",
+                "shortDisplayName": "PPF",
+                "description": "Pc Possession First",
+                "abbreviation": "PPF",
+                "type": "pcpossessionfirst",
+                "value": 0.47,
+                "displayValue": "0.470"
+              },
+              {
+                "name": "pcPossessionSecond",
+                "displayName": "Pc Possession Second",
+                "shortDisplayName": "PPS",
+                "description": "Pc Possession Second",
+                "abbreviation": "PPS",
+                "type": "pcpossessionsecond",
+                "value": 0.43,
+                "displayValue": "0.430"
+              },
+              {
+                "name": "pcTerritoryFirst",
+                "displayName": "Pc Territory First",
+                "shortDisplayName": "PTF",
+                "description": "Pc Territory First",
+                "abbreviation": "PTF",
+                "type": "pcterritoryfirst",
+                "value": 0.5,
+                "displayValue": "0.500"
+              },
+              {
+                "name": "pcTerritorySecond",
+                "displayName": "Pc Territory Second",
+                "shortDisplayName": "PTS",
+                "description": "Pc Territory Second",
+                "abbreviation": "PTS",
+                "type": "pcterritorysecond",
+                "value": 0.34,
+                "displayValue": "0.340"
+              },
+              {
+                "name": "penaltiesConceded",
+                "displayName": "Penalties Conceded",
+                "shortDisplayName": "PC",
+                "description": "Penalties Conceded",
+                "abbreviation": "PC",
+                "type": "penaltiesconceded",
+                "value": 10.0,
+                "displayValue": "10"
+              },
+              {
+                "name": "penaltyGoals",
+                "displayName": "Penalty Goals",
+                "shortDisplayName": "PG",
+                "description": "Penalty Goals",
+                "abbreviation": "PG",
+                "type": "penaltygoals",
+                "value": 1.0,
+                "displayValue": "1"
+              },
+              {
+                "name": "possession",
+                "displayName": "Possession",
+                "shortDisplayName": "P",
+                "description": "Possession",
+                "abbreviation": "P",
+                "type": "possession",
+                "value": 0.45,
+                "displayValue": "0.450"
+              },
+              {
+                "name": "redCards",
+                "displayName": "Red Cards",
+                "shortDisplayName": "RC",
+                "description": "Red Cards",
+                "abbreviation": "RC",
+                "type": "redcards",
+                "value": 2.0,
+                "displayValue": "2"
+              },
+              {
+                "name": "rucksTotal",
+                "displayName": "Rucks Total",
+                "shortDisplayName": "RT",
+                "description": "Rucks Total",
+                "abbreviation": "RT",
+                "type": "ruckstotal",
+                "value": 78.0,
+                "displayValue": "78"
+              },
+              {
+                "name": "rucksWon",
+                "displayName": "Rucks Won",
+                "shortDisplayName": "RW",
+                "description": "Rucks Won",
+                "abbreviation": "RW",
+                "type": "ruckswon",
+                "value": 75.0,
+                "displayValue": "75"
+              },
+              {
+                "name": "runs",
+                "displayName": "Runs",
+                "shortDisplayName": "R",
+                "description": "Runs",
+                "abbreviation": "R",
+                "type": "runs",
+                "value": 95.0,
+                "displayValue": "95"
+              },
+              {
+                "name": "scrumsTotal",
+                "displayName": "Scrums Total",
+                "shortDisplayName": "ST",
+                "description": "Scrums Total",
+                "abbreviation": "ST",
+                "type": "scrumstotal",
+                "value": 9.0,
+                "displayValue": "9"
+              },
+              {
+                "name": "scrumsWon",
+                "displayName": "Scrums Won",
+                "shortDisplayName": "SW",
+                "description": "Scrums Won",
+                "abbreviation": "SW",
+                "type": "scrumswon",
+                "value": 8.0,
+                "displayValue": "8"
+              },
+              {
+                "name": "tackles",
+                "displayName": "Tackles",
+                "shortDisplayName": "T",
+                "description": "Tackles",
+                "abbreviation": "T",
+                "type": "tackles",
+                "value": 171.0,
+                "displayValue": "171"
+              },
+              {
+                "name": "territory",
+                "displayName": "Territory",
+                "shortDisplayName": "T",
+                "description": "Territory",
+                "abbreviation": "T",
+                "type": "territory",
+                "value": 0.42,
+                "displayValue": "0.420"
+              },
+              {
+                "name": "totalFreeKicksConceded",
+                "displayName": "Total Free Kicks Conceded",
+                "shortDisplayName": "TFKC",
+                "description": "Total Free Kicks Conceded",
+                "abbreviation": "TFKC",
+                "type": "totalfreekicksconceded",
+                "value": 0.0,
+                "displayValue": "0"
+              },
+              {
+                "name": "totalLineouts",
+                "displayName": "Total Lineouts",
+                "shortDisplayName": "TL",
+                "description": "Total Lineouts",
+                "abbreviation": "TL",
+                "type": "totallineouts",
+                "value": 16.0,
+                "displayValue": "16"
+              },
+              {
+                "name": "tries",
+                "displayName": "Tries",
+                "shortDisplayName": "T",
+                "description": "Tries",
+                "abbreviation": "T",
+                "type": "tries",
+                "value": 2.0,
+                "displayValue": "2"
+              },
+              {
+                "name": "turnoverKnockOn",
+                "displayName": "Turnover Knock On",
+                "shortDisplayName": "TKO",
+                "description": "Turnover Knock On",
+                "abbreviation": "TKO",
+                "type": "turnoverknockon",
+                "value": 4.0,
+                "displayValue": "4"
+              },
+              {
+                "name": "turnoversConceded",
+                "displayName": "Turnovers Conceded",
+                "shortDisplayName": "TC",
+                "description": "Turnovers Conceded",
+                "abbreviation": "TC",
+                "type": "turnoversconceded",
+                "value": 11.0,
+                "displayValue": "11"
+              },
+              {
+                "name": "yellowCards",
+                "displayName": "Yellow Cards",
+                "shortDisplayName": "YC",
+                "description": "Yellow Cards",
+                "abbreviation": "YC",
+                "type": "yellowcards",
+                "value": 1.0,
+                "displayValue": "1"
+              }
+            ]
+          }
+        ],
+        "displayOrder": 1,
+        "homeAway": "home"
+      },
+      {
+        "team": {
+          "id": "3",
+          "uid": "s:300~t:3",
+          "slug": "ireland",
+          "name": "Ireland",
+          "abbreviation": "IRE",
+          "displayName": "Ireland",
+          "shortDisplayName": "Ireland",
+          "color": "009900",
+          "logo": "https://a.espncdn.com/i/teamlogos/rugby/teams/500/3.png"
+        },
+        "statistics": [
+          {
+            "name": "general",
+            "displayName": "General",
+            "shortDisplayName": "General",
+            "abbreviation": "gen",
+            "summary": "",
+            "stats": [
+              {
+                "name": "cleanBreaks",
+                "displayName": "Clean Breaks",
+                "shortDisplayName": "CB",
+                "description": "Clean Breaks",
+                "abbreviation": "CB",
+                "type": "cleanbreaks",
+                "value": 3.0,
+                "displayValue": "3"
+              },
+              {
+                "name": "conversionGoals",
+                "displayName": "Conversion Goals",
+                "shortDisplayName": "CG",
+                "description": "Conversion Goals",
+                "abbreviation": "CG",
+                "type": "conversiongoals",
+                "value": 1.0,
+                "displayValue": "1"
+              },
+              {
+                "name": "defendersBeaten",
+                "displayName": "Defenders Beaten",
+                "shortDisplayName": "DB",
+                "description": "Defenders Beaten",
+                "abbreviation": "DB",
+                "type": "defendersbeaten",
+                "value": 22.0,
+                "displayValue": "22"
+              },
+              {
+                "name": "kickPercentSuccess",
+                "displayName": "Kick Percent Success",
+                "shortDisplayName": "KPS",
+                "description": "Kick Percent Success",
+                "abbreviation": "KPS",
+                "type": "kickpercentsuccess",
+                "value": 0.25,
+                "displayValue": "0.250"
+              },
+              {
+                "name": "kicks",
+                "displayName": "Kicks",
+                "shortDisplayName": "Kicks",
+                "description": "",
+                "abbreviation": "K",
+                "type": "kicks",
+                "value": 0.0,
+                "displayValue": "0"
+              },
+              {
+                "name": "kicksFromHand",
+                "displayName": "Kicks From Hand",
+                "shortDisplayName": "KFH",
+                "description": "Kicks From Hand",
+                "abbreviation": "KFH",
+                "type": "kicksfromhand",
+                "value": 18.0,
+                "displayValue": "18"
+              },
+              {
+                "name": "lineoutsWon",
+                "displayName": "Lineouts Won",
+                "shortDisplayName": "LW",
+                "description": "Lineouts Won",
+                "abbreviation": "LW",
+                "type": "lineoutswon",
+                "value": 15.0,
+                "displayValue": "15"
+              },
+              {
+                "name": "lineoutWonSteal",
+                "displayName": "Lineout Won Steal",
+                "shortDisplayName": "LWS",
+                "description": "Lineout Won Steal",
+                "abbreviation": "LWS",
+                "type": "lineoutwonsteal",
+                "value": 1.0,
+                "displayValue": "1"
+              },
+              {
+                "name": "maulsTotal",
+                "displayName": "Mauls Total",
+                "shortDisplayName": "MT",
+                "description": "Mauls Total",
+                "abbreviation": "MT",
+                "type": "maulstotal",
+                "value": 4.0,
+                "displayValue": "4"
+              },
+              {
+                "name": "maulsWon",
+                "displayName": "Mauls Won",
+                "shortDisplayName": "MW",
+                "description": "Mauls Won",
+                "abbreviation": "MW",
+                "type": "maulswon",
+                "value": 4.0,
+                "displayValue": "4"
+              },
+              {
+                "name": "metres",
+                "displayName": "Meters Run",
+                "shortDisplayName": "MR",
+                "description": "Meters Run",
+                "abbreviation": "MR",
+                "type": "metres",
+                "value": 313.0,
+                "displayValue": "313"
+              },
+              {
+                "name": "missedTackles",
+                "displayName": "Missed Tackles",
+                "shortDisplayName": "MT",
+                "description": "Missed Tackles",
+                "abbreviation": "MT",
+                "type": "missedtackles",
+                "value": 28.0,
+                "displayValue": "28"
+              },
+              {
+                "name": "offload",
+                "displayName": "Offload",
+                "shortDisplayName": "O",
+                "description": "Offload",
+                "abbreviation": "O",
+                "type": "offload",
+                "value": 1.0,
+                "displayValue": "1"
+              },
+              {
+                "name": "passes",
+                "displayName": "Passes",
+                "shortDisplayName": "P",
+                "description": "Passes",
+                "abbreviation": "P",
+                "type": "passes",
+                "value": 191.0,
+                "displayValue": "191"
+              },
+              {
+                "name": "pcPossessionFirst",
+                "displayName": "Pc Possession First",
+                "shortDisplayName": "PPF",
+                "description": "Pc Possession First",
+                "abbreviation": "PPF",
+                "type": "pcpossessionfirst",
+                "value": 0.53,
+                "displayValue": "0.530"
+              },
+              {
+                "name": "pcPossessionSecond",
+                "displayName": "Pc Possession Second",
+                "shortDisplayName": "PPS",
+                "description": "Pc Possession Second",
+                "abbreviation": "PPS",
+                "type": "pcpossessionsecond",
+                "value": 0.57,
+                "displayValue": "0.570"
+              },
+              {
+                "name": "pcTerritoryFirst",
+                "displayName": "Pc Territory First",
+                "shortDisplayName": "PTF",
+                "description": "Pc Territory First",
+                "abbreviation": "PTF",
+                "type": "pcterritoryfirst",
+                "value": 0.5,
+                "displayValue": "0.500"
+              },
+              {
+                "name": "pcTerritorySecond",
+                "displayName": "Pc Territory Second",
+                "shortDisplayName": "PTS",
+                "description": "Pc Territory Second",
+                "abbreviation": "PTS",
+                "type": "pcterritorysecond",
+                "value": 0.66,
+                "displayValue": "0.660"
+              },
+              {
+                "name": "penaltiesConceded",
+                "displayName": "Penalties Conceded",
+                "shortDisplayName": "PC",
+                "description": "Penalties Conceded",
+                "abbreviation": "PC",
+                "type": "penaltiesconceded",
+                "value": 4.0,
+                "displayValue": "4"
+              },
+              {
+                "name": "penaltyGoals",
+                "displayName": "Penalty Goals",
+                "shortDisplayName": "PG",
+                "description": "Penalty Goals",
+                "abbreviation": "PG",
+                "type": "penaltygoals",
+                "value": 0.0,
+                "displayValue": "0"
+              },
+              {
+                "name": "possession",
+                "displayName": "Possession",
+                "shortDisplayName": "P",
+                "description": "Possession",
+                "abbreviation": "P",
+                "type": "possession",
+                "value": 0.55,
+                "displayValue": "0.550"
+              },
+              {
+                "name": "redCards",
+                "displayName": "Red Cards",
+                "shortDisplayName": "RC",
+                "description": "Red Cards",
+                "abbreviation": "RC",
+                "type": "redcards",
+                "value": 0.0,
+                "displayValue": "0"
+              },
+              {
+                "name": "rucksTotal",
+                "displayName": "Rucks Total",
+                "shortDisplayName": "RT",
+                "description": "Rucks Total",
+                "abbreviation": "RT",
+                "type": "ruckstotal",
+                "value": 95.0,
+                "displayValue": "95"
+              },
+              {
+                "name": "rucksWon",
+                "displayName": "Rucks Won",
+                "shortDisplayName": "RW",
+                "description": "Rucks Won",
+                "abbreviation": "RW",
+                "type": "ruckswon",
+                "value": 94.0,
+                "displayValue": "94"
+              },
+              {
+                "name": "runs",
+                "displayName": "Runs",
+                "shortDisplayName": "R",
+                "description": "Runs",
+                "abbreviation": "R",
+                "type": "runs",
+                "value": 122.0,
+                "displayValue": "122"
+              },
+              {
+                "name": "scrumsTotal",
+                "displayName": "Scrums Total",
+                "shortDisplayName": "ST",
+                "description": "Scrums Total",
+                "abbreviation": "ST",
+                "type": "scrumstotal",
+                "value": 3.0,
+                "displayValue": "3"
+              },
+              {
+                "name": "scrumsWon",
+                "displayName": "Scrums Won",
+                "shortDisplayName": "SW",
+                "description": "Scrums Won",
+                "abbreviation": "SW",
+                "type": "scrumswon",
+                "value": 3.0,
+                "displayValue": "3"
+              },
+              {
+                "name": "tackles",
+                "displayName": "Tackles",
+                "shortDisplayName": "T",
+                "description": "Tackles",
+                "abbreviation": "T",
+                "type": "tackles",
+                "value": 129.0,
+                "displayValue": "129"
+              },
+              {
+                "name": "territory",
+                "displayName": "Territory",
+                "shortDisplayName": "T",
+                "description": "Territory",
+                "abbreviation": "T",
+                "type": "territory",
+                "value": 0.58,
+                "displayValue": "0.580"
+              },
+              {
+                "name": "totalFreeKicksConceded",
+                "displayName": "Total Free Kicks Conceded",
+                "shortDisplayName": "TFKC",
+                "description": "Total Free Kicks Conceded",
+                "abbreviation": "TFKC",
+                "type": "totalfreekicksconceded",
+                "value": 1.0,
+                "displayValue": "1"
+              },
+              {
+                "name": "totalLineouts",
+                "displayName": "Total Lineouts",
+                "shortDisplayName": "TL",
+                "description": "Total Lineouts",
+                "abbreviation": "TL",
+                "type": "totallineouts",
+                "value": 15.0,
+                "displayValue": "15"
+              },
+              {
+                "name": "tries",
+                "displayName": "Tries",
+                "shortDisplayName": "T",
+                "description": "Tries",
+                "abbreviation": "T",
+                "type": "tries",
+                "value": 4.0,
+                "displayValue": "4"
+              },
+              {
+                "name": "turnoverKnockOn",
+                "displayName": "Turnover Knock On",
+                "shortDisplayName": "TKO",
+                "description": "Turnover Knock On",
+                "abbreviation": "TKO",
+                "type": "turnoverknockon",
+                "value": 10.0,
+                "displayValue": "10"
+              },
+              {
+                "name": "turnoversConceded",
+                "displayName": "Turnovers Conceded",
+                "shortDisplayName": "TC",
+                "description": "Turnovers Conceded",
+                "abbreviation": "TC",
+                "type": "turnoversconceded",
+                "value": 21.0,
+                "displayValue": "21"
+              },
+              {
+                "name": "yellowCards",
+                "displayName": "Yellow Cards",
+                "shortDisplayName": "YC",
+                "description": "Yellow Cards",
+                "abbreviation": "YC",
+                "type": "yellowcards",
+                "value": 0.0,
+                "displayValue": "0"
+              }
+            ]
+          }
+        ],
+        "displayOrder": 2,
+        "homeAway": "away"
+      }
+    ]
+  }
+}

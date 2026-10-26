@@ -1,0 +1,129 @@
+## build (Dockerfile build stage: CGO_ENABLED=0, -trimpath, -s -w, VERSION arg)
+exit=0 binary=19706016 bytes
+## version
+Wren TV gate-preflight
+## linkage (the runtime stage has no libc for a dynamic binary)
+ELF header:  177   E   L   F
+	not a dynamic executable
+## start with the image runtime variables (WRENTV_DATA_DIR, WRENTV_FFMPEG, WRENTV_FFPROBE)
+health 200 {"status":"ok"}
+index 200 bytes 845 has app.js true
+asset /js/app.js 200 text/javascript; charset=utf-8 66351 bytes
+asset /js/sports.js 200 text/javascript; charset=utf-8 84510 bytes
+asset /js/sports-model.js 200 text/javascript; charset=utf-8 17061 bytes
+asset /sports.css 200 text/css; charset=utf-8 26564 bytes
+asset /js/live-player.js 200 text/javascript; charset=utf-8 6777 bytes
+/api/server 200 {"authMode":"supabase","liveTv":false,"localAccounts":true,"name":"Image Contract","sports":true,"machineId":"<present>"}
+/api/sports/status 401 {"error":"sign in required"}
+
+## generated config (secrets redacted)
+server_name: Image Contract
+machine_id: <generated>
+listen: 127.0.0.1:8098
+public_url: ""
+integration_key: <generated>
+auth:
+    signing_key: <generated>
+    supabase:
+        server_id: ""
+        server_secret: ""
+        claim_code: <generated>
+remote_access:
+    enabled: false
+    upnp: false
+metadata:
+    tmdb_api_key: ""
+    omdb_api_key: ""
+    language: en-US
+    workers: 8
+transcode:
+    ffmpeg_path: /usr/bin/ffmpeg
+    ffprobe_path: /usr/bin/ffprobe
+    hwaccel: auto
+    vaapi_device: /dev/dri/renderD128
+    scratch_dir: /tmp/wrentv-image-contract/config/transcode
+streaming:
+    enabled: false
+    torbox_key: ""
+    alldebrid_key: ""
+    realdebrid_key: ""
+    provider_order:
+        - torbox
+        - alldebrid
+        - realdebrid
+    addons:
+        - name: torrentio
+          url: https://torrentio.strem.fun/manifest.json
+          enabled: true
+        - name: comet
+          url: https://comet.feels.legal/manifest.json
+          enabled: true
+    qualities:
+        - 2160p
+        - 1080p
+    per_quality: 3
+    usenet: true
+    indexers: []
+    news_servers: []
+    usenet_cache_mb: 0
+    usenet_disk_cache_gb: 0
+    exclude_words: []
+    max_size_gb:
+        1080p: 0
+        2160p: 0
+    prefetch: true
+    lookup_on_open: true
+    check_addon_links: false
+    mode: stream
+    movie_library: ""
+    show_library: ""
+    download_quality: 2160p
+    limits:
+        max_streams: 0
+        bandwidth_mbps: 0
+        per_stream_mbps: 0
+        download_mbps: 0
+        max_downloads: 2
+        prefetch_workers: 2
+        download_quota_gb: 0
+        min_free_gb: 20
+live_tv:
+    enabled: false
+    sources: []
+sports:
+    enabled: true
+users:
+    max_streams: 0
+    device_downloads: true
+    max_downloads: 2
+webhooks: []
+simkl:
+    client_id: ""
+scanner:
+    watch: false
+    poll_sec: 0
+    interval_min: 0
+    probe_workers: 4
+markers:
+    fingerprint: true
+## data directory after shutdown
+total 368
+drwxr-xr-x 5 root root   4096 .
+drwxr-xr-x 3 root root   4096 ..
+drwxr-xr-x 3 root root   4096 cache
+drwxr-xr-x 2 root root   4096 images
+drwxr-xr-x 2 root root   4096 transcode
+-rw-r--r-- 1 root root 352256 wrentv.db
+-rw------- 1 root root   2007 wrentv.yaml
+## restart from the same volume
+machine_id stable across restart: yes (32 chars)
+health after restart 200 {"status":"ok"}
+## server log: warnings/errors (sports refresh is cancelled at shutdown by design)
+time=2026-10-24T22:47:25.433-06:00 level=WARN msg="no TMDB API key configured: items will use names parsed from files (set metadata.tmdb_api_key)"
+time=2026-10-24T22:47:25.661-06:00 level=WARN msg="server is not claimed yet: open the web app, sign in and enter this claim code" claim_code=<redacted>
+time=2026-10-24T22:47:26.120-06:00 level=WARN msg="sports scoreboard fetch" league=college-football err="Get \"https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=90&limit=200\": context canceled"
+time=2026-10-24T22:47:26.120-06:00 level=WARN msg="sports scoreboard fetch" league=mlb err="Get \"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?limit=200\": context canceled"
+time=2026-10-24T22:47:26.120-06:00 level=WARN msg="sports scoreboard fetch" league=nfl err="Get \"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?limit=200\": context canceled"
+time=2026-10-24T22:47:26.120-06:00 level=WARN msg="sports scoreboard fetch" league=pga err="Get \"https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard?limit=200\": context canceled"
+time=2026-10-24T22:47:26.121-06:00 level=WARN msg="sports scoreboard cycle" err="context canceled"
+time=2026-10-24T22:47:26.140-06:00 level=WARN msg="no TMDB API key configured: items will use names parsed from files (set metadata.tmdb_api_key)"
