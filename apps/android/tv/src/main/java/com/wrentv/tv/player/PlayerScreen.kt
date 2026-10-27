@@ -353,7 +353,8 @@ private fun Controls(
                 Text(c.methodLabel, style = MaterialTheme.typography.labelSmall, color = Wren.tertiary, modifier = Modifier.padding(top = 4.dp))
             }
         }
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 28.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        // animateContentSize clips, so the top padding inside it leaves room for the button tips above the panel.
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 28.dp).animateContentSize().padding(top = 36.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             if (c.skip != null) {
                 Box(Modifier.width(PanelWidth).padding(bottom = 14.dp), contentAlignment = Alignment.CenterEnd) {
                     PillButton(skipText(c.skip, c.countdown), onSkip, icon = Icons.Rounded.SkipNext, primary = true)
