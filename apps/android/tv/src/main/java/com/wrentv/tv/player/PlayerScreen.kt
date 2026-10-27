@@ -124,8 +124,8 @@ private const val SEARCH_ONLINE = "online"
 
 /**
  * Full-screen playback. With the controls hidden the remote works the
- * player directly: OK pauses, left and right skip 10 seconds, up and down
- * show the controls. Down from the timeline opens the season's episodes
+ * player directly: OK shows the controls on Play (so a second OK pauses),
+ * left and right skip 10 seconds, up and down show the controls. Down from the timeline opens the season's episodes
  * beneath it. Back hides the controls, then leaves.
  */
 @Composable
@@ -160,6 +160,9 @@ fun PlayerScreen(target: PlayTarget) {
     val seekBar = remember { FocusRequester() }
     // Controls opened by left/right land on the seek bar instead of Play.
     var toSeek by remember { mutableStateOf(false) }
+    // The OK that opened the controls: its release would click whatever
+    // button focus just moved to (TV buttons click on release), so it's eaten.
+    var eatOkUp by remember { mutableStateOf(false) }
 
     fun show() { controls = true; touched++ }
 
@@ -203,6 +206,11 @@ fun PlayerScreen(target: PlayTarget) {
     Box(
         Modifier.fillMaxSize().background(Color.Black)
             .onPreviewKeyEvent { e ->
+                if (e.type == KeyEventType.KeyUp && e.key.isOk()) {
+                    val eat = eatOkUp
+                    eatOkUp = false
+                    return@onPreviewKeyEvent eat
+                }
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 touched++
                 // The remote's play/pause works whatever has focus, controls up or not.
@@ -223,10 +231,12 @@ fun PlayerScreen(target: PlayTarget) {
                 if (e.type != KeyEventType.KeyDown || controls || c.upNext != null) return@onKeyEvent false
                 when (e.key) {
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                        eatOkUp = true
                         when (c.skip) {
                             PlayerController.Skip.Intro -> c.skipIntro()
                             PlayerController.Skip.Credits -> c.skipCredits()
-                            null -> { c.togglePause(); show() }
+                            // Opens the controls on Play; a second OK pauses.
+                            null -> show()
                         }
                         true
                     }
@@ -723,3 +733,5 @@ private fun Center(content: @Composable () -> Unit) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) { content() }
     }
 }
+
+private fun Key.isOk() = this == Key.DirectionCenter || this == Key.Enter || this == Key.NumPadEnter
