@@ -630,6 +630,7 @@ data class OnlineSubtitle(
     val downloads: Int = 0,
     val hearingImpaired: Boolean = false,
     val machineTranslated: Boolean = false,
+    val matchesFile: Boolean = false,
 )
 
 @Serializable

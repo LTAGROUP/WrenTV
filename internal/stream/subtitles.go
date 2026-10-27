@@ -2,6 +2,7 @@ package stream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -165,6 +166,28 @@ func streamSubtitle(w http.ResponseWriter, r *http.Request, part string, x *subE
 		case <-tick.C:
 		}
 	}
+}
+
+// SubtitleText starts (or joins) converting a text subtitle track and gives
+// what's converted so far, whether that's the whole track, and a channel
+// closed when the conversion ends.
+func (s *Session) SubtitleText(typeIdx int) (text string, complete bool, done <-chan struct{}, err error) {
+	cache := s.subtitleCache(typeIdx)
+	if b, err := os.ReadFile(cache); err == nil {
+		closed := make(chan struct{})
+		close(closed)
+		return string(b), true, closed, nil
+	}
+	x := s.m.extractSubtitle(s, cache, typeIdx)
+	if isDone(x) {
+		if x.err != "" {
+			return "", false, x.done, errors.New(x.err)
+		}
+		b, err := os.ReadFile(cache)
+		return string(b), err == nil, x.done, err
+	}
+	b, _ := os.ReadFile(cache + ".part")
+	return string(b), false, x.done, nil
 }
 
 // extractSubtitle starts (or joins) converting one subtitle track to WebVTT.

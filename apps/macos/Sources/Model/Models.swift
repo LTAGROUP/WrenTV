@@ -825,9 +825,11 @@ struct OnlineSubtitle: Codable, Hashable, Identifiable {
     var downloads: Int?
     var hearingImpaired: Bool?
     var machineTranslated: Bool?
+    var matchesFile: Bool?
 
     var detail: String {
-        var parts = [Locale.current.localizedString(forLanguageCode: language) ?? language.uppercased(), provider]
+        var parts = matchesFile == true ? ["Matches your file"] : []
+        parts += [Locale.current.localizedString(forLanguageCode: language) ?? language.uppercased(), provider]
         if hearingImpaired == true { parts.append("SDH") }
         if machineTranslated == true { parts.append("Machine translated") }
         if let n = downloads, n > 0 { parts.append("\(n.formatted()) downloads") }

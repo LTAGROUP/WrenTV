@@ -341,7 +341,7 @@ private fun OnlineSubtitlesDialog(c: PlayerController, onDismiss: () -> Unit) {
                                 }
                             }.padding(vertical = 8.dp, horizontal = 4.dp)) {
                                 Text(r.name.ifEmpty { r.provider }, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text(listOfNotNull(languageName(r.language) ?: r.language.uppercase(), r.provider,
+                                Text(listOfNotNull(if (r.matchesFile) "Matches your file" else null, languageName(r.language) ?: r.language.uppercase(), r.provider,
                                     if (r.hearingImpaired) "SDH" else null, if (r.machineTranslated) "Machine translated" else null,
                                     if (r.downloads > 0) "${r.downloads} downloads" else null).joinToString(" · "), fontSize = 12.sp, color = Wren.secondary)
                             }

@@ -481,7 +481,7 @@ private fun OnlineSubtitlesPanel(c: PlayerController, onDismiss: () -> Unit) {
                     itemsIndexed(rs) { i, r ->
                         ListRow(
                             title = r.name.ifEmpty { r.provider },
-                            detail = listOfNotNull(languageName(r.language) ?: r.language.uppercase(), r.provider,
+                            detail = listOfNotNull(if (r.matchesFile) "Matches your file" else null, languageName(r.language) ?: r.language.uppercase(), r.provider,
                                 if (r.hearingImpaired) "SDH" else null, if (r.machineTranslated) "Machine translated" else null,
                                 if (r.downloads > 0) "${r.downloads} downloads" else null).joinToString(" · "),
                             onClick = {

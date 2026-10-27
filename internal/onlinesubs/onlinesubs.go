@@ -22,6 +22,10 @@ type Query struct {
 	Season    int
 	Episode   int
 	Languages []string // ISO 639-1, most wanted first; empty is any
+	// The file the subtitles are for, when known: its release name and
+	// OpenSubtitles hash pick out the subtitles timed for it.
+	Release string
+	Hash    string
 }
 
 func (q Query) episode() bool { return q.Season >= 0 && q.Episode >= 0 }
@@ -35,6 +39,11 @@ type Result struct {
 	Downloads       int    `json:"downloads,omitempty"`
 	HearingImpaired bool   `json:"hearingImpaired,omitempty"`
 	Machine         bool   `json:"machineTranslated,omitempty"`
+	// MatchesFile is a subtitle made for the playing file's own release.
+	MatchesFile bool `json:"matchesFile,omitempty"`
+
+	score     int  // releaseScore against the playing file
+	hashMatch bool // the provider has it for this exact file
 }
 
 type provider interface {
@@ -85,8 +94,8 @@ func (s *Service) providers() []provider {
 func (s *Service) Enabled() bool { return len(s.providers()) > 0 }
 
 // Search asks every provider at once. Results come in the order of the
-// wanted languages, then most downloaded; one provider failing only drops
-// its results.
+// wanted languages, then those timed for the playing file's release, then
+// most downloaded; one provider failing only drops its results.
 func (s *Service) Search(ctx context.Context, q Query) ([]Result, error) {
 	ps := s.providers()
 	if len(ps) == 0 {
@@ -124,6 +133,15 @@ func (s *Service) Search(ctx context.Context, q Query) ([]Result, error) {
 	if failed == len(ps) {
 		return nil, firstErr
 	}
+	return s.rank(out, q), nil
+}
+
+func (s *Service) rank(out []Result, q Query) []Result {
+	for i := range out {
+		r := &out[i]
+		r.score = releaseScore(q.Release, r.Name)
+		r.MatchesFile = r.hashMatch || r.score >= 7
+	}
 	rank := map[string]int{}
 	for i, l := range q.Languages {
 		if _, ok := rank[l]; !ok {
@@ -141,12 +159,18 @@ func (s *Service) Search(ctx context.Context, q Query) ([]Result, error) {
 		if ra, rb := langRank(a.Language), langRank(b.Language); ra != rb {
 			return ra < rb
 		}
+		if a.hashMatch != b.hashMatch {
+			return a.hashMatch
+		}
+		if a.score != b.score {
+			return a.score > b.score
+		}
 		if a.Machine != b.Machine {
 			return !a.Machine
 		}
 		return a.Downloads > b.Downloads
 	})
-	return out, nil
+	return out
 }
 
 func cmpErr(have, err error) error {

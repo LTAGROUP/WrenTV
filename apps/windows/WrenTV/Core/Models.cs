@@ -693,6 +693,7 @@ public sealed class OnlineSubtitle
     public int? Downloads { get; set; }
     public bool? HearingImpaired { get; set; }
     public bool? MachineTranslated { get; set; }
+    public bool? MatchesFile { get; set; }
 
     public string Detail
     {
@@ -700,7 +701,10 @@ public sealed class OnlineSubtitle
         {
             var lang = Language;
             try { lang = new System.Globalization.CultureInfo(Language).DisplayName; } catch { }
-            var parts = new List<string> { lang, Provider };
+            var parts = new List<string>();
+            if (MatchesFile == true) parts.Add("Matches your file");
+            parts.Add(lang);
+            parts.Add(Provider);
             if (HearingImpaired == true) parts.Add("SDH");
             if (MachineTranslated == true) parts.Add("Machine translated");
             if (Downloads is int n && n > 0) parts.Add($"{n:N0} downloads");

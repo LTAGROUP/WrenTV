@@ -753,7 +753,7 @@ class Player {
       const rs = d.results || [];
       if (!rs.length) { list.innerHTML = '<div class="muted small" style="padding:8px 10px">Nothing found. Try other languages.</div>'; return; }
       list.innerHTML = rs.map((x, i) => `<button data-i="${i}"><span class="ts">${esc((x.language || '?').toUpperCase())}</span>
-        <span class="t">${esc(x.name)}<span class="muted small" style="display:block">${esc(x.provider)}${x.downloads ? ` · ${x.downloads.toLocaleString()} downloads` : ''}${x.hearingImpaired ? ' · SDH' : ''}${x.machineTranslated ? ' · machine translated' : ''}</span></span></button>`).join('');
+        <span class="t">${esc(x.name)}<span class="muted small" style="display:block">${x.matchesFile ? 'Matches your file · ' : ''}${esc(x.provider)}${x.downloads ? ` · ${x.downloads.toLocaleString()} downloads` : ''}${x.hearingImpaired ? ' · SDH' : ''}${x.machineTranslated ? ' · machine translated' : ''}</span></span></button>`).join('');
       for (const b of $$('button', list)) b.onclick = () => this.fetchSub(rs[Number(b.dataset.i)], b, menu);
     } catch (e) {
       if (menu.isConnected) list.innerHTML = `<div class="error small" style="padding:8px 10px">${esc(e.message)}</div>`;

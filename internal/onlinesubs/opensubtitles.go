@@ -130,6 +130,9 @@ func (o *openSubtitles) search(ctx context.Context, q Query) ([]Result, error) {
 	if len(q.Languages) > 0 {
 		v.Set("languages", strings.ToLower(strings.Join(sortedUnique(q.Languages), ",")))
 	}
+	if q.Hash != "" {
+		v.Set("moviehash", q.Hash)
+	}
 	var out struct {
 		Data []struct {
 			Attributes struct {
@@ -137,6 +140,7 @@ func (o *openSubtitles) search(ctx context.Context, q Query) ([]Result, error) {
 				DownloadCount     int    `json:"download_count"`
 				HearingImpaired   bool   `json:"hearing_impaired"`
 				MachineTranslated bool   `json:"machine_translated"`
+				HashMatch         bool   `json:"moviehash_match"`
 				AITranslated      bool   `json:"ai_translated"`
 				Release           string `json:"release"`
 				Files             []struct {
@@ -159,7 +163,7 @@ func (o *openSubtitles) search(ctx context.Context, q Query) ([]Result, error) {
 		rs = append(rs, Result{
 			Provider: o.name(), ID: strconv.Itoa(a.Files[0].FileID), Name: firstNonEmpty(a.Release, a.Files[0].FileName),
 			Language: baseLang(a.Language), Downloads: a.DownloadCount, HearingImpaired: a.HearingImpaired,
-			Machine: a.MachineTranslated || a.AITranslated,
+			Machine: a.MachineTranslated || a.AITranslated, hashMatch: a.HashMatch,
 		})
 	}
 	return rs, nil

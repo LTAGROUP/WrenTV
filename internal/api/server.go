@@ -119,7 +119,7 @@ func (s *Server) Router() http.Handler {
 			return
 		}
 		if name, ok := strings.CutPrefix(chi.URLParam(r, "*"), "online/"); ok {
-			s.serveOnlineSubtitle(w, r, sess.ItemID, name)
+			s.serveOnlineSubtitle(w, r, sess, name)
 			return
 		}
 		sess.ServeHTTP(w, r, chi.URLParam(r, "*"))
