@@ -7,7 +7,7 @@
     <AssemblyName>WrenTV</AssemblyName>
     <Product>Wren TV</Product>
     <Company>LTA Group</Company>
-    <Version>1.6.4</Version>
+    <Version>1.6.5</Version>
     <ApplicationIcon>Assets\WrenTV.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x64;ARM64</Platforms>
