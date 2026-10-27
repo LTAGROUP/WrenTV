@@ -35,3 +35,21 @@ func (d *DB) OnlineSubtitles(ctx context.Context, itemID string) ([]OnlineSubtit
 	}
 	return out, rows.Err()
 }
+
+// OnlineSubtitleKeys lists every fetched subtitle file still in use.
+func (d *DB) OnlineSubtitleKeys(ctx context.Context) (map[string]bool, error) {
+	rows, err := d.QueryContext(ctx, `SELECT DISTINCT key FROM online_subtitles`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, err
+		}
+		out[k] = true
+	}
+	return out, rows.Err()
+}

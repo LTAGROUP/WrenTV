@@ -683,7 +683,7 @@ export async function viewSettings() {
         <div class="field"><label>Hardware acceleration</label><select name="hwaccel">${hw.map((h) => `<option ${h === s.hwaccel ? 'selected' : ''}>${h}</option>`).join('')}</select></div>
       </div>
         <label class="check"><input type="checkbox" name="markerFingerprinting" ${s.markerFingerprinting ? 'checked' : ''}> Detect intros and credits by comparing episode audio (background job; chapters are always used)</label>
-        <label class="check"><input type="checkbox" name="markerCommunity" ${s.markerCommunity ? 'checked' : ''}> Use community intro and credits timestamps from IntroDB where nothing else has them (streamed titles)</label></div>
+        <label class="check"><input type="checkbox" name="markerCommunity" ${s.markerCommunity ? 'checked' : ''}> Use community intro and credits timestamps from IntroDB where nothing else has them (sends the title's IMDb id to IntroDB)</label></div>
       <div class="panel"><h2>Online subtitles</h2>
         <p class="small muted">Lets players search subtitle sites when a file has none in the right language. A provider is used once it has a key.</p>
         <div class="form-grid">

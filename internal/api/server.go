@@ -77,6 +77,9 @@ type Server struct {
 
 	tickets     *tickets // device download links
 	ticketsOnce sync.Once
+
+	playLog   *playLog // streamed files each viewer was handed, for failure reports
+	playsOnce sync.Once
 }
 
 type ctxKey int

@@ -527,6 +527,9 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.DB.TrackPlay(r.Context(), u.ID, it.ID, req.Position, req.Duration, at)
+	if justWatched {
+		s.playedThrough(r.Context(), u.ID, it.ID)
+	}
 	if s.Tracking != nil {
 		s.Tracking.Progress(r.Context(), u, it, req.Position, req.Duration, at, justWatched, clientName(r))
 	}
@@ -623,4 +626,20 @@ func nonNilMap[K comparable, V any](m map[K]V) map[K]V {
 		return map[K]V{}
 	}
 	return m
+}
+
+// playedThrough clears the failures of the streams a viewer just watched to
+// the end.
+func (s *Server) playedThrough(ctx context.Context, userID, itemID string) {
+	if s.Streaming == nil {
+		return
+	}
+	for _, sess := range s.Streams.List() {
+		if sess.UserID != userID || sess.ItemID != itemID {
+			continue
+		}
+		if f, err := s.DB.GetFile(ctx, sess.FileID); err == nil && f.StreamID != "" {
+			s.Streaming.PlayedThrough(ctx, f.StreamID)
+		}
+	}
 }

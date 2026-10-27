@@ -256,6 +256,7 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	srv.Direct = direct.New(cfg, func() []string { return api.LocalURLs(cfg) }, func() { go srv.HeartbeatNow() })
 	go srv.Direct.Run(ctx)
 	go srv.RunHeartbeat(ctx)
+	go srv.RunOnlineSubtitleSweep(ctx)
 	// TVs and other devices linked by code or QR code from a signed-in device.
 	srv.Devices = auth.NewDevices(d, cfg.Auth.SigningKey, srv.Local, srv.Supa)
 	srv.Auth = auth.WithDevices(srv.Auth, srv.Devices)

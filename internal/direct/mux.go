@@ -34,8 +34,7 @@ func (m *mux) run() {
 				time.Sleep(50 * time.Millisecond)
 				continue
 			}
-			m.err = err
-			m.close()
+			m.closeWith(err)
 			return
 		}
 		go m.route(c)
@@ -62,8 +61,13 @@ func (m *mux) route(c net.Conn) {
 	}
 }
 
-func (m *mux) close() {
+func (m *mux) close() { m.closeWith(nil) }
+
+// closeWith shuts the listener; err, set only by the first close, is what
+// Accept reports afterwards (it's read only once done is closed).
+func (m *mux) closeWith(err error) {
 	m.once.Do(func() {
+		m.err = err
 		close(m.done)
 		m.ln.Close()
 	})

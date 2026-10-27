@@ -439,6 +439,8 @@ class PlayerController(
     private fun stoppedByServer(message: String) {
         if (stopped || phase != Phase.Playing) return
         sessionId = null
+        // Stopped on purpose: the file didn't fail.
+        failedFile = null
         player.stop()
         phase = Phase.Failed(message)
     }

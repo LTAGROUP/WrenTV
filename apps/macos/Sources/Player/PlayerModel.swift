@@ -54,10 +54,12 @@ struct SideSubtitle: Equatable {
     }
 
     func text(at t: Double) -> String? {
-        // Cues are few enough that a scan from the nearest start is plenty.
+        // Every cue that has started is checked, since a long one (a sign,
+        // a song) can still be up under many short ones; a file's few
+        // thousand cues are cheap to scan.
         var lo = 0, hi = cues.count
         while lo < hi { let m = (lo + hi) / 2; if cues[m].start <= t { lo = m + 1 } else { hi = m } }
-        let on = cues[max(0, lo - 8)..<lo].filter { $0.end > t }.map(\.text)
+        let on = cues[..<lo].filter { $0.end > t }.map(\.text)
         return on.isEmpty ? nil : on.joined(separator: "\n")
     }
 }
@@ -511,9 +513,10 @@ final class PlayerModel {
     /// the server drops a post that lost articles and hands out another.
     private func failed(_ message: String) {
         guard phase == .playing else { return }
+        // Reported with the next play, whether it's the automatic retry or Try Again.
+        if !isOffline { failedFile = fileId }
         if !isOffline, lastAutoRetry.map({ Date().timeIntervalSince($0) > 120 }) ?? true {
             lastAutoRetry = Date()
-            failedFile = fileId
             // The server owner may have stopped it: say so rather than starting again.
             Task {
                 if let msg = await api.reportProgress(itemId, position: position, duration: duration, paused: true) {
@@ -531,6 +534,8 @@ final class PlayerModel {
     private func stoppedByServer(_ message: String) {
         guard phase == .playing else { return }
         sessionId = nil
+        // Stopped on purpose: the file didn't fail.
+        failedFile = nil
         teardownEngines()
         phase = .error(message)
     }

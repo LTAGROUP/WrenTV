@@ -294,10 +294,11 @@ public sealed class PlayerModel
     void Failed(string message)
     {
         if (Phase != PhaseKind.Playing) return;
+        // Reported with the next play, whether it's the automatic retry or Try Again.
+        failedFile = FileId;
         if (lastAutoRetry is not { } at || DateTime.UtcNow - at > TimeSpan.FromMinutes(2))
         {
             lastAutoRetry = DateTime.UtcNow;
-            failedFile = FileId;
             Retry();
             return;
         }
@@ -454,6 +455,8 @@ public sealed class PlayerModel
         if (Phase != PhaseKind.Playing) return;
         progress?.Cancel();
         sessionId = null;
+        // Stopped on purpose: the file didn't fail.
+        failedFile = null;
         mpv.Command("stop");
         Set(PhaseKind.Error, message);
     }

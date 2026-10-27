@@ -127,11 +127,24 @@ func (d *DB) StreamFailed(ctx context.Context, id string) (int, error) {
 	return n, err
 }
 
-// CountStreamFailure counts a failed playback and keeps where the stream was found.
+// streamFailureWindow is how long a failure counts toward dropping a
+// stream: two far apart are bad luck, not a broken stream.
+const streamFailureWindow = 7 * 24 * 60 * 60
+
+// CountStreamFailure counts a failed playback and keeps where the stream
+// was found. A failure older than the window starts the count over.
 func (d *DB) CountStreamFailure(ctx context.Context, id string) (int, error) {
 	var n int
-	err := d.QueryRowContext(ctx, `UPDATE streams SET failures=failures+1, updated_at=? WHERE id=? RETURNING failures`, Now(), id).Scan(&n)
+	now := Now()
+	err := d.QueryRowContext(ctx, `UPDATE streams SET failures=CASE WHEN failures>0 AND updated_at<? THEN 1 ELSE failures+1 END, updated_at=?
+		WHERE id=? RETURNING failures`, now-streamFailureWindow, now, id).Scan(&n)
 	return n, err
+}
+
+// ResetStreamFailures clears a stream's failures once it has played through.
+func (d *DB) ResetStreamFailures(ctx context.Context, id string) error {
+	_, err := d.ExecContext(ctx, `UPDATE streams SET failures=0 WHERE id=? AND failures>0`, id)
+	return err
 }
 
 func (d *DB) DeleteStream(ctx context.Context, id string) error {

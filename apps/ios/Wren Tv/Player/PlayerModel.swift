@@ -69,10 +69,12 @@ struct SideSubtitle: Equatable {
     }
 
     func text(at t: Double) -> String? {
-        // Cues are few enough that a scan from the nearest start is plenty.
+        // Every cue that has started is checked, since a long one (a sign,
+        // a song) can still be up under many short ones; a file's few
+        // thousand cues are cheap to scan.
         var lo = 0, hi = cues.count
         while lo < hi { let m = (lo + hi) / 2; if cues[m].start <= t { lo = m + 1 } else { hi = m } }
-        let on = cues[max(0, lo - 8)..<lo].filter { $0.end > t }.map(\.text)
+        let on = cues[..<lo].filter { $0.end > t }.map(\.text)
         return on.isEmpty ? nil : on.joined(separator: "\n")
     }
 }
@@ -540,6 +542,8 @@ final class PlayerModel {
     private func stoppedByServer(_ message: String) {
         guard phase == .playing else { return }
         sessionId = nil
+        // Stopped on purpose: the file didn't fail.
+        failedFile = nil
         teardown()
         phase = .error(message)
     }

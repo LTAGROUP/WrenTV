@@ -178,7 +178,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.FailedFileID != "" {
-		files, req = s.skipFailed(ctx, files, req)
+		files, req = s.skipFailed(ctx, p.User.ID, files, req)
 		if len(files) == 0 {
 			_, _ = s.Streaming.Ensure(ctx, it, 0)
 			writeJSON(w, 202, playResponse{Status: "pending", Message: "Finding another stream…"})
@@ -306,6 +306,9 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		s.Streams.Stop(sess.ID)
 		return
 	}
+	if f.StreamID != "" {
+		s.plays().handed(p.User.ID, f.ID)
+	}
 
 	resp := playResponse{
 		Status: "ready", SessionID: sess.ID, Engine: dec.Engine, Method: dec.Method, Decision: &dec,
@@ -427,17 +430,17 @@ func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// chooseFile returns the requested version, else the one this client plays
-// best: a version it can play without transcoding beats one that needs it
-// (a 1080p file is served instead of transcoding the 4K one down), then a
-// version that fits the requested quality, then a file over a stream.
 // skipFailed counts a streamed version that broke while it played and
 // leaves it out, so another source plays; when it's the only one it's
-// tried again with a fresh link.
-func (s *Server) skipFailed(ctx context.Context, files []*db.MediaFile, req playRequest) ([]*db.MediaFile, playRequest) {
+// tried again with a fresh link. Only a viewer who was handed that version
+// lately can report it, once per play.
+func (s *Server) skipFailed(ctx context.Context, userID string, files []*db.MediaFile, req playRequest) ([]*db.MediaFile, playRequest) {
 	for i, f := range files {
 		if f.ID != req.FailedFileID || f.StreamID == "" || s.Streaming == nil {
 			continue
+		}
+		if !s.plays().claimFailure(userID, f.ID) {
+			break
 		}
 		dropped := s.Streaming.PlaybackFailed(ctx, f.StreamID)
 		if dropped || len(files) > 1 {
@@ -451,6 +454,10 @@ func (s *Server) skipFailed(ctx context.Context, files []*db.MediaFile, req play
 	return files, req
 }
 
+// chooseFile returns the requested version, else the one this client plays
+// best: a version it can play without transcoding beats one that needs it
+// (a 1080p file is served instead of transcoding the 4K one down), then a
+// version that fits the requested quality, then a file over a stream.
 func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 	for _, f := range files {
 		if f.ID == req.FileID {

@@ -1604,6 +1604,14 @@ func (s *Service) Invalidate(streamID string) {
 	s.mu.Unlock()
 }
 
+// PlayedThrough clears a stream's failures: someone watched it to the end,
+// so earlier breaks were the network's, not the stream's.
+func (s *Service) PlayedThrough(ctx context.Context, streamID string) {
+	if err := s.DB.ResetStreamFailures(ctx, streamID); err != nil {
+		slog.Warn("reset stream failures", "stream", streamID, "err", err)
+	}
+}
+
 // PlaybackFailed records a stream that broke while it played: a torrent
 // no longer cached, a post that lost articles. Its link is thrown away and
 // it's found again from scratch next time; one that breaks twice is

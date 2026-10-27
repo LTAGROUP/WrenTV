@@ -899,6 +899,7 @@ struct ServerSettings: Codable {
     var tmdbKeySet: Bool
     var omdbKeySet: Bool?
     var markerFingerprinting: Bool?
+    var markerCommunity: Bool?
     var streaming: StreamingSettings
     var userDefaults: UserDefaultsSettings
     var webhooks: [WebhookSetting]?

@@ -418,6 +418,7 @@ struct ServerSettingsView: View {
     @State private var tmdbKey = ""
     @State private var omdbKey = ""
     @State private var fingerprinting = true
+    @State private var community = true
     @State private var webhooks: [WebhookSetting] = []
     // Streaming
     @State private var streaming: StreamingSettings?
@@ -486,6 +487,7 @@ struct ServerSettingsView: View {
                 .labelsHidden().fixedSize()
             }
             SettingToggle("Detect intros and credits from audio", isOn: $fingerprinting)
+            SettingToggle("Use community timestamps from IntroDB (sends the title's IMDb id)", isOn: $community)
         }
     }
 
@@ -777,6 +779,7 @@ struct ServerSettingsView: View {
         tmdbKey = ""
         omdbKey = ""
         fingerprinting = s.markerFingerprinting ?? true
+        community = s.markerCommunity ?? true
         streaming = s.streaming
         userDefaults = s.userDefaults
         keyEdits = [:]
@@ -815,6 +818,7 @@ struct ServerSettingsView: View {
             "hwaccel": AnyEncodable(hwaccel),
             "webhooks": AnyEncodable(webhooks.filter { !$0.url.isEmpty }),
             "markerFingerprinting": AnyEncodable(fingerprinting),
+            "markerCommunity": AnyEncodable(community),
             "streaming": AnyEncodable(stream),
             "userDefaults": AnyEncodable(userDefaults),
         ]

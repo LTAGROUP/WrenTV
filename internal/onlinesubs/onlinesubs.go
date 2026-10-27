@@ -158,7 +158,11 @@ func cmpErr(have, err error) error {
 
 // Fetch downloads one search result as WebVTT.
 func (s *Service) Fetch(ctx context.Context, providerName, id string, q Query) ([]byte, error) {
-	for _, p := range s.providers() {
+	ps := s.providers()
+	if len(ps) == 0 {
+		return nil, ErrNone
+	}
+	for _, p := range ps {
 		if p.name() == providerName {
 			b, err := p.download(ctx, id, q)
 			if err != nil {

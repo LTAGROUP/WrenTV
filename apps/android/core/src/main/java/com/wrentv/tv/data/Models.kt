@@ -684,6 +684,7 @@ data class ServerSettings(
     val tmdbKeySet: Boolean = false,
     val omdbKeySet: Boolean? = null,
     val markerFingerprinting: Boolean? = null,
+    val markerCommunity: Boolean? = null,
     val streaming: StreamingSettings = StreamingSettings(),
     val userDefaults: UserDefaultsSettings = UserDefaultsSettings(),
     val webhooks: List<WebhookSetting>? = null,

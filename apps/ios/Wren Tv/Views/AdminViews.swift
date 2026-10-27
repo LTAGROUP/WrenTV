@@ -325,6 +325,7 @@ struct ServerSettingsView: View {
     @State private var tmdbKey = ""
     @State private var omdbKey = ""
     @State private var fingerprinting = true
+    @State private var community = true
     @State private var webhooks: [WebhookSetting] = []
     // Streaming
     @State private var streaming: StreamingSettings?
@@ -391,10 +392,11 @@ struct ServerSettingsView: View {
                 ForEach(["auto", "videotoolbox", "nvenc", "qsv", "vaapi", "amf", "none"], id: \.self) { Text($0).tag($0) }
             }
             Toggle("Detect intros and credits from audio", isOn: $fingerprinting)
+            Toggle("Use community timestamps from IntroDB", isOn: $community)
         } header: {
             Text("Playback")
         } footer: {
-            Text("Audio detection compares episodes of a season to find shared intros and credits. Chapters are always used.")
+            Text("Audio detection compares episodes of a season to find shared intros and credits. Chapters are always used. Community timestamps fill in what's still missing, sending the title's IMDb id to IntroDB.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -690,6 +692,7 @@ struct ServerSettingsView: View {
         tmdbKey = ""
         omdbKey = ""
         fingerprinting = s.markerFingerprinting ?? true
+        community = s.markerCommunity ?? true
         streaming = s.streaming
         userDefaults = s.userDefaults
         keyEdits = [:]
@@ -728,6 +731,7 @@ struct ServerSettingsView: View {
             "hwaccel": AnyEncodable(hwaccel),
             "webhooks": AnyEncodable(webhooks.filter { !$0.url.isEmpty }),
             "markerFingerprinting": AnyEncodable(fingerprinting),
+            "markerCommunity": AnyEncodable(community),
             "streaming": AnyEncodable(stream),
             "userDefaults": AnyEncodable(userDefaults),
         ]

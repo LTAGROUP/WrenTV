@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -184,4 +185,48 @@ func (s *Server) serveOnlineSubtitle(w http.ResponseWriter, r *http.Request, ite
 		}
 	}
 	http.NotFound(w, r)
+}
+
+// RunOnlineSubtitleSweep deletes fetched subtitle files no item lists any
+// more (their titles were removed), at start and then daily.
+func (s *Server) RunOnlineSubtitleSweep(ctx context.Context) {
+	t := time.NewTicker(24 * time.Hour)
+	defer t.Stop()
+	for {
+		s.sweepOnlineSubtitles(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+func (s *Server) sweepOnlineSubtitles(ctx context.Context) {
+	entries, err := os.ReadDir(s.onlineSubsDir())
+	if err != nil {
+		return
+	}
+	keep, err := s.DB.OnlineSubtitleKeys(ctx)
+	if err != nil {
+		return
+	}
+	removed := 0
+	for _, e := range entries {
+		name := e.Name()
+		key := strings.TrimSuffix(strings.TrimSuffix(name, ".tmp"), ".vtt")
+		if e.IsDir() || !onlineSubKey.MatchString(key) || keep[key] {
+			continue
+		}
+		// A download in progress is saved before it's listed; leave new files.
+		if info, err := e.Info(); err != nil || time.Since(info.ModTime()) < time.Hour {
+			continue
+		}
+		if os.Remove(filepath.Join(s.onlineSubsDir(), name)) == nil {
+			removed++
+		}
+	}
+	if removed > 0 {
+		slog.Info("removed unused online subtitles", "files", removed)
+	}
 }

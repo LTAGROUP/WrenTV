@@ -369,6 +369,7 @@ fun ServerSettingsScreen() {
     var tmdbKey by remember { mutableStateOf("") }
     var omdbKey by remember { mutableStateOf("") }
     var fingerprinting by remember { mutableStateOf(true) }
+    var community by remember { mutableStateOf(true) }
     var streaming by remember { mutableStateOf(StreamingSettings()) }
     var userDefaults by remember { mutableStateOf(UserDefaultsSettings()) }
     val keyEdits = remember { mutableStateMapOf<String, String>() }
@@ -390,6 +391,7 @@ fun ServerSettingsScreen() {
         tmdbKey = ""
         omdbKey = ""
         fingerprinting = s.markerFingerprinting ?: true
+        community = s.markerCommunity ?: true
         streaming = s.streaming
         userDefaults = s.userDefaults
         keyEdits.clear()
@@ -430,6 +432,7 @@ fun ServerSettingsScreen() {
             put("hwaccel", hwaccel)
             put("webhooks", json.encodeToJsonElement(settings?.webhooks.orEmpty().filter { it.url.isNotEmpty() }))
             put("markerFingerprinting", fingerprinting)
+            put("markerCommunity", community)
             put("streaming", stream)
             put("userDefaults", json.encodeToJsonElement(userDefaults))
             if (tmdbKey.isNotBlank()) put("tmdbApiKey", tmdbKey.trim())
@@ -482,9 +485,10 @@ fun ServerSettingsScreen() {
                                 placeholder = if (settings?.omdbKeySet == true) "Saved — enter to replace" else "Optional")
                         }
                     }
-                    FormSection("Playback", "Audio detection compares episodes of a season to find shared intros and credits. Chapters are always used.") {
+                    FormSection("Playback", "Audio detection compares episodes of a season to find shared intros and credits. Chapters are always used. Community timestamps fill in what's still missing, sending the title's IMDb id to IntroDB.") {
                         ListRow("Hardware transcoding", { picker = "hwaccel" }, value = hwaccel)
                         ToggleRow("Detect intros and credits from audio", fingerprinting, { fingerprinting = it })
+                        ToggleRow("Use community timestamps from IntroDB", community, { community = it })
                     }
                 }
             }
