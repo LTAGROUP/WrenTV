@@ -135,6 +135,7 @@ class Player {
       const k = e.key;
       if (k === 'Escape') {
         if ($('.chapters', r)) return $('.chapters', r).remove();
+        if ($('.ep-shelf', r)) return this.closeEpisodes();
         if (!document.fullscreenElement) this.close();
       } else if (k === 'f') this.toggleFullscreen();
       else if (k === ' ' || k === 'k') { e.preventDefault(); this.toggle(); }
@@ -143,6 +144,8 @@ class Player {
       else if (k === 'm') v.muted = !v.muted;
       else if (k === 'c' && this.chapters.length) this.toggleChapters();
       else if (k === 'e' && this.item?.kind === 'episode') this.toggleEpisodes();
+      else if (k === 'ArrowDown' && this.item?.kind === 'episode' && !$('.ep-shelf', r)) { e.preventDefault(); this.toggleEpisodes(); }
+      else if (k === 'ArrowUp' && $('.ep-shelf', r)) { e.preventDefault(); this.closeEpisodes(); }
       else if (k === 'i') this.toggleStats();
       else if (k === 's') $('.skip', r)?.click();
       else return;
@@ -154,7 +157,7 @@ class Player {
     this.onMove = () => {
       r.classList.remove('idle');
       clearTimeout(idle);
-      idle = setTimeout(() => !v.paused && !$('.chapters, .dd-menu', r) && r.classList.add('idle'), 2800);
+      idle = setTimeout(() => !v.paused && !$('.chapters, .dd-menu, .ep-shelf', r) && r.classList.add('idle'), 2800);
     };
     r.addEventListener('mousemove', this.onMove);
     v.addEventListener('timeupdate', () => { this.report(false); this.update(); });
@@ -679,40 +682,55 @@ class Player {
 
   // ---------- episodes
 
-  // toggleEpisodes lists the season's episodes (and the show's other
-  // seasons) to jump to.
+  // toggleEpisodes opens the season's episodes in a row under the controls,
+  // with the show's other seasons above it, or closes it.
   async toggleEpisodes(seasonId) {
     const r = this.root;
-    const open = $('.chapters', r);
-    open?.remove();
-    if (open?.dataset.panel === 'episodes' && !seasonId) return;
     const it = this.item;
+    let shelf = $('.ep-shelf', r);
+    if (shelf && !seasonId) return this.closeEpisodes();
     if (!it || it.kind !== 'episode') return;
-    const menu = el('<div class="chapters wide" data-panel="episodes"><h3>Episodes</h3><div class="muted small" style="padding:8px 10px">Loading…</div></div>');
-    r.append(menu);
+    $('.chapters', r)?.remove();
+    if (!shelf) {
+      shelf = el('<div class="ep-shelf"><div class="muted small">Loading…</div></div>');
+      $('.controls', r).append(shelf);
+      $('[data-episodes]', r).classList.add('on');
+    }
     try {
       const [seasons, eps] = await Promise.all([
         this.seasons || api(`/api/items/${it.showId}/children`).then((x) => (this.seasons = x.filter((s) => s.kind === 'season'))),
         api(`/api/items/${seasonId || it.parentId}/children`),
       ]);
-      if (!menu.isConnected) return;
+      if (!shelf.isConnected) return;
       const cur = seasonId || it.parentId;
-      menu.innerHTML = `<div class="ep-head"><h3>Episodes</h3>${seasons.length > 1
-        ? `<select data-season>${seasons.map((s) => `<option value="${esc(s.id)}" ${s.id === cur ? 'selected' : ''}>${esc(s.title || 'Season ' + s.seasonNumber)}</option>`).join('')}</select>` : ''}</div>`
-        + eps.map((e) => `<button data-id="${esc(e.id)}" class="ep ${e.id === this.itemId ? 'cur' : ''}">
-          <span class="still">${e.stillPath ? `<img src="${img(e.stillPath, 'w300')}" alt="" loading="lazy">` : ''}${e.progress?.watched ? '<i class="seen">✓</i>' : ''}</span>
-          <span class="t"><b>${e.episodeNumber}. ${esc(e.title)}</b>${e.runtimeMin ? `<span class="muted small">${e.runtimeMin} min</span>` : ''}</span></button>`).join('');
-      $('[data-season]', menu)?.addEventListener('change', (e) => this.toggleEpisodes(e.target.value));
-      for (const b of $$('button[data-id]', menu)) {
+      shelf.innerHTML = (seasons.length > 1 ? `<div class="seasons">${seasons.map((s) =>
+        `<button class="chip ${s.id === cur ? 'on' : ''}" data-season="${esc(s.id)}">${esc(s.title || 'Season ' + s.seasonNumber)}</button>`).join('')}</div>` : '')
+        + `<div class="row">${eps.map((e) => {
+          const p = e.progress;
+          const part = p && !p.watched && p.position > 0 && p.duration > 0 ? Math.min(100, (p.position / p.duration) * 100) : 0;
+          return `<button data-id="${esc(e.id)}" class="ep ${e.id === this.itemId ? 'cur' : ''}">
+          <span class="still">${e.stillPath ? `<img src="${img(e.stillPath, 'w300')}" alt="" loading="lazy">` : ''}
+            ${e.id === this.itemId ? '<i class="playing">Playing</i>' : p?.watched ? '<i class="seen">✓</i>' : ''}
+            ${part && e.id !== this.itemId ? `<span class="prog"><span style="width:${part}%"></span></span>` : ''}</span>
+          <b>${e.episodeNumber}. ${esc(e.title)}</b>${e.runtimeMin ? `<span class="muted small">${e.runtimeMin} min</span>` : ''}</button>`;
+        }).join('')}</div>`;
+      for (const b of $$('[data-season]', shelf)) b.onclick = () => this.toggleEpisodes(b.dataset.season);
+      for (const b of $$('button[data-id]', shelf)) {
         b.onclick = () => {
-          if (b.dataset.id === this.itemId) { menu.remove(); return; }
+          if (b.dataset.id === this.itemId) return this.closeEpisodes();
           openPlayer(b.dataset.id, { ...this.opts, start: undefined, resume: true, fileId: undefined });
         };
       }
-      $('.cur', menu)?.scrollIntoView({ block: 'center' });
+      const at = $('.cur', shelf) || $('button[data-id]', shelf);
+      if (at) $('.row', shelf).scrollLeft = at.offsetLeft - 22;
     } catch (e) {
-      if (menu.isConnected) menu.innerHTML = `<h3>Episodes</h3><div class="error small" style="padding:8px 10px">${esc(e.message)}</div>`;
+      if (shelf.isConnected) shelf.innerHTML = `<div class="error small">${esc(e.message)}</div>`;
     }
+  }
+
+  closeEpisodes() {
+    $('.ep-shelf', this.root)?.remove();
+    $('[data-episodes]', this.root)?.classList.remove('on');
   }
 
   // ---------- online subtitles

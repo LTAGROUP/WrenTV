@@ -45,7 +45,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.VideoLibrary
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.lazy.rememberLazyListState
+import com.wrentv.tv.ui.ArtCard
+import com.wrentv.tv.ui.ProgressStrip
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -109,7 +117,7 @@ import com.wrentv.tv.ui.formatClock
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.delay
 
-private enum class PlayerPanel { Audio, Subtitles, OnlineSubtitles, Version, Chapters, Episodes }
+private enum class PlayerPanel { Audio, Subtitles, OnlineSubtitles, Version, Chapters }
 
 /** The Subtitles panel's "Search online" row. */
 private const val SEARCH_ONLINE = "online"
@@ -117,7 +125,8 @@ private const val SEARCH_ONLINE = "online"
 /**
  * Full-screen playback. With the controls hidden the remote works the
  * player directly: OK pauses, left and right skip 10 seconds, up and down
- * show the controls. Back hides the controls, then leaves.
+ * show the controls. Down from the timeline opens the season's episodes
+ * beneath it. Back hides the controls, then leaves.
  */
 @Composable
 fun PlayerScreen(target: PlayTarget) {
@@ -142,6 +151,8 @@ fun PlayerScreen(target: PlayTarget) {
     var controls by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<PlayerPanel?>(null) }
     var stats by remember { mutableStateOf(false) }
+    // The row of episodes under the timeline.
+    var shelf by remember { mutableStateOf(false) }
     // Bumped on every key press so the controls stay up while in use.
     var touched by remember { mutableIntStateOf(0) }
     val root = remember { FocusRequester() }
@@ -160,11 +171,18 @@ fun PlayerScreen(target: PlayTarget) {
         c.commitScrub()
     }
 
-    LaunchedEffect(controls, touched, c.paused, panel) {
-        if (controls && panel == null && !c.paused) {
+    LaunchedEffect(controls, touched, c.paused, panel, shelf) {
+        if (controls && panel == null && !shelf && !c.paused) {
             delay(5000)
             controls = false
         }
+    }
+    LaunchedEffect(controls) { if (!controls) shelf = false }
+    // Closing the row hands focus back to the timeline.
+    LaunchedEffect(shelf) {
+        if (shelf || !controls) return@LaunchedEffect
+        awaitFrame()
+        runCatching { seekBar.requestFocus() }
     }
     LaunchedEffect(controls, c.phase, c.upNext) {
         awaitFrame()
@@ -176,6 +194,7 @@ fun PlayerScreen(target: PlayTarget) {
     BackHandler {
         when {
             c.scrub != null -> c.cancelScrub()
+            shelf -> shelf = false
             controls -> controls = false
             else -> nav.back()
         }
@@ -265,7 +284,7 @@ fun PlayerScreen(target: PlayTarget) {
         }
 
         AnimatedVisibility(controls && c.upNext == null, enter = fadeIn(), exit = fadeOut()) {
-            Controls(c, playButton, seekBar, onPanel = { panel = it }, onStats = { stats = !stats }, onSkip = {
+            Controls(c, playButton, seekBar, shelf, onShelf = { shelf = it && c.episode != null }, onPanel = { panel = it }, onStats = { stats = !stats }, onSkip = {
                 when (c.skip) {
                     PlayerController.Skip.Intro -> c.skipIntro()
                     PlayerController.Skip.Credits -> c.skipCredits()
@@ -293,7 +312,6 @@ fun PlayerScreen(target: PlayTarget) {
             { if (panel == PlayerPanel.Subtitles) panel = null },
         ) { if (it == SEARCH_ONLINE) panel = PlayerPanel.OnlineSubtitles else c.selectSubtitle(it) }
         PlayerPanel.OnlineSubtitles -> OnlineSubtitlesPanel(c) { panel = null }
-        PlayerPanel.Episodes -> EpisodesPanel(c) { panel = null }
         PlayerPanel.Version -> ChoicePanel("Version", c.versions.map { Choice(it.id, it.label.ifEmpty { if (it.height > 0) "${it.height}p" else "Version" }) }, c.fileId, { panel = null }) {
             c.selectVersion(it)
         }
@@ -306,12 +324,16 @@ fun PlayerScreen(target: PlayTarget) {
 }
 
 @Composable
-private fun Controls(c: PlayerController, playButton: FocusRequester, seekBar: FocusRequester, onPanel: (PlayerPanel) -> Unit, onStats: () -> Unit, onSkip: () -> Unit) {
+private fun Controls(
+    c: PlayerController, playButton: FocusRequester, seekBar: FocusRequester, shelf: Boolean, onShelf: (Boolean) -> Unit,
+    onPanel: (PlayerPanel) -> Unit, onStats: () -> Unit, onSkip: () -> Unit,
+) {
     Box(Modifier.fillMaxSize()) {
         // Light scrims: just enough for the title and panel over bright scenes.
         Box(Modifier.fillMaxWidth().height(160.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent))))
+        val scrim by animateDpAsState(if (shelf) 480.dp else 220.dp, label = "scrim")
         Box(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(220.dp)
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(scrim)
                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)))),
         )
         Column(Modifier.padding(horizontal = 56.dp, vertical = 32.dp)) {
@@ -321,15 +343,15 @@ private fun Controls(c: PlayerController, playButton: FocusRequester, seekBar: F
                 Text(c.methodLabel, style = MaterialTheme.typography.labelSmall, color = Wren.tertiary, modifier = Modifier.padding(top = 4.dp))
             }
         }
-        Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 28.dp).width(PanelWidth)) {
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 28.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             if (c.skip != null) {
-                Box(Modifier.fillMaxWidth().padding(bottom = 14.dp), contentAlignment = Alignment.CenterEnd) {
+                Box(Modifier.width(PanelWidth).padding(bottom = 14.dp), contentAlignment = Alignment.CenterEnd) {
                     PillButton(skipText(c.skip, c.countdown), onSkip, icon = Icons.Rounded.SkipNext, primary = true)
                 }
             }
             // One floating panel, like the Mac player's: the buttons, then the timeline.
             Column(
-                Modifier.fillMaxWidth()
+                Modifier.width(PanelWidth)
                     .background(Color(0xFF141418).copy(alpha = 0.68f), RoundedCornerShape(20.dp))
                     .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(20.dp))
                     .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 14.dp),
@@ -348,7 +370,6 @@ private fun Controls(c: PlayerController, playButton: FocusRequester, seekBar: F
                     // Smaller than the transport, so it stays the centre of the panel.
                     Row(Modifier.align(Alignment.CenterEnd), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (c.audioOptions.size > 1) PlayerButton(Icons.Rounded.Audiotrack, "Audio", { onPanel(PlayerPanel.Audio) }, small = true)
-                        if (c.episode != null) PlayerButton(Icons.Rounded.VideoLibrary, "Episodes", { onPanel(PlayerPanel.Episodes) }, small = true)
                         if (c.subtitleOptions.isNotEmpty() || c.onlineSubtitles) PlayerButton(Icons.Rounded.Subtitles, "Subtitles", { onPanel(PlayerPanel.Subtitles) }, small = true)
                         if (c.versions.size > 1) PlayerButton(Icons.Rounded.Layers, "Version", { c.refreshVersions(); onPanel(PlayerPanel.Version) }, small = true)
                         if (c.chapters.size > 1) PlayerButton(Icons.Rounded.Toc, "Chapters", { onPanel(PlayerPanel.Chapters) }, small = true)
@@ -359,9 +380,19 @@ private fun Controls(c: PlayerController, playButton: FocusRequester, seekBar: F
                     val at = c.scrub
                     Text(formatClock(at ?: c.position), style = MaterialTheme.typography.labelMedium, color = if (at != null) Wren.text else Wren.secondary,
                         modifier = Modifier.widthIn(min = 56.dp))
-                    Box(Modifier.weight(1f).padding(horizontal = 14.dp)) { SeekBar(c, Modifier.focusRequester(seekBar)) }
+                    Box(Modifier.weight(1f).padding(horizontal = 14.dp)) { SeekBar(c, Modifier.focusRequester(seekBar), onDown = { onShelf(true) }) }
                     Text(if (c.duration > 0) "-" + formatClock(c.duration - (at ?: c.position)) else "", style = MaterialTheme.typography.labelMedium, color = Wren.secondary,
                         textAlign = TextAlign.End, modifier = Modifier.widthIn(min = 56.dp))
+                }
+            }
+            if (c.episode != null) {
+                if (shelf) {
+                    EpisodeShelf(c, onClose = { onShelf(false) })
+                } else {
+                    Row(Modifier.padding(top = 10.dp).alpha(0.7f), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(18.dp), tint = Wren.secondary)
+                        Text("Episodes", style = MaterialTheme.typography.labelMedium, color = Wren.secondary)
+                    }
                 }
             }
         }
@@ -449,51 +480,80 @@ private fun OnlineSubtitlesPanel(c: PlayerController, onDismiss: () -> Unit) {
     }
 }
 
-/** The show's episodes by season; picking one plays it. */
+/**
+ * The season's episodes in a row under the timeline, opened with down. Up
+ * goes to the seasons, then back to the timeline, which closes the row.
+ */
 @Composable
-private fun EpisodesPanel(c: PlayerController, onDismiss: () -> Unit) {
+private fun EpisodeShelf(c: PlayerController, onClose: () -> Unit) {
     val ep = c.episode ?: return
-    val state = LocalAppState.current
+    val api = LocalAppState.current.api
     var seasons by remember { mutableStateOf<List<Item>>(emptyList()) }
     var seasonId by remember { mutableStateOf(ep.parentId) }
     var episodes by remember { mutableStateOf<List<Item>?>(null) }
     val current = remember { FocusRequester() }
+    val list = rememberLazyListState()
+    // Closes once focus has been in the row and left it.
+    var entered by remember { mutableStateOf(false) }
     LaunchedEffect(ep.showId) {
         seasons = ep.showId?.let { runCatching { c.children(it) }.getOrNull() }.orEmpty().sortedBy { it.seasonNumber }
     }
     LaunchedEffect(seasonId) {
-        episodes = null
-        episodes = seasonId?.let { runCatching { c.children(it) }.getOrNull() }.orEmpty().sortedBy { it.episodeNumber }
-        awaitFrame()
-        runCatching { current.requestFocus() }
+        val fresh = seasonId?.let { runCatching { c.children(it) }.getOrNull() }.orEmpty().sortedBy { it.episodeNumber }
+        val first = episodes == null
+        episodes = fresh
+        // Opening lands on what's playing; switching season stays on the season chips.
+        if (first) {
+            list.scrollToItem(fresh.indexOfFirst { it.id == c.itemId }.coerceAtLeast(0))
+            awaitFrame()
+            runCatching { current.requestFocus() }
+        }
     }
-    Panel(onDismiss, ep.showTitle ?: "Episodes", width = 820.dp) {
+    Column(
+        Modifier.fillMaxWidth().padding(top = 18.dp)
+            .onFocusChanged { if (it.hasFocus) entered = true else if (entered) onClose() },
+    ) {
         if (seasons.size > 1) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 14.dp)) {
-                items(seasons) { s -> PillButton(s.displayTitle, { seasonId = s.id }, primary = s.id == seasonId) }
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(horizontal = 56.dp), modifier = Modifier.padding(bottom = 14.dp)) {
+                items(seasons, key = { it.id }) { s -> PillButton(s.displayTitle, { seasonId = s.id }, primary = s.id == seasonId) }
             }
         }
-        val list = episodes
-        if (list == null) {
-            Box(Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) { Spinner() }
-            return@Panel
+        val eps = episodes
+        if (eps == null) {
+            Box(Modifier.fillMaxWidth().height(EpisodeCardHeight), contentAlignment = Alignment.Center) { Spinner() }
+            return@Column
         }
-        val focusAt = list.indexOfFirst { it.id == c.itemId }.coerceAtLeast(0)
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
-            itemsIndexed(list) { i, e ->
-                ListRow(
-                    title = "${e.episodeNumber}. ${e.title}",
-                    detail = listOfNotNull(e.runtimeMin?.takeIf { it > 0 }?.let { "$it min" }, if (e.isWatched) "Watched" else null,
-                        if (e.id == c.itemId) "Playing" else null).joinToString(" · ").ifEmpty { null },
-                    checked = if (e.id == c.itemId) true else null,
-                    leading = {
-                        RemoteImage(state.api?.imageUrl(e.stillPath ?: e.backdropPath, "w300"),
-                            Modifier.width(128.dp).height(72.dp).clip(RoundedCornerShape(8.dp)))
-                    },
-                    onClick = { onDismiss(); c.playEpisode(e) },
-                    modifier = if (i == focusAt) Modifier.focusRequester(current) else Modifier,
-                )
+        val focusAt = eps.indexOfFirst { it.id == c.itemId }.coerceAtLeast(0)
+        LazyRow(state = list, horizontalArrangement = Arrangement.spacedBy(18.dp), contentPadding = PaddingValues(horizontal = 56.dp, vertical = 8.dp)) {
+            itemsIndexed(eps, key = { _, e -> e.id }) { i, e ->
+                ShelfEpisode(api?.imageUrl(e.stillPath ?: e.backdropPath, "w300"), e, playing = e.id == c.itemId,
+                    onClick = { if (e.id != c.itemId) c.playEpisode(e); onClose() },
+                    modifier = if (i == focusAt) Modifier.focusRequester(current) else Modifier)
             }
+        }
+    }
+}
+
+private val EpisodeCardWidth = 260.dp
+private val EpisodeCardHeight = 210.dp
+
+@Composable
+private fun ShelfEpisode(image: String?, e: Item, playing: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    var focused by remember { mutableStateOf(false) }
+    Column(Modifier.width(EpisodeCardWidth)) {
+        ArtCard(onClick, modifier.width(EpisodeCardWidth).aspectRatio(16f / 9f).onFocusChanged { focused = it.hasFocus }) {
+            RemoteImage(image, Modifier.fillMaxSize())
+            e.progress?.takeIf { it.position > 0 && !it.watched && !playing }?.let { ProgressStrip(it.fraction, Modifier.align(Alignment.BottomCenter)) }
+            if (playing) {
+                Text("Playing", style = MaterialTheme.typography.labelSmall, color = Color.White,
+                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp).background(Wren.ember, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 2.dp))
+            } else if (e.isWatched) {
+                Icon(Icons.Rounded.CheckCircle, "Watched", Modifier.align(Alignment.TopEnd).padding(8.dp).size(24.dp).background(Wren.ember, CircleShape), tint = Color.White)
+            }
+        }
+        Column(Modifier.padding(top = 8.dp).alpha(if (focused) 1f else 0.75f)) {
+            Text("${e.episodeNumber}. ${e.title}", style = MaterialTheme.typography.titleSmall, color = Wren.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            e.runtimeMin?.takeIf { it > 0 }?.let { Text("$it min", style = MaterialTheme.typography.bodySmall, color = Wren.secondary, maxLines = 1) }
         }
     }
 }
@@ -531,7 +591,7 @@ private fun PlayerButton(icon: ImageVector, label: String, onClick: () -> Unit, 
  * (10 seconds a tap, faster while held); OK jumps there at once.
  */
 @Composable
-private fun SeekBar(c: PlayerController, modifier: Modifier = Modifier) {
+private fun SeekBar(c: PlayerController, modifier: Modifier = Modifier, onDown: () -> Unit = {}) {
     var focused by remember { mutableStateOf(false) }
     val at = c.scrub
     val fraction = if (c.duration > 0) ((at ?: c.position) / c.duration).toFloat() else 0f
@@ -546,6 +606,7 @@ private fun SeekBar(c: PlayerController, modifier: Modifier = Modifier) {
                         Key.DirectionLeft, Key.MediaRewind -> { c.scrubBy(-1, e.nativeKeyEvent.repeatCount); true }
                         Key.DirectionRight, Key.MediaFastForward -> { c.scrubBy(1, e.nativeKeyEvent.repeatCount); true }
                         Key.DirectionCenter, Key.Enter -> { if (c.scrub != null) c.commitScrub() else c.togglePause(); true }
+                        Key.DirectionDown -> { onDown(); true }
                         else -> false
                     }
                 }

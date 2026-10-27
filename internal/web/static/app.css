@@ -259,6 +259,23 @@ a.person:focus-visible .face { border-color: var(--accent); transform: scale(1.0
 .bar-row .time { font-variant-numeric: tabular-nums; font-size: 13px; color: #e6ded3; margin: 0 8px; }
 .bar-row .chap { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
 .bar-row input[type=range] { width: 90px; accent-color: var(--accent); }
+.ep-shelf { margin: 14px -22px 0; }
+.ep-shelf > .muted, .ep-shelf > .error { padding: 0 22px 8px; }
+.ep-shelf .seasons { display: flex; gap: 8px; padding: 0 22px 10px; overflow-x: auto; scrollbar-width: none; }
+.ep-shelf .chip { flex: none; border: 1px solid var(--line); background: #0007; color: var(--cream); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.ep-shelf .chip:hover { background: #f7f1e81f; } .ep-shelf .chip.on { background: var(--cream); color: #000; border-color: transparent; }
+.ep-shelf .row { display: flex; gap: 14px; overflow-x: auto; padding: 4px 22px 6px; scroll-behavior: smooth; scrollbar-width: thin; }
+.ep-shelf .ep { flex: none; width: 220px; display: flex; flex-direction: column; gap: 2px; text-align: left; border: 0; background: transparent; color: var(--cream); padding: 0; cursor: pointer; font: inherit; }
+.ep-shelf .ep b { font-size: 13px; font-weight: 600; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ep-shelf .still { position: relative; aspect-ratio: 16/9; border-radius: 8px; overflow: hidden; background: var(--bg-3); outline: 2px solid transparent; transition: outline-color .15s, transform .15s; }
+.ep-shelf .ep:hover .still, .ep-shelf .ep:focus-visible .still { outline-color: var(--cream); transform: scale(1.03); }
+.ep-shelf .still img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ep-shelf .seen, .ep-shelf .playing { position: absolute; top: 6px; font-style: normal; font-size: 11px; border-radius: 4px; padding: 1px 6px; }
+.ep-shelf .seen { right: 6px; background: #000a; } .ep-shelf .playing { left: 6px; background: var(--accent); color: #fff; font-weight: 600; }
+.ep-shelf .prog { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #0008; }
+.ep-shelf .prog span { display: block; height: 100%; background: var(--accent); }
+.player:has(.ep-shelf) .controls { background: linear-gradient(transparent, #000d 30%); }
+@media (max-width: 600px) { .ep-shelf .ep { width: 160px; } }
 .chapters { position: absolute; z-index: 4; right: 22px; bottom: 86px; width: 300px; max-height: 50vh; overflow: auto; background: #121016f2; border: 1px solid var(--line);
   border-radius: 12px; padding: 6px; box-shadow: 0 20px 50px #000c; animation: fade-up .2s var(--ease) both; }
 .chapters h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 8px 10px 6px; }
