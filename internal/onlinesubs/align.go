@@ -79,6 +79,10 @@ func vttTime(t float64) string {
 // offset is settled.
 const Reach = 120.0
 
+// settle is how far past a line's match the reference has to have been read
+// for the match to count.
+const settle = 30.0
+
 type anchor struct{ at, off float64 }
 
 // stretch is a run of the subtitle that one offset fits.
@@ -144,15 +148,15 @@ func (a Alignment) Apply(cues []Cue) []Cue {
 // (math.Inf(1) once it's whole); only cues it covers are matched. sameLang
 // says the two can be matched by their words.
 func Align(sub, ref []Cue, sameLang bool, refEnd float64) Alignment {
-	var anchors []anchor
+	// Lines that say the same thing are the surer guide, and need little of
+	// the reference: four in a row that agree are a stretch.
 	if sameLang {
-		anchors = textAnchors(sub, ref, refEnd)
+		anchors := textAnchors(sub, ref, refEnd)
+		if ss := stretches(anchors, 4); len(ss) > 0 || len(anchors) >= 12 {
+			return Alignment{stretches: ss}
+		}
 	}
-	minRun := 4
-	if len(anchors) < 12 {
-		anchors, minRun = timingAnchors(sub, ref, refEnd), 1
-	}
-	return Alignment{stretches: stretches(anchors, minRun)}
+	return Alignment{stretches: stretches(timingAnchors(sub, ref, refEnd), 1)}
 }
 
 // textAnchors pairs subtitle cues with reference cues that say the same
@@ -166,7 +170,7 @@ func textAnchors(sub, ref []Cue, refEnd float64) []anchor {
 	var out []anchor
 	lo := 0
 	for _, s := range sub {
-		if s.Start+Reach > refEnd {
+		if s.Start-Reach > refEnd {
 			break
 		}
 		words := wordSet(s.Text)
@@ -196,7 +200,10 @@ func textAnchors(sub, ref []Cue, refEnd float64) []anchor {
 				second = score
 			}
 		}
-		if best >= 0.6 && best-second >= 0.25 {
+		// With the reference read only partway, a match counts once it's
+		// read a little past it: a rival later on is unlikely, and a stray
+		// has to agree with its neighbours to count.
+		if best >= 0.6 && best-second >= 0.25 && (s.Start+Reach <= refEnd || bestAt+settle <= refEnd) {
 			out = append(out, anchor{s.Start, bestAt - s.Start})
 		}
 	}

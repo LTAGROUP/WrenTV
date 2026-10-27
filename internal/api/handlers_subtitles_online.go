@@ -277,7 +277,35 @@ func (s *Server) serveOnlineSubtitle(w http.ResponseWriter, r *http.Request, ses
 			http.ServeFile(w, r, raw)
 			return
 		}
-		s.serveSyncedSubtitle(w, r, sess, onlinesubs.ParseVTT(string(b), true), ref, sameLang, synced)
+		// Lining it up needs the file's own track, which is read along with
+		// the file, and players wait for a side-loaded subtitle before they
+		// play. So the answer is never held: every cue, moved by what the
+		// track read so far says (the stretch reached last carries on past
+		// it), and X-Subtitle-Complete false until the track is all read, for
+		// players to ask again.
+		s.syncInBackground(sess, raw, ref, sameLang, synced)
+		cues := onlinesubs.ParseVTT(string(b), true)
+		var al onlinesubs.Alignment
+		complete := true
+		if text, done, _, err := sess.SubtitleText(ref); err == nil {
+			refCues := onlinesubs.ParseVTT(text, done)
+			refEnd := math.Inf(1)
+			if complete = done; !done {
+				refEnd = 0
+				if n := len(refCues); n > 0 {
+					refEnd = refCues[n-1].Start
+				}
+			}
+			al = onlinesubs.Align(cues, refCues, sameLang, refEnd)
+		}
+		var out strings.Builder
+		out.WriteString("WEBVTT\n\n")
+		for _, c := range al.Apply(cues) {
+			out.WriteString(onlinesubs.WriteCue(c))
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Subtitle-Complete", fmt.Sprint(complete))
+		io.WriteString(w, out.String())
 		return
 	}
 	http.NotFound(w, r)
@@ -303,91 +331,36 @@ func syncReference(sess *stream.Session, lang string) (typeIdx int, sameLang, ok
 	return typeIdx, sameLang, typeIdx >= 0
 }
 
-// serveSyncedSubtitle sends cues moved onto the reference track's timing as
-// the file's track is converted, the way the file's own subtitles are sent
-// (whole, or so far with ?partial=1). A cue goes once the reference is read
-// far enough past it that its offset is settled. The finished result is kept.
-func (s *Server) serveSyncedSubtitle(w http.ResponseWriter, r *http.Request, sess *stream.Session, cues []onlinesubs.Cue, ref int, sameLang bool, cache string) {
-	w.Header().Set("Cache-Control", "no-store")
-	partial := r.URL.Query().Get("partial") == "1"
-	flush := func() {
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
+// syncing holds the lined-up copies being made, by path.
+var syncing sync.Map
+
+// syncInBackground lines the fetched subtitle at raw up with the file's track
+// ref once the session has converted it, and keeps the result at cache. A
+// session that ends first stops the conversion; the next play tries again.
+func (s *Server) syncInBackground(sess *stream.Session, raw string, ref int, sameLang bool, cache string) {
+	if _, busy := syncing.LoadOrStore(cache, true); busy {
+		return
 	}
-	sent, idle, lastLen := 0, 0, -1
-	var al onlinesubs.Alignment
-	tick := time.NewTicker(500 * time.Millisecond)
-	defer tick.Stop()
-	for first := true; ; first = false {
-		text, complete, done, err := sess.SubtitleText(ref)
+	go func() {
+		defer syncing.Delete(cache)
+		b, err := os.ReadFile(raw)
 		if err != nil {
-			slog.Warn("subtitle sync: reference track failed", "file", sess.FileID, "err", err)
-			complete, al = true, onlinesubs.Alignment{}
-		} else if len(text) != lastLen {
-			lastLen = len(text)
-			refCues := onlinesubs.ParseVTT(text, complete)
-			refEnd := math.Inf(1)
-			if !complete {
-				refEnd = 0
-				if n := len(refCues); n > 0 {
-					refEnd = refCues[n-1].Start
-				}
+			return
+		}
+		for {
+			text, complete, done, err := sess.SubtitleText(ref)
+			if err != nil {
+				slog.Debug("subtitle sync: reference track not read", "file", sess.FileID, "err", err)
+				return
 			}
-			al = onlinesubs.Align(cues, refCues, sameLang, refEnd)
 			if complete {
-				s.keepSynced(cache, sess, cues, al)
+				cues := onlinesubs.ParseVTT(string(b), true)
+				s.keepSynced(cache, sess, cues, onlinesubs.Align(cues, onlinesubs.ParseVTT(text, true), sameLang, math.Inf(1)))
+				return
 			}
-			// Settled: the reference has been read well past the cue.
-			settled := len(cues)
-			if !complete {
-				settled = 0
-				for settled < len(cues) && al.OK() && cues[settled].Start+al.Offset(cues[settled].Start)+onlinesubs.Reach < refEnd {
-					settled++
-				}
-			}
-			if first {
-				w.Header().Set("X-Subtitle-Complete", fmt.Sprint(complete || !partial))
-				io.WriteString(w, "WEBVTT\n\n")
-			}
-			if settled > sent {
-				var b strings.Builder
-				for _, c := range al.Apply(cues[sent:settled]) {
-					b.WriteString(onlinesubs.WriteCue(c))
-				}
-				io.WriteString(w, b.String())
-				sent, idle = settled, 0
-				flush()
-			}
+			<-done
 		}
-		if first && lastLen < 0 { // the reference failed before anything was sent
-			w.Header().Set("X-Subtitle-Complete", "true")
-			io.WriteString(w, "WEBVTT\n\n")
-		}
-		if complete {
-			var b strings.Builder
-			for _, c := range al.Apply(cues[sent:]) {
-				b.WriteString(onlinesubs.WriteCue(c))
-			}
-			io.WriteString(w, b.String())
-			return
-		}
-		if partial {
-			return
-		}
-		// Blank lines between cues keep a waiting player from timing out.
-		if idle++; idle >= 4 {
-			idle = 0
-			io.WriteString(w, "\n")
-			flush()
-		}
-		select {
-		case <-r.Context().Done():
-			return
-		case <-done:
-		case <-tick.C:
-		}
-	}
+	}()
 }
 
 // keepSynced saves a fetched subtitle moved onto a file's timing, so the

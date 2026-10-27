@@ -68,6 +68,19 @@ struct WrenTVAPI: Sendable {
         return (data, status)
     }
 
+    /// A subtitle file the app draws itself, and whether the server is done lining it up with the file.
+    func subtitleText(_ path: String) async throws -> (String, Bool) {
+        var req = URLRequest(url: url(path, query: []))
+        req.setValue(Self.clientName, forHTTPHeaderField: "X-WrenTV-Client")
+        if let auth { req.setValue("Bearer \(try await auth.token())", forHTTPHeaderField: "Authorization") }
+        let (data, resp) = try await Self.session.data(for: req)
+        let http = resp as? HTTPURLResponse
+        if let status = http?.statusCode, status >= 400 {
+            throw WrenTVError(message: HTTPURLResponse.localizedString(forStatusCode: status), status: status)
+        }
+        return (String(decoding: data, as: UTF8.self), http?.value(forHTTPHeaderField: "X-Subtitle-Complete") != "false")
+    }
+
     func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
         let (data, _) = try await send("GET", path, query: query)
         return try Self.decoder.decode(T.self, from: data)

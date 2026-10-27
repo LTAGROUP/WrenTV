@@ -104,7 +104,7 @@ func TestAlignPartialReference(t *testing.T) {
 	if !a.OK() {
 		t.Fatal("no alignment from the first part")
 	}
-	if last := a.stretches[len(a.stretches)-1]; last.to > 1000-Reach {
+	if last := a.stretches[len(a.stretches)-1]; last.to > 1000-settle {
 		t.Errorf("matched past what was read: %s", a)
 	}
 	if got := a.Offset(600); math.Abs(got-7.2) > 0.4 {

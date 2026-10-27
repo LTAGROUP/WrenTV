@@ -15,6 +15,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.Player
+import com.wrentv.tv.player.SideSubtitle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
@@ -46,7 +47,7 @@ fun Immersive() {
 /** ExoPlayer's surface without its controls; ours draw on top. */
 @OptIn(UnstableApi::class)
 @Composable
-fun VideoSurface(player: Player, modifier: Modifier = Modifier) {
+fun VideoSurface(player: Player, modifier: Modifier = Modifier, sideShowing: Boolean = false, sideCue: String? = null) {
     AndroidView(
         factory = { ctx ->
             PlayerView(ctx).apply {
@@ -65,7 +66,14 @@ fun VideoSurface(player: Player, modifier: Modifier = Modifier) {
                 )
             }
         },
-        update = { it.player = player },
+        update = {
+            it.player = player
+            // A subtitle-site download is drawn here; clear it once when it goes.
+            if (sideShowing || it.tag == true) {
+                it.subtitleView?.setCues(SideSubtitle.cues(sideCue))
+                it.tag = sideShowing
+            }
+        },
         onRelease = { it.player = null },
         modifier = modifier,
     )

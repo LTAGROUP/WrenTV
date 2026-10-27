@@ -500,8 +500,15 @@ class Player {
         const r = await fetch(sub.url + (sub.url.includes('?') ? '&' : '?') + 'partial=1', { cache: 'no-store' });
         if (!r.ok) throw new Error(r.status);
         complete = r.headers.get('X-Subtitle-Complete') !== 'false';
-        const cues = parseVTT(await r.text(), complete);
+        // A subtitle-site download comes whole each time, its timing closer to
+        // the file's as the server reads further: it replaces what's shown.
+        const online = sub.index >= 10000;
+        const cues = parseVTT(await r.text(), complete || online);
         if (gen !== this.subsGen) return;
+        if (online) {
+          for (const c of [...(track.cues || [])]) track.removeCue(c);
+          added = 0;
+        }
         for (; added < cues.length; added++) {
           const c = cues[added];
           try { track.addCue(new VTTCue(c.start, c.end, c.text)); } catch {}

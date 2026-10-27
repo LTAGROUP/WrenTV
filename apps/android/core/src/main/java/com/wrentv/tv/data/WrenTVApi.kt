@@ -277,6 +277,17 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
             send("GET", "/api/items/$id/subtitles/online", lang?.let { mapOf("lang" to it) } ?: emptyMap(), http = Http.slow))
 
     /** Downloads a search result to the server and returns it as a track of session [sid]. */
+    /** A subtitle file the app draws itself, and whether the server is done lining it up with the file. */
+    suspend fun subtitleText(path: String): Pair<String, Boolean> {
+        val b = Request.Builder().url(absolute(path)).header("X-WrenTV-Client", CLIENT_NAME)
+        auth?.let { b.header("Authorization", "Bearer ${it.token()}") }
+        return Http.client.newCall(b.build()).await().use { r ->
+            val text = withContext(Dispatchers.IO) { r.body?.string() ?: "" }
+            if (r.code >= 400) throw WrenTVException(r.message.ifEmpty { "HTTP ${r.code}" }, r.code)
+            text to (r.header("X-Subtitle-Complete") != "false")
+        }
+    }
+
     suspend fun fetchOnlineSubtitle(id: String, sub: OnlineSubtitle, sid: String?): SubtitleTrack =
         json.decodeFromString(serializer<SubtitleTrack>(), send("POST", "/api/items/$id/subtitles/online", body = buildJsonObject {
             put("provider", sub.provider); put("id", sub.id); put("language", sub.language); put("name", sub.name)

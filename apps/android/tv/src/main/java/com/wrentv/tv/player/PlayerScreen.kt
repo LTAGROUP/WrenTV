@@ -282,7 +282,14 @@ fun PlayerScreen(target: PlayTarget) {
                 }
             },
             // Captions clear the overscan edge, and rise above the controls when they show.
-            update = { it.subtitleView?.setBottomPaddingFraction(if (controls) 0.3f else 0.08f) },
+            update = {
+                it.subtitleView?.setBottomPaddingFraction(if (controls) 0.3f else 0.08f)
+                // A subtitle-site download is drawn here; clear it once when it goes.
+                if (c.sideShowing || it.tag == true) {
+                    it.subtitleView?.setCues(SideSubtitle.cues(c.sideCue))
+                    it.tag = c.sideShowing
+                }
+            },
             modifier = Modifier.fillMaxSize(),
         )
 

@@ -125,7 +125,7 @@ fun PlayerScreen(target: PlayTarget) {
         Modifier.fillMaxSize().background(Color.Black)
             .clickable(remember { MutableInteractionSource() }, indication = null) { if (controls) controls = false else poke() },
     ) {
-        VideoSurface(c.player, Modifier.fillMaxSize())
+        VideoSurface(c.player, Modifier.fillMaxSize(), c.sideShowing, c.sideCue)
         val phase = c.phase
         when (phase) {
             is PlayerController.Phase.Loading -> Spinner()

@@ -164,6 +164,7 @@ final class PlayerModel {
     @ObservationIgnored private var countdownTask: Task<Void, Never>?
     @ObservationIgnored private var versionsTask: Task<Void, Never>?
     @ObservationIgnored private var cueObserver: Any?
+    @ObservationIgnored private var sideRefresh: Task<Void, Never>?
     /// The next play request asks for a new link: the last one failed.
     @ObservationIgnored private var freshLink = false
     /// The version that failed, so the server tries another first.
@@ -699,6 +700,7 @@ final class PlayerModel {
         failedFile = nil
         episode = nil
         sideTracks = []
+        sideRefresh?.cancel()
         sideSubtitle = nil
         sideCue = nil
         cancelCountdown()
@@ -758,10 +760,11 @@ final class PlayerModel {
             } else {
                 mpv.command("sub-add", api.absolute(url).absoluteString, "select", name)
             }
+            refreshSide(track, last: nil)
             return
         }
-        let (data, _) = try await api.send("GET", url)
-        let cues = SideSubtitle.parse(String(decoding: data, as: UTF8.self))
+        let (text, complete) = try await api.subtitleText(url)
+        let cues = SideSubtitle.parse(text)
         guard !cues.isEmpty else { throw WrenTVError(message: "That subtitle file is empty.") }
         if let item = avPlayer?.currentItem, let group = try? await item.asset.loadMediaSelectionGroup(for: .legible) {
             item.select(nil, in: group)
@@ -769,9 +772,44 @@ final class PlayerModel {
         }
         sideSubtitle = SideSubtitle(track: track, cues: cues)
         watchCues()
+        if !complete { refreshSide(track, last: text) }
+    }
+
+    /// The server answers at once with the subtitle moved onto the file's
+    /// timing as far as it can tell yet (it reads the file's own subtitle
+    /// track as the file plays), so it's asked again until it's done.
+    private func refreshSide(_ track: SubtitleTrack, last: String?) {
+        sideRefresh?.cancel()
+        guard let url = track.url else { return }
+        sideRefresh = Task { [weak self, api] in
+            var last = last, misses = 0
+            while !Task.isCancelled, misses < 5 {
+                try? await Task.sleep(for: .seconds(4))
+                guard let got = try? await api.subtitleText(url) else { misses += 1; continue }
+                guard let self, !Task.isCancelled else { return }
+                if got.0 != last {
+                    last = got.0
+                    if !self.sideChanged(track, got.0) { return }
+                }
+                if got.1 { return }
+            }
+        }
+    }
+
+    /// Shows a newer copy of the subtitle; false once it's no longer on.
+    private func sideChanged(_ track: SubtitleTrack, _ text: String) -> Bool {
+        if let mpv {
+            mpv.command("sub-reload")
+            return true
+        }
+        guard sideSubtitle?.track == track else { return false }
+        let cues = SideSubtitle.parse(text)
+        if !cues.isEmpty { sideSubtitle = SideSubtitle(track: track, cues: cues) }
+        return true
     }
 
     func clearSideSubtitle() {
+        sideRefresh?.cancel()
         sideSubtitle = nil
         sideCue = nil
         if let cueObserver { avPlayer?.removeTimeObserver(cueObserver) }

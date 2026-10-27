@@ -92,6 +92,9 @@ class PlayerController(
     var audioKey by mutableStateOf<String?>(null); private set
     var subtitleOptions by mutableStateOf<List<TrackOption>>(emptyList()); private set
     var subtitleKey by mutableStateOf<String?>(null); private set
+    /** A subtitle-site download is on, drawn by the app: [sideCue] is its line showing now. */
+    var sideShowing by mutableStateOf(false); private set
+    var sideCue by mutableStateOf<String?>(null); private set
     /** The server can search subtitle sites for this title. */
     var onlineSubtitles by mutableStateOf(false); private set
     /** The playing episode, once looked up, for the episode picker. */
@@ -142,6 +145,8 @@ class PlayerController(
     private var countdownJob: Job? = null
     private var versionsJob: Job? = null
     private var subtitlePending = false
+    private var sideJob: Job? = null
+    private var sideUrl: String? = null
     private var stopped = false
     /** Audio codecs the server sent that didn't play here; they're converted to AAC instead. */
     private val failedAudio = mutableSetOf<String>()
@@ -299,6 +304,7 @@ class PlayerController(
         if (resp.method != "direct") item.setMimeType(MimeTypes.APPLICATION_M3U8)
         item.setSubtitleConfigurations(resp.subtitles.orEmpty().mapNotNull { subtitleConfig(api, it) })
         subtitlePending = true
+        if (onlineIndex(subtitleKey) != null) applySubtitle()
         play(item.build(), startAt ?: if (fromStart) 0.0 else resp.resumePosition ?: 0.0)
         if (nextEpisode == null) nextEpisode = findNextEpisode()
     }
@@ -309,6 +315,8 @@ class PlayerController(
 
     private fun subtitleConfig(api: WrenTVApi, s: SubtitleTrack): MediaItem.SubtitleConfiguration? {
         val url = s.url ?: return null
+        // Subtitle-site downloads are drawn by the app (see showSide).
+        if (s.index >= ONLINE_SUBTITLE_INDEX) return null
         return MediaItem.SubtitleConfiguration.Builder(Uri.parse(api.absolute(url)))
             .setMimeType(MimeTypes.TEXT_VTT)
             .setLanguage(s.language)
@@ -320,10 +328,7 @@ class PlayerController(
     suspend fun searchOnlineSubtitles(): List<OnlineSubtitle> =
         api?.searchOnlineSubtitles(itemId)?.results.orEmpty()
 
-    /**
-     * Downloads a subtitle the search found and shows it. A side-loaded track
-     * can only be added by loading the stream again, from the same spot.
-     */
+    /** Downloads a subtitle the search found and shows it. */
     suspend fun addOnlineSubtitle(sub: OnlineSubtitle) {
         val api = api ?: return
         val resp = response ?: return
@@ -333,10 +338,44 @@ class PlayerController(
         subtitleOptions = subs.map(::subtitleOption)
         subtitleChosen = true
         subtitleKey = "s${track.index}"
-        val current = player.currentMediaItem ?: return
-        val item = current.buildUpon().setSubtitleConfigurations(subs.mapNotNull { subtitleConfig(api, it) }).build()
-        subtitlePending = true
-        play(item, player.currentPosition / 1000.0)
+        applySubtitle()
+    }
+
+    private fun onlineIndex(key: String?): Int? =
+        key?.takeIf { !isOffline }?.removePrefix("s")?.toIntOrNull()?.takeIf { it >= ONLINE_SUBTITLE_INDEX }
+
+    /**
+     * Draws a subtitle-site download, or stops. The server answers at once with
+     * the subtitle moved onto the file's timing as far as it can tell yet (it
+     * reads the file's own subtitle track as the file plays), so it's asked
+     * again until it says it's done.
+     */
+    private fun showSide(track: SubtitleTrack?) {
+        val url = track?.url
+        sideShowing = url != null
+        if (url == sideUrl) return
+        sideJob?.cancel()
+        sideUrl = url
+        sideCue = null
+        val api = api ?: return
+        if (url == null) return
+        sideJob = scope.launch {
+            var sub = SideSubtitle(emptyList())
+            launch {
+                while (isActive) {
+                    sideCue = sub.at(player.currentPosition / 1000.0)
+                    delay(100)
+                }
+            }
+            while (isActive) {
+                val got = runCatching { api.subtitleText(url) }.getOrNull()
+                if (got != null) {
+                    sub = SideSubtitle.parse(got.first)
+                    if (got.second) break
+                }
+                delay(if (got == null) 10_000 else 4_000)
+            }
+        }
     }
 
     /** A season's episodes, or a show's seasons. */
@@ -593,7 +632,9 @@ class PlayerController(
     private fun applySubtitle() {
         val params = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT)
         val key = subtitleKey
-        if (key == null) {
+        val online = onlineIndex(key)
+        showSide(online?.let { i -> response?.subtitles?.firstOrNull { it.index == i } })
+        if (key == null || online != null) {
             player.trackSelectionParameters = params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
             return
         }
@@ -805,3 +846,6 @@ class PlayerController(
         return parts.joinToString(" · ")
     }
 }
+
+/** Where the server numbers subtitle-site downloads from. */
+const val ONLINE_SUBTITLE_INDEX = 10000
