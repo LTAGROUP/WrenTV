@@ -635,6 +635,10 @@ public sealed class PlayRequest
     public string? FileId { get; set; }
     public int? AudioIndex { get; set; }
     public ClientCaps Caps { get; set; } = ClientCaps.Current();
+    /// The last link failed: ask for a new one.
+    public bool? Retry { get; set; }
+    /// The version that failed, so the server tries another first.
+    public string? FailedFileId { get; set; }
 }
 
 public sealed class Decision
@@ -675,6 +679,40 @@ public sealed class PlayResponse
     public List<Chapter>? Chapters { get; set; }
     public Markers? Markers { get; set; }
     public List<MediaVersion>? Versions { get; set; }
+    /// The server can search the subtitle sites for this title.
+    public bool? OnlineSubtitles { get; set; }
+}
+
+/// A subtitle file a subtitle site has for the title.
+public sealed class OnlineSubtitle
+{
+    public string Provider { get; set; } = "";
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Language { get; set; } = "";
+    public int? Downloads { get; set; }
+    public bool? HearingImpaired { get; set; }
+    public bool? MachineTranslated { get; set; }
+
+    public string Detail
+    {
+        get
+        {
+            var lang = Language;
+            try { lang = new System.Globalization.CultureInfo(Language).DisplayName; } catch { }
+            var parts = new List<string> { lang, Provider };
+            if (HearingImpaired == true) parts.Add("SDH");
+            if (MachineTranslated == true) parts.Add("Machine translated");
+            if (Downloads is int n && n > 0) parts.Add($"{n:N0} downloads");
+            return string.Join(" · ", parts);
+        }
+    }
+}
+
+public sealed class OnlineSubtitleSearch
+{
+    public bool Enabled { get; set; }
+    public List<OnlineSubtitle>? Results { get; set; }
 }
 
 public sealed class VersionsResponse

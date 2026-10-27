@@ -20,6 +20,48 @@ extension ClientCaps {
     }
 }
 
+/// Seconds before an unmarked episode ends that the next-episode countdown starts.
+private let upNextLead = 30.0
+
+/// A subtitle file drawn over the video by the app, for the subtitle-site
+/// downloads: AVPlayer can't add a track to a stream it's already playing.
+struct SideSubtitle: Equatable {
+    struct Cue: Equatable { var start: Double; var end: Double; var text: String }
+    var track: SubtitleTrack
+    var cues: [Cue]
+
+    /// Reads WebVTT, which is what the server hands out.
+    static func parse(_ vtt: String) -> [Cue] {
+        var cues: [Cue] = []
+        for block in vtt.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n\n") {
+            let lines = block.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            guard let i = lines.firstIndex(where: { $0.contains("-->") }) else { continue }
+            let parts = lines[i].components(separatedBy: "-->")
+            guard parts.count == 2, let a = clock(parts[0]), let b = clock(parts[1].split(separator: " ").first.map(String.init) ?? "") else { continue }
+            let text = lines[(i + 1)...].joined(separator: "\n")
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "&amp;", with: "&").replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { cues.append(Cue(start: a, end: b, text: text)) }
+        }
+        return cues.sorted { $0.start < $1.start }
+    }
+
+    private static func clock(_ s: String) -> Double? {
+        let f = s.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".").split(separator: ":").compactMap { Double($0) }
+        guard !f.isEmpty else { return nil }
+        return f.reduce(0) { $0 * 60 + $1 }
+    }
+
+    func text(at t: Double) -> String? {
+        // Cues are few enough that a scan from the nearest start is plenty.
+        var lo = 0, hi = cues.count
+        while lo < hi { let m = (lo + hi) / 2; if cues[m].start <= t { lo = m + 1 } else { hi = m } }
+        let on = cues[max(0, lo - 8)..<lo].filter { $0.end > t }.map(\.text)
+        return on.isEmpty ? nil : on.joined(separator: "\n")
+    }
+}
+
 @MainActor
 @Observable
 final class PlayerModel {
@@ -69,6 +111,11 @@ final class PlayerModel {
     var fileId: String?
     /// True while a player menu is open, so the controls stay up.
     var menuOpen = false
+    /// The episode row under the controls, the stats panel and the subtitle
+    /// search; the first and last keep the controls up too.
+    var shelfOpen = false
+    var statsOpen = false
+    var searchOpen = false
 
     var chapters: [Chapter] = []
     var markers = Markers()
@@ -80,6 +127,18 @@ final class PlayerModel {
     var closeRequested = false
     /// The episode after this one, looked up when playback starts.
     private(set) var nextEpisode: Item?
+    /// This episode, for the episode list; nil for a movie.
+    private(set) var episode: Item?
+    /// The server can search the subtitle sites for this title.
+    private(set) var onlineSubtitles = false
+    /// Subtitles downloaded from the sites for this session.
+    private(set) var sideTracks: [SubtitleTrack] = []
+    /// The download shown over the video on the native player (mpv loads
+    /// them as its own tracks), and the line showing now.
+    private(set) var sideSubtitle: SideSubtitle?
+    private(set) var sideCue: String?
+    /// The last play response, for the stats panel.
+    @ObservationIgnored private var response: PlayResponse?
 
     enum Skip: Equatable { case intro, credits }
 
@@ -102,6 +161,11 @@ final class PlayerModel {
     @ObservationIgnored private var dismissed: Set<Skip> = []
     @ObservationIgnored private var countdownTask: Task<Void, Never>?
     @ObservationIgnored private var versionsTask: Task<Void, Never>?
+    @ObservationIgnored private var cueObserver: Any?
+    /// The next play request asks for a new link: the last one failed.
+    @ObservationIgnored private var freshLink = false
+    /// The version that failed, so the server tries another first.
+    @ObservationIgnored private var failedFile: String?
 
     init(target: PlayTarget, api: WrenTVAPI) {
         self.api = api
@@ -138,7 +202,12 @@ final class PlayerModel {
         while true {
             if Task.isCancelled || stopped { return }
             do {
-                resp = try await api.play(itemId, PlayRequest(fileId: fileId, audioIndex: audioIndex, caps: .current()))
+                var req = PlayRequest(fileId: fileId, audioIndex: audioIndex, caps: .current())
+                if freshLink { req.retry = true }
+                req.failedFileId = failedFile
+                freshLink = false
+                failedFile = nil
+                resp = try await api.play(itemId, req)
             } catch {
                 phase = .error(error.localizedDescription)
                 return
@@ -160,6 +229,9 @@ final class PlayerModel {
             return
         }
         sessionId = resp.sessionId
+        response = resp
+        onlineSubtitles = resp.onlineSubtitles ?? false
+        sideTracks = (resp.subtitles ?? []).filter { $0.index >= 10000 && $0.url != nil }
         // Keep the same file when restarting for an audio change.
         fileId = resp.fileId ?? fileId
         versions = resp.versions ?? []
@@ -242,6 +314,8 @@ final class PlayerModel {
             avPlayer.replaceCurrentItem(with: nil)
         }
         timeObserver = nil
+        if let cueObserver { avPlayer?.removeTimeObserver(cueObserver) }
+        cueObserver = nil
         avPlayer = nil
         avSubtitles = []
         avSubtitle = nil
@@ -275,6 +349,7 @@ final class PlayerModel {
             MainActor.assumeIsolated { self?.finished() }
         }
         player.play()
+        if sideSubtitle != nil { watchCues() }
         // The server lists its text subtitle tracks in the stream, next to any
         // captions in the video. They start off
         // unless the viewer's language setting picks one (or one was on
@@ -284,7 +359,9 @@ final class PlayerModel {
         Task { [weak self] in
             guard let group = try? await item.asset.loadMediaSelectionGroup(for: .legible) else { return }
             let pick: AVMediaSelectionOption?
-            if let kept {
+            if self?.sideSubtitle != nil {
+                pick = nil
+            } else if let kept {
                 pick = group.options.first { $0.displayName == kept }
             } else if let subtitle {
                 if direct {
@@ -407,6 +484,7 @@ final class PlayerModel {
     }
 
     func selectAVSubtitle(_ o: AVMediaSelectionOption?) {
+        clearSideSubtitle()
         guard let item = avPlayer?.currentItem, let avSubtitleGroup else { return }
         item.select(o, in: avSubtitleGroup)
         avSubtitle = o
@@ -421,6 +499,7 @@ final class PlayerModel {
     /// Starts over after a failure. The failed stream is closed on the server
     /// first, or it keeps reading the source (and holding a stream slot).
     func retry() {
+        freshLink = true
         let old = sessionId
         sessionId = nil
         teardownEngines()
@@ -434,6 +513,7 @@ final class PlayerModel {
         guard phase == .playing else { return }
         if !isOffline, lastAutoRetry.map({ Date().timeIntervalSince($0) > 120 }) ?? true {
             lastAutoRetry = Date()
+            failedFile = fileId
             // The server owner may have stopped it: say so rather than starting again.
             Task {
                 if let msg = await api.reportProgress(itemId, position: position, duration: duration, paused: true) {
@@ -472,12 +552,16 @@ final class PlayerModel {
         let t = position
         // Seeking back before a marker offers it again.
         if let i = markers.intro, t < i.start { dismissed.remove(.intro) }
-        if let c = markers.credits, t < c.start - 1 { dismissed.remove(.credits); cancelCountdown() }
+        // No credits marker: count down over the last seconds of an episode
+        // that has a next one, so it still moves on before the end.
+        let credits = markers.credits ?? (nextEpisode != nil && duration >= 300
+            ? TimeRange(start: duration - upNextLead, end: duration + 1) : nil)
+        if let c = credits, t < c.start - 1 { dismissed.remove(.credits); cancelCountdown() }
 
         var next: Skip?
         if let i = markers.intro, t >= i.start, t < i.end - 1, !dismissed.contains(.intro) {
             next = .intro
-        } else if let c = markers.credits, t >= c.start, t < c.end - 1, !dismissed.contains(.credits) {
+        } else if let c = credits, t >= c.start, t < c.end - 1, !dismissed.contains(.credits) {
             next = .credits
         }
         if next == .credits, nextEpisode != nil, countdown == nil, countdownTask == nil, !paused {
@@ -542,6 +626,7 @@ final class PlayerModel {
     private func findNextEpisode() async -> Item? {
         guard let d = try? await api.item(itemId), d.item.kind == "episode" else { return nil }
         let ep = d.item
+        episode = ep
         if let pid = ep.parentId, let season = try? await api.item(pid),
            let n = (season.children ?? []).filter({ $0.episodeNumber > ep.episodeNumber }).min(by: { $0.episodeNumber < $1.episodeNumber }) {
             return n
@@ -593,7 +678,27 @@ final class PlayerModel {
         // Moving on counts as finishing this one.
         let (api, id, dur) = (api, itemId, duration)
         if phase == .playing { Task { await api.reportProgress(id, position: dur, duration: dur) } }
+        switchTo(next)
+    }
+
+    /// Plays another episode picked from the episode list.
+    func playEpisode(_ ep: Item) {
+        guard ep.id != itemId else { return }
+        let (api, id, pos, dur) = (api, itemId, position, duration)
+        if phase == .playing, pos > 5 { Task { await api.reportProgress(id, position: pos, duration: dur) } }
+        switchTo(ep)
+    }
+
+    private func switchTo(_ next: Item) {
+        freshLink = false
+        failedFile = nil
+        episode = nil
+        sideTracks = []
+        sideSubtitle = nil
+        sideCue = nil
+        cancelCountdown()
         localFile = nil // the next episode streams from the server
+        localPosition = nil
         let old = sessionId
         sessionId = nil
         teardownEngines()
@@ -615,6 +720,120 @@ final class PlayerModel {
         start()
     }
 
+    // MARK: Episodes
+
+    /// A season's episodes, or a show's seasons.
+    func children(_ id: String) async -> [Item] {
+        (try? await api.item(id).children) ?? []
+    }
+
+    // MARK: Subtitle sites
+
+    /// Searches the subtitle sites for this title; throws when the search fails.
+    func searchOnlineSubtitles(languages: String? = nil) async throws -> [OnlineSubtitle] {
+        try await api.searchOnlineSubtitles(itemId, languages: languages).results ?? []
+    }
+
+    /// Downloads a subtitle the search found and shows it.
+    func addOnlineSubtitle(_ sub: OnlineSubtitle) async throws {
+        let track = try await api.fetchOnlineSubtitle(itemId, sub, sessionId: sessionId)
+        sideTracks.removeAll { $0.index == track.index }
+        sideTracks.append(track)
+        try await showSideSubtitle(track)
+    }
+
+    /// Turns on a subtitle-site download, in place of the stream's subtitles.
+    func showSideSubtitle(_ track: SubtitleTrack) async throws {
+        guard let url = track.url else { return }
+        if let mpv {
+            // mpv reads the file itself and lists it with its own tracks.
+            let name = track.title ?? track.language ?? "Online"
+            if let t = mpvTracks.first(where: { $0.type == "sub" && $0.title.contains(name) }) {
+                selectMPVTrack(t)
+            } else {
+                mpv.command("sub-add", api.absolute(url).absoluteString, "select", name)
+            }
+            return
+        }
+        let (data, _) = try await api.send("GET", url)
+        let cues = SideSubtitle.parse(String(decoding: data, as: UTF8.self))
+        guard !cues.isEmpty else { throw WrenTVError(message: "That subtitle file is empty.") }
+        if let item = avPlayer?.currentItem, let group = try? await item.asset.loadMediaSelectionGroup(for: .legible) {
+            item.select(nil, in: group)
+            avSubtitle = nil
+        }
+        sideSubtitle = SideSubtitle(track: track, cues: cues)
+        watchCues()
+    }
+
+    func clearSideSubtitle() {
+        sideSubtitle = nil
+        sideCue = nil
+        if let cueObserver { avPlayer?.removeTimeObserver(cueObserver) }
+        cueObserver = nil
+    }
+
+    private func watchCues() {
+        guard let player = avPlayer, cueObserver == nil else { return }
+        cueObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main) { [weak self] t in
+            MainActor.assumeIsolated {
+                guard let self, let side = self.sideSubtitle else { return }
+                let line = side.text(at: t.seconds)
+                if line != self.sideCue { self.sideCue = line }
+            }
+        }
+    }
+
+    // MARK: Stats
+
+    /// What the stats overlay shows: how the title is playing right now.
+    func stats() -> [(String, String)] {
+        var rows: [(String, String)] = []
+        let r = response
+        rows.append(("Playback", [methodLabel, r?.engine ?? ""].filter { !$0.isEmpty }.joined(separator: " · ").nonEmpty ?? (isOffline ? "Downloaded" : "—")))
+        if let v = versions.first(where: { $0.id == fileId }), !v.label.isEmpty { rows.append(("Version", v.label)) }
+        if let info = r?.info {
+            if !info.container.isEmpty { rows.append(("Container", info.container)) }
+            if let b = info.bitrate, b > 0 { rows.append(("Source bitrate", Self.mbps(Double(b)))) }
+            if let v = info.video?.first {
+                let size = v.width.map { "\($0)×\(v.height ?? 0)" }
+                rows.append(("Video", [v.codec, size, v.hdr].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")))
+            }
+            if let a = info.audio?.first(where: { $0.typeIndex == (audioIndex ?? r?.decision?.audioIndex) }) ?? info.audio?.first {
+                var s = a.codecLabel
+                if let c = r?.decision?.audioCodec, !c.isEmpty, c != a.codec { s += " → " + c.uppercased() }
+                rows.append(("Audio", s))
+            }
+        }
+        if let mpv {
+            let w = mpv.string("width"), h = mpv.string("height")
+            if let w, let h { rows.append(("Showing", "\(w)×\(h)")) }
+            if let hw = mpv.string("hwdec-current")?.nonEmpty { rows.append(("Decoder", hw == "no" ? "Software" : "Hardware (\(hw))")) }
+            if let b = mpv.string("video-bitrate").flatMap(Double.init), b > 0 { rows.append(("Stream bitrate", Self.mbps(b))) }
+            if let c = mpv.string("demuxer-cache-duration").flatMap(Double.init) { rows.append(("Buffer ahead", String(format: "%.1f s", c))) }
+            if let d = mpv.string("frame-drop-count") { rows.append(("Dropped frames", d)) }
+        }
+        if let item = avPlayer?.currentItem {
+            let size = item.presentationSize
+            if size.width > 0 { rows.append(("Showing", "\(Int(size.width))×\(Int(size.height))")) }
+            let now = item.currentTime().seconds
+            let ahead = item.loadedTimeRanges.map(\.timeRangeValue).first { $0.start.seconds <= now + 0.5 && $0.end.seconds > now }
+                .map { $0.end.seconds - now } ?? 0
+            rows.append(("Buffer ahead", String(format: "%.1f s", ahead)))
+            if let e = item.accessLog()?.events.last {
+                if e.indicatedBitrate > 0 { rows.append(("Stream bitrate", Self.mbps(e.indicatedBitrate))) }
+                if e.observedBitrate > 0 { rows.append(("Connection", Self.mbps(e.observedBitrate))) }
+                if e.numberOfDroppedVideoFrames >= 0 { rows.append(("Dropped frames", "\(e.numberOfDroppedVideoFrames)")) }
+                if e.numberOfStalls > 0 { rows.append(("Stalls", "\(e.numberOfStalls)")) }
+            }
+        }
+        rows.append(("Skip markers", markers.source?.nonEmpty ?? "none"))
+        if let why = r?.decision?.reasons, !why.isEmpty { rows.append(("Why", why.joined(separator: "; "))) }
+        return rows
+    }
+
+    private static func mbps(_ bps: Double) -> String { String(format: "%.1f Mbps", bps / 1_000_000) }
+
     private func describe(_ r: PlayResponse) -> String {
         var parts: [String] = []
         switch r.method {
@@ -631,4 +850,8 @@ final class PlayerModel {
         }
         return parts.joined(separator: " · ")
     }
+}
+
+private extension String {
+    var nonEmpty: String? { isEmpty ? nil : self }
 }

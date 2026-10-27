@@ -43,6 +43,11 @@ struct PlayerWindow: View {
         .onKeyPress(.upArrow) { model.map { $0.setVolume($0.volume + 0.1) }; poke(); return .handled }
         .onKeyPress(.downArrow) { model.map { $0.setVolume($0.volume - 0.1) }; poke(); return .handled }
         .onKeyPress("m") { model?.toggleMute(); poke(); return .handled }
+        .onKeyPress("e") {
+            guard let m = model, m.episode != nil else { return .ignored }
+            m.shelfOpen.toggle(); poke(); return .handled
+        }
+        .onKeyPress("i") { model?.statsOpen.toggle(); return .handled }
         .onKeyPress("f") { NSApp.keyWindow?.toggleFullScreen(nil); return .handled }
         .onKeyPress("s") {
             guard let m = model, let k = m.skip else { return .ignored }
@@ -51,7 +56,10 @@ struct PlayerWindow: View {
         }
         .onChange(of: model?.closeRequested) { _, v in if v == true { dismiss() } }
         .onChange(of: model?.menuOpen) { _, open in if open == false { poke() } }
+        .onChange(of: model?.shelfOpen) { _, open in if open == false { poke() } }
+        .onChange(of: model?.searchOpen) { _, open in if open == false { poke() } }
         .onKeyPress(.escape) {
+            if model?.shelfOpen == true { model?.shelfOpen = false; return .handled }
             if NSApp.keyWindow?.styleMask.contains(.fullScreen) == true { NSApp.keyWindow?.toggleFullScreen(nil); return .handled }
             return .ignored
         }
@@ -64,7 +72,7 @@ struct PlayerWindow: View {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
             // Leave the controls up while a menu is open; closing it pokes again.
-            if model?.menuOpen == true { return }
+            if model?.menuOpen == true || model?.shelfOpen == true || model?.searchOpen == true { return }
             withAnimation(.easeOut(duration: 0.3)) { controlsVisible = false }
             // The pointer goes with the controls; moving it brings both back.
             if NSApp.isActive { NSCursor.setHiddenUntilMouseMoves(true) }
@@ -104,17 +112,34 @@ private struct PlayerContent: View {
                 if model.buffering {
                     ProgressView().controlSize(.large)
                 }
+                if let cue = model.sideCue {
+                    SideCueView(text: cue, raised: controlsVisible)
+                }
                 VStack {
                     if controlsVisible { topBar.transition(.opacity) }
                     Spacer()
-                    if controlsVisible { PlayerControls(model: model).transition(.opacity) }
+                    if controlsVisible {
+                        VStack(spacing: 0) {
+                            PlayerControls(model: model)
+                            if model.shelfOpen {
+                                EpisodeShelf(model: model)
+                                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                            }
+                        }
+                        .transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.25), value: model.shelfOpen)
+                if model.statsOpen {
+                    StatsPanel(model: model)
                 }
                 if model.phase == .ended, let next = model.upNext {
                     UpNextCard(next: next, play: model.playNext)
-                } else if model.phase == .playing {
+                } else if model.phase == .playing, !model.shelfOpen {
                     SkipOverlay(model: model, raised: controlsVisible)
                 }
             }
+            .sheet(isPresented: $model.searchOpen) { OnlineSubtitlesSheet(model: model) }
         }
     }
 
@@ -394,13 +419,268 @@ private struct TrackMenu: View {
                     Divider().padding(.horizontal, 6)
                 }
                 PlayerMenuSection(title: "Subtitles") {
-                    PlayerMenuRow(title: "Off", selected: model.avSubtitle == nil) { model.selectAVSubtitle(nil) }
+                    PlayerMenuRow(title: "Off", selected: model.avSubtitle == nil && model.sideSubtitle == nil) { model.selectAVSubtitle(nil) }
                     ForEach(model.avSubtitles, id: \.self) { o in
-                        PlayerMenuRow(title: o.displayName, selected: model.avSubtitle == o) { model.selectAVSubtitle(o) }
+                        PlayerMenuRow(title: o.displayName, selected: model.sideSubtitle == nil && model.avSubtitle == o) { model.selectAVSubtitle(o) }
+                    }
+                }
+            }
+            if model.onlineSubtitles || !model.sideTracks.isEmpty {
+                Divider().padding(.horizontal, 6)
+                PlayerMenuSection(title: "Online") {
+                    // mpv lists the ones it has loaded with its own tracks.
+                    ForEach(model.sideTracks.filter { t in
+                        model.engine != "mpv" || !model.mpvTracks.contains { $0.type == "sub" && $0.title.contains(t.title ?? t.language ?? "Online") }
+                    }, id: \.index) { t in
+                        PlayerMenuRow(title: t.title ?? t.language ?? "Subtitles", selected: model.sideSubtitle?.track.index == t.index) {
+                            Task { try? await model.showSideSubtitle(t) }
+                        }
+                    }
+                    if model.onlineSubtitles {
+                        PlayerMenuRow(title: "Search Online…") { model.searchOpen = true }
                     }
                 }
             }
         }
+    }
+}
+
+/// The season's episodes in a row under the controls, with the show's other
+/// seasons above it.
+private struct EpisodeShelf: View {
+    @Environment(AppState.self) private var state
+    @Bindable var model: PlayerModel
+    @State private var seasons: [Item] = []
+    @State private var seasonId: String?
+    @State private var episodes: [Item]?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if seasons.count > 1 {
+                HStack(spacing: 6) {
+                    ForEach(seasons) { s in
+                        Button { seasonId = s.id } label: {
+                            Text(s.displayTitle).font(.caption.weight(.semibold))
+                                .padding(.horizontal, 12).padding(.vertical, 5)
+                                .background(s.id == seasonId ? Color.wrenEmber : Color.white.opacity(0.12), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(alignment: .top, spacing: 14) {
+                        if let episodes {
+                            ForEach(episodes) { e in EpisodeCard(model: model, episode: e).id(e.id) }
+                        } else {
+                            ProgressView().frame(height: 110)
+                        }
+                    }
+                }
+                .onChange(of: episodes) { _, eps in
+                    if eps?.contains(where: { $0.id == model.itemId }) == true {
+                        proxy.scrollTo(model.itemId, anchor: .leading)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 40)
+        .padding(.bottom, 24)
+        .environment(\.colorScheme, .dark)
+        .task {
+            guard let ep = model.episode else { return }
+            if seasonId == nil { seasonId = ep.parentId }
+            if let show = ep.showId { seasons = await model.children(show).sorted { $0.seasonNumber < $1.seasonNumber } }
+        }
+        .task(id: seasonId) {
+            guard let seasonId else { return }
+            episodes = nil
+            episodes = await model.children(seasonId).sorted { $0.episodeNumber < $1.episodeNumber }
+        }
+    }
+}
+
+private struct EpisodeCard: View {
+    @Environment(AppState.self) private var state
+    @Bindable var model: PlayerModel
+    let episode: Item
+    @State private var hover = false
+
+    var body: some View {
+        let e = episode
+        let playing = e.id == model.itemId
+        Button {
+            model.shelfOpen = false
+            model.playEpisode(e)
+        } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                RemoteImage(url: state.api?.imageURL(e.stillPath ?? e.backdropPath, size: "w300"))
+                    .frame(width: 200, height: 112)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(alignment: .bottom) {
+                        if let p = e.progress, p.position > 0, !p.watched, !playing {
+                            ProgressStrip(fraction: p.fraction).clipShape(RoundedRectangle(cornerRadius: 7))
+                        }
+                    }
+                    .overlay(alignment: .topLeading) {
+                        if playing {
+                            Text("Playing").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.wrenEmber, in: RoundedRectangle(cornerRadius: 4)).padding(6)
+                        }
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if e.isWatched, !playing {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.white, Color.wrenEmber).padding(6)
+                        }
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(playing ? Color.wrenEmber : .white.opacity(hover ? 0.8 : 0), lineWidth: 2)
+                    }
+                Text("\(e.episodeNumber). \(e.title)").font(.caption).lineLimit(1)
+                if let m = e.runtimeMin, m > 0 { Text("\(m) min").font(.caption2).foregroundStyle(.secondary) }
+            }
+            .frame(width: 200, alignment: .leading)
+            .scaleEffect(hover ? 1.03 : 1)
+            .animation(.easeOut(duration: 0.15), value: hover)
+        }
+        .buttonStyle(.plain)
+        .disabled(playing)
+        .onHover { hover = $0 }
+    }
+}
+
+/// How the title is playing, refreshed every second.
+private struct StatsPanel: View {
+    @Bindable var model: PlayerModel
+    @State private var rows: [(String, String)] = []
+
+    var body: some View {
+        VStack {
+            HStack {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Stats").font(.headline)
+                        Spacer()
+                        Button { model.statsOpen = false } label: { Image(systemName: "xmark").font(.caption.bold()) }
+                            .buttonStyle(.plain)
+                            .help("Close (I)")
+                    }
+                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 3) {
+                        ForEach(Array(rows.enumerated()), id: \.offset) { _, r in
+                            GridRow {
+                                Text(r.0).foregroundStyle(.secondary)
+                                Text(r.1).textSelection(.enabled)
+                            }
+                        }
+                    }
+                    .font(.caption.monospacedDigit())
+                }
+                .padding(14)
+                .frame(width: 380)
+                .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 10))
+                .environment(\.colorScheme, .dark)
+                Spacer()
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 110)
+        .task {
+            while !Task.isCancelled {
+                rows = model.stats()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+}
+
+/// Searches the subtitle sites for this title and downloads the one picked.
+private struct OnlineSubtitlesSheet: View {
+    let model: PlayerModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var results: [OnlineSubtitle]?
+    @State private var error: String?
+    @State private var adding: OnlineSubtitle?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Online Subtitles").font(.headline)
+                Spacer()
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+            Group {
+                if let error {
+                    ContentUnavailableView("Couldn't search", systemImage: "exclamationmark.triangle", description: Text(error))
+                } else if let results {
+                    if results.isEmpty {
+                        ContentUnavailableView("Nothing found", systemImage: "captions.bubble")
+                    } else {
+                        List(results) { r in
+                            Button { add(r) } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(r.name.isEmpty ? r.provider : r.name).lineLimit(2)
+                                        Text(r.detail).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if adding == r { ProgressView().controlSize(.small) }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(adding != nil)
+                        }
+                    }
+                } else {
+                    ProgressView("Searching…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .padding(18)
+        .frame(width: 520, height: 460)
+        .task {
+            do { results = try await model.searchOnlineSubtitles() } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    private func add(_ r: OnlineSubtitle) {
+        adding = r
+        Task {
+            do {
+                try await model.addOnlineSubtitle(r)
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+            adding = nil
+        }
+    }
+}
+
+/// A subtitle-site download's current line, drawn over the native player.
+private struct SideCueView: View {
+    let text: String
+    let raised: Bool
+
+    var body: some View {
+        VStack {
+            Spacer()
+            Text(text)
+                .font(.system(size: 26, weight: .semibold))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.white)
+                .shadow(color: .black, radius: 2, y: 1)
+                .padding(.horizontal, 12).padding(.vertical, 4)
+                .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 4))
+                .padding(.horizontal, 60)
+                .padding(.bottom, raised ? 170 : 50)
+        }
+        .allowsHitTesting(false)
+        .animation(.easeOut(duration: 0.2), value: raised)
     }
 }
 
@@ -421,7 +701,20 @@ private struct PlayerControls: View {
                     Spacer()
                     if model.versions.count > 1 { VersionMenu(model: model) }
                     if !model.chapters.isEmpty { ChapterMenu(model: model) }
-                    if model.engine == "mpv" || model.audioStreams.count > 1 || !model.avSubtitles.isEmpty { TrackMenu(model: model) }
+                    if model.engine == "mpv" || model.audioStreams.count > 1 || !model.avSubtitles.isEmpty
+                        || model.onlineSubtitles || !model.sideTracks.isEmpty { TrackMenu(model: model) }
+                    if model.episode != nil {
+                        Button { model.shelfOpen.toggle() } label: {
+                            Image(systemName: "rectangle.grid.1x2").frame(width: 30, height: 26)
+                                .foregroundStyle(model.shelfOpen ? Color.wrenEmber : .primary)
+                        }
+                        .help("Episodes (E)")
+                    }
+                    Button { model.statsOpen.toggle() } label: {
+                        Image(systemName: "info.circle").frame(width: 30, height: 26)
+                            .foregroundStyle(model.statsOpen ? Color.wrenEmber : .primary)
+                    }
+                    .help("Stats (I)")
                     Button { NSApp.keyWindow?.toggleFullScreen(nil) } label: {
                         Image(systemName: "arrow.up.left.and.arrow.down.right").frame(width: 30, height: 26)
                     }

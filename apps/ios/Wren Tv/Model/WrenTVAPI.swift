@@ -217,6 +217,22 @@ struct WrenTVAPI: Sendable {
 
     func versions(_ id: String) async throws -> VersionsResponse { try await get("/api/items/\(id)/versions") }
 
+    /// Searches the subtitle sites for an item, in the languages given (en,fr)
+    /// or else the viewer's.
+    func searchOnlineSubtitles(_ id: String, languages: String? = nil) async throws -> OnlineSubtitleSearch {
+        let (data, _) = try await send("GET", "/api/items/\(id)/subtitles/online",
+                                       query: languages.map { [.init(name: "lang", value: $0)] } ?? [], timeout: 40)
+        return try Self.decoder.decode(OnlineSubtitleSearch.self, from: data)
+    }
+
+    /// Downloads a search result to the server; it comes back as a track of the session.
+    func fetchOnlineSubtitle(_ id: String, _ sub: OnlineSubtitle, sessionId: String?) async throws -> SubtitleTrack {
+        struct B: Encodable { var provider, id, language, name: String; var sessionId: String? }
+        let (data, _) = try await send("POST", "/api/items/\(id)/subtitles/online",
+                                       body: B(provider: sub.provider, id: sub.id, language: sub.language, name: sub.name, sessionId: sessionId), timeout: 60)
+        return try Self.decoder.decode(SubtitleTrack.self, from: data)
+    }
+
     /// Saves how far playback got. Returns the server owner's message when
     /// they've stopped this stream from the dashboard.
     @discardableResult
@@ -277,7 +293,20 @@ struct WrenTVAPI: Sendable {
     }
     func addStreamTitle(tmdbId: Int, mediaType: String) async throws -> Item {
         struct B: Encodable { var tmdbId: Int; var mediaType: String }
-        return try await post("/api/streaming/titles", B(tmdbId: tmdbId, mediaType: mediaType))
+        let body = B(tmdbId: tmdbId, mediaType: mediaType)
+        // One quiet retry: a slow or failed first answer usually clears, while
+        // a refusal (can't stream, unknown title) is shown as it is.
+        do {
+            return try await post("/api/streaming/titles", body)
+        } catch let e as WrenTVError where (400..<500).contains(e.status) {
+            throw e
+        } catch {
+            return try await post("/api/streaming/titles", body)
+        }
+    }
+    /// Readies titles' detail pages on the server (details, artwork, cast).
+    func warmTitles(_ ids: [String]) async throws {
+        try await send("POST", "/api/discover/warm", query: [.init(name: "ids", value: ids.joined(separator: ","))])
     }
     /// A link to save the item's file on this device; status "pending" while
     /// a streamed title is still being found.

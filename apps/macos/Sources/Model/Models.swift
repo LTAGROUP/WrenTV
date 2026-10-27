@@ -758,6 +758,10 @@ struct PlayRequest: Codable {
     var audioIndex: Int?
     var caps: ClientCaps
     var maxWidth: Int?
+    /// Starting again after a failure: the server resolves a fresh link.
+    var retry: Bool?
+    /// The version that broke partway, for the server to skip.
+    var failedFileId: String?
 }
 
 struct Decision: Codable {
@@ -808,6 +812,32 @@ struct PlayResponse: Codable {
     var markers: Markers?
     /// The item's files, when it has more than one, for a version picker.
     var versions: [MediaVersion]?
+    /// The server can search subtitle sites for this title.
+    var onlineSubtitles: Bool?
+}
+
+/// A subtitle found on a subtitle site, not yet downloaded.
+struct OnlineSubtitle: Codable, Hashable, Identifiable {
+    var provider: String
+    var id: String
+    var name: String
+    var language: String
+    var downloads: Int?
+    var hearingImpaired: Bool?
+    var machineTranslated: Bool?
+
+    var detail: String {
+        var parts = [Locale.current.localizedString(forLanguageCode: language) ?? language.uppercased(), provider]
+        if hearingImpaired == true { parts.append("SDH") }
+        if machineTranslated == true { parts.append("Machine translated") }
+        if let n = downloads, n > 0 { parts.append("\(n.formatted()) downloads") }
+        return parts.joined(separator: " · ")
+    }
+}
+
+struct OnlineSubtitleSearch: Codable {
+    var enabled: Bool
+    var results: [OnlineSubtitle]?
 }
 
 struct VersionsResponse: Codable {

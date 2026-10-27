@@ -51,6 +51,31 @@ static class Nav
     }
 }
 
+/// A card the viewer has settled on: once the pointer rests on it a moment,
+/// the server readies its detail page, so opening it doesn't wait on TMDB.
+/// Moving on quickly asks for nothing.
+static class Warmup
+{
+    static readonly HashSet<string> warmed = [];
+    static CancellationTokenSource? settling;
+
+    public static void Hover(TitleView? t)
+    {
+        settling?.Cancel();
+        if (t == null || t.Item != null || !App.State.CanStream || App.State.Api is not { } api || warmed.Contains(t.Key)) return;
+        var cts = settling = new CancellationTokenSource();
+        var key = t.Key;
+        App.OnUi(async () =>
+        {
+            try { await Task.Delay(500, cts.Token); } catch { return; }
+            warmed.Add(key);
+            try { await api.WarmTitles([key]); } catch { warmed.Remove(key); }
+        });
+    }
+
+    public static void Leave() => settling?.Cancel();
+}
+
 static class Cards
 {
     /// Posters and tiles scale with the Poster size setting.
@@ -166,7 +191,8 @@ static class Cards
     {
         var b = Plain(TitleCell(t, size ?? PosterWidth, rank));
         b.Click += (_, _) => Nav.Title(t);
-        b.PointerEntered += (_, _) => Ambient.Hover(t.BackdropPath);
+        b.PointerEntered += (_, _) => { Ambient.Hover(t.BackdropPath); Warmup.Hover(t); };
+        b.PointerExited += (_, _) => Warmup.Leave();
         if (t.Item is { } item) AttachMenu(b, item);
         return b;
     }
@@ -367,7 +393,8 @@ static class Cards
             if (host.Tag == null)
             {
                 AttachMenu(host, () => (host.Tag as TitleView)?.Item);
-                host.PointerEntered += (_, _) => Ambient.Hover((host.Tag as TitleView)?.BackdropPath);
+                host.PointerEntered += (_, _) => { Ambient.Hover((host.Tag as TitleView)?.BackdropPath); Warmup.Hover(host.Tag as TitleView); };
+                host.PointerExited += (_, _) => Warmup.Leave();
             }
             host.Tag = t;
             if (more != null && args.ItemIndex >= titles.Count - 12) more();

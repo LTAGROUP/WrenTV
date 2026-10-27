@@ -148,6 +148,7 @@ struct TitleCard: View {
     let title: TitleView
     var rank: Int?
     var width: CGFloat = TV.poster
+    @FocusState private var focused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -161,9 +162,14 @@ struct TitleCard: View {
                 }
             }
             .buttonStyle(.card)
+            .focused($focused)
             .ambient { title.heroEntry }
             // Ready the hero's logo before the card takes focus.
             .task(id: title.id) { state.logos.want(title) }
+            .onChange(of: focused) { _, f in
+                guard state.canStream else { return }
+                if f { state.logos.focused(title) } else { state.logos.unfocused() }
+            }
             Text(title.title).font(.caption).lineLimit(1)
             Text(title.role.map { r in [r, title.year.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: " · ") }
                  ?? (title.item != nil ? "In your library" : (title.year.map(String.init) ?? " ")))

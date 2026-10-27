@@ -34,7 +34,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.wrentv.tv.data.Item
-import com.wrentv.tv.data.WrenTVException
 import com.wrentv.tv.player.TrailerWebView
 import com.wrentv.tv.ui.EmptyState
 import com.wrentv.tv.ui.LocalAppState
@@ -55,17 +54,7 @@ fun StreamTitleScreen(route: Route.StreamTitle) {
     val state = LocalAppState.current
     var attempt by remember { mutableStateOf(0) }
     val added = rememberLoaded<Item>("stream:${route.mediaType}:${route.tmdbId}", attempt) {
-        val api = state.api
-        // One quiet retry first: a timeout or a server hiccup usually clears,
-        // while a refusal (can't stream, unknown title) is shown as it is.
-        try {
-            api?.addStreamTitle(route.tmdbId, route.mediaType)
-        } catch (e: WrenTVException) {
-            if (e.status in 400..499) throw e
-            api?.addStreamTitle(route.tmdbId, route.mediaType)
-        } catch (e: java.io.IOException) {
-            api?.addStreamTitle(route.tmdbId, route.mediaType)
-        }
+        state.api?.addStreamTitle(route.tmdbId, route.mediaType)
     }
     val item = added.value
     LaunchedEffect(item?.id) {

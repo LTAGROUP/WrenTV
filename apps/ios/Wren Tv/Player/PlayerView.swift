@@ -13,6 +13,9 @@ struct PlayerView: View {
     /// A player menu (versions, audio, subtitles, chapters) is open. Hiding the
     /// controls would close it, so they stay up until it's dismissed.
     @State private var menuOpen = false
+    /// The episode row, stats or subtitle search is open, which keeps the
+    /// controls up the same way.
+    @State private var panel: PlayerPanel?
     @State private var fill = false
     @State private var pip: AVPictureInPictureController?
 
@@ -21,7 +24,7 @@ struct PlayerView: View {
             Color.black.ignoresSafeArea()
             if let model {
                 PlayerContent(model: model, controlsVisible: controlsVisible, fill: $fill, pip: $pip,
-                              menuOpen: $menuOpen, close: { dismiss() }, poke: poke, toggleControls: toggleControls)
+                              menuOpen: $menuOpen, panel: $panel, close: { dismiss() }, poke: poke, toggleControls: toggleControls)
             }
         }
         .statusBarHidden(!controlsVisible)
@@ -44,6 +47,7 @@ struct PlayerView: View {
         .onChange(of: model?.closeRequested) { _, v in if v == true { dismiss() } }
         .onChange(of: model?.paused) { _, p in if p == true { showControls() } else { poke() } }
         .onChange(of: menuOpen) { _, open in if open { showControls() } else { poke() } }
+        .onChange(of: panel) { _, p in if p != nil { showControls() } else { poke() } }
     }
 
     private func showControls() {
@@ -56,7 +60,7 @@ struct PlayerView: View {
         showControls()
         hideTask = Task {
             try? await Task.sleep(for: .seconds(4))
-            guard !Task.isCancelled, !menuOpen, model?.paused != true, model?.phase == .playing else { return }
+            guard !Task.isCancelled, !menuOpen, panel == nil, model?.paused != true, model?.phase == .playing else { return }
             withAnimation(.easeOut(duration: 0.3)) { controlsVisible = false }
         }
     }
@@ -71,12 +75,18 @@ struct PlayerView: View {
     }
 }
 
+enum PlayerPanel: String, Identifiable {
+    case episodes, stats, onlineSubtitles
+    var id: String { rawValue }
+}
+
 private struct PlayerContent: View {
     @Bindable var model: PlayerModel
     let controlsVisible: Bool
     @Binding var fill: Bool
     @Binding var pip: AVPictureInPictureController?
     @Binding var menuOpen: Bool
+    @Binding var panel: PlayerPanel?
     let close: () -> Void
     let poke: () -> Void
     let toggleControls: () -> Void
@@ -100,6 +110,19 @@ private struct PlayerContent: View {
             }
             .padding(24)
         case .playing, .ended:
+            playing
+                .sheet(isPresented: Binding(get: { panel == .onlineSubtitles }, set: { if !$0 { panel = nil } })) {
+                    OnlineSubtitlesSheet(model: model)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var playing: some View {
+        switch model.phase {
+        case .loading, .pending, .error:
+            EmptyView()
+        case .playing, .ended:
             ZStack {
                 if let p = model.avPlayer {
                     VideoLayerView(player: p, fill: fill, pip: $pip)
@@ -111,9 +134,15 @@ private struct PlayerContent: View {
                 if model.buffering {
                     ProgressView().controlSize(.large).tint(.white)
                 }
+                if let cue = model.sideCue {
+                    SideCueView(text: cue, raised: controlsVisible)
+                }
                 if controlsVisible {
-                    Controls(model: model, fill: $fill, pip: pip, menuOpen: $menuOpen, close: close, poke: poke)
+                    Controls(model: model, fill: $fill, pip: pip, menuOpen: $menuOpen, panel: $panel, close: close, poke: poke)
                         .transition(.opacity)
+                }
+                if panel == .stats {
+                    StatsOverlay(model: model) { panel = nil }
                 }
                 if model.phase == .ended, let next = model.upNext {
                     UpNextCard(next: next, play: model.playNext)
@@ -148,6 +177,7 @@ private struct Controls: View {
     @Binding var fill: Bool
     let pip: AVPictureInPictureController?
     @Binding var menuOpen: Bool
+    @Binding var panel: PlayerPanel?
     let close: () -> Void
     let poke: () -> Void
     @State private var scrub: Double?
@@ -159,10 +189,19 @@ private struct Controls: View {
                 topBar
                 Spacer()
                 timeline
+                if panel == .episodes {
+                    EpisodeShelf(model: model) { panel = nil }
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
-            transport
+            if panel != .episodes { transport }
         }
         .foregroundStyle(.white)
+        .animation(.easeOut(duration: 0.25), value: panel)
+    }
+
+    private func toggle(_ p: PlayerPanel) {
+        panel = panel == p ? nil : p
     }
 
     private var topBar: some View {
@@ -184,8 +223,15 @@ private struct Controls: View {
                     Button { pip.startPictureInPicture() } label: { barIcon("pip.enter") }
                 }
                 AirPlayButton().frame(width: 40, height: 40)
+                if model.episode != nil {
+                    Button { toggle(.episodes) } label: { barIcon("rectangle.stack") }
+                        .foregroundStyle(panel == .episodes ? Color.wrenEmber : .white)
+                }
                 if !model.chapters.isEmpty { chapterMenu }
-                if model.versions.count > 1 || model.audioStreams.count > 1 || !model.legibleOptions.isEmpty { trackMenu }
+                if model.versions.count > 1 || model.audioStreams.count > 1 || !model.legibleOptions.isEmpty
+                    || model.onlineSubtitles || !model.sideTracks.isEmpty { trackMenu }
+                Button { toggle(.stats) } label: { barIcon("info.circle") }
+                    .foregroundStyle(panel == .stats ? Color.wrenEmber : .white)
             }
         }
         .padding(.horizontal, 16)
@@ -272,14 +318,24 @@ private struct Controls: View {
                         }
                     }
                 }
-                if !model.legibleOptions.isEmpty {
+                if !model.legibleOptions.isEmpty || !model.sideTracks.isEmpty || model.onlineSubtitles {
                     Section("Subtitles") {
                         Button { model.selectSubtitle(nil) } label: {
-                            CheckLabel(title: "Off", on: model.selectedLegible == nil)
+                            CheckLabel(title: "Off", on: model.selectedLegible == nil && model.sideSubtitle == nil)
                         }
                         ForEach(model.legibleOptions, id: \.self) { o in
                             Button { model.selectSubtitle(o) } label: {
-                                CheckLabel(title: o.displayName, on: model.selectedLegible == o)
+                                CheckLabel(title: o.displayName, on: model.sideSubtitle == nil && model.selectedLegible == o)
+                            }
+                        }
+                        ForEach(model.sideTracks, id: \.index) { t in
+                            Button { Task { try? await model.showSideSubtitle(t) } } label: {
+                                CheckLabel(title: t.title ?? t.language ?? "Subtitles", on: model.sideSubtitle?.track.index == t.index)
+                            }
+                        }
+                        if model.onlineSubtitles {
+                            Button { panel = .onlineSubtitles } label: {
+                                Label("Search Online…", systemImage: "magnifyingglass")
                             }
                         }
                     }
@@ -296,6 +352,226 @@ private extension View {
     func tracksMenuOpen(_ open: Binding<Bool>) -> some View {
         onAppear { open.wrappedValue = true }
             .onDisappear { open.wrappedValue = false }
+    }
+}
+
+/// The season's episodes in a row under the timeline, with the show's other
+/// seasons above it.
+private struct EpisodeShelf: View {
+    @Environment(AppState.self) private var state
+    let model: PlayerModel
+    let close: () -> Void
+    @State private var seasons: [Item] = []
+    @State private var seasonId: String?
+    @State private var episodes: [Item]?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if seasons.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(seasons) { s in
+                            Button { seasonId = s.id } label: {
+                                Text(s.displayTitle).font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 12).padding(.vertical, 6)
+                                    .background(s.id == seasonId ? Color.wrenEmber : Color.white.opacity(0.15), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+            }
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(alignment: .top, spacing: 12) {
+                        if let episodes {
+                            ForEach(episodes) { e in card(e).id(e.id) }
+                        } else {
+                            ProgressView().tint(.white).frame(height: 90)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .onChange(of: episodes) { _, eps in
+                    if eps?.contains(where: { $0.id == model.itemId }) == true {
+                        proxy.scrollTo(model.itemId, anchor: .leading)
+                    }
+                }
+            }
+        }
+        .padding(.bottom, 12)
+        .task {
+            guard let ep = model.episode else { return }
+            if seasonId == nil { seasonId = ep.parentId }
+            if let show = ep.showId { seasons = await model.children(show).sorted { $0.seasonNumber < $1.seasonNumber } }
+        }
+        .task(id: seasonId) {
+            guard let seasonId else { return }
+            episodes = nil
+            episodes = await model.children(seasonId).sorted { $0.episodeNumber < $1.episodeNumber }
+        }
+    }
+
+    private func card(_ e: Item) -> some View {
+        let playing = e.id == model.itemId
+        return Button {
+            if !playing { model.playEpisode(e) }
+            close()
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                RemoteImage(url: state.api?.imageURL(e.stillPath ?? e.backdropPath, size: "w300"))
+                    .frame(width: 160, height: 90)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(alignment: .bottom) {
+                        if let p = e.progress, p.position > 0, !p.watched, !playing {
+                            ProgressStrip(fraction: p.fraction).clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                    }
+                    .overlay(alignment: .topLeading) {
+                        if playing {
+                            Text("Playing").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.wrenEmber, in: RoundedRectangle(cornerRadius: 4)).padding(6)
+                        }
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if e.isWatched, !playing {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.white, Color.wrenEmber).padding(6)
+                        }
+                    }
+                    .overlay {
+                        if playing { RoundedRectangle(cornerRadius: 6).stroke(Color.wrenEmber, lineWidth: 2) }
+                    }
+                Text("\(e.episodeNumber). \(e.title)").font(.caption).lineLimit(1)
+            }
+            .frame(width: 160, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// How the title is playing, refreshed every second.
+private struct StatsOverlay: View {
+    let model: PlayerModel
+    let close: () -> Void
+    @State private var rows: [(String, String)] = []
+
+    var body: some View {
+        VStack {
+            HStack {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Stats").font(.headline)
+                        Spacer()
+                        Button(action: close) { Image(systemName: "xmark").font(.caption.bold()) }
+                    }
+                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 3) {
+                        ForEach(Array(rows.enumerated()), id: \.offset) { _, r in
+                            GridRow {
+                                Text(r.0).foregroundStyle(.white.opacity(0.6))
+                                Text(r.1)
+                            }
+                        }
+                    }
+                    .font(.caption.monospacedDigit())
+                }
+                .padding(14)
+                .frame(maxWidth: 360)
+                .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 10))
+                Spacer()
+            }
+            Spacer()
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .padding(.top, 64)
+        .task {
+            while !Task.isCancelled {
+                rows = model.stats()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+}
+
+/// Searches the subtitle sites for this title and downloads the one picked.
+private struct OnlineSubtitlesSheet: View {
+    let model: PlayerModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var results: [OnlineSubtitle]?
+    @State private var error: String?
+    @State private var adding: OnlineSubtitle?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let error {
+                    ContentUnavailableView("Couldn't search", systemImage: "exclamationmark.triangle", description: Text(error))
+                } else if let results {
+                    if results.isEmpty {
+                        ContentUnavailableView("Nothing found", systemImage: "captions.bubble")
+                    } else {
+                        List(results) { r in
+                            Button { add(r) } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(r.name.isEmpty ? r.provider : r.name).lineLimit(2)
+                                        Text(r.detail).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if adding == r { ProgressView() }
+                                }
+                            }
+                            .disabled(adding != nil)
+                        }
+                    }
+                } else {
+                    ProgressView("Searching…")
+                }
+            }
+            .navigationTitle("Online Subtitles")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+        }
+        .task {
+            do { results = try await model.searchOnlineSubtitles() } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    private func add(_ r: OnlineSubtitle) {
+        adding = r
+        Task {
+            do {
+                try await model.addOnlineSubtitle(r)
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+            adding = nil
+        }
+    }
+}
+
+/// A subtitle-site download's current line, drawn over the video.
+private struct SideCueView: View {
+    let text: String
+    let raised: Bool
+
+    var body: some View {
+        VStack {
+            Spacer()
+            Text(text)
+                .font(.system(size: 20, weight: .semibold))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.white)
+                .shadow(color: .black, radius: 2, y: 1)
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 4))
+                .padding(.horizontal, 40)
+                .padding(.bottom, raised ? 90 : 30)
+        }
+        .allowsHitTesting(false)
+        .animation(.easeOut(duration: 0.2), value: raised)
     }
 }
 

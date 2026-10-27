@@ -192,6 +192,15 @@ public sealed class WrenTVApi
 
     public Task<VersionsResponse> Versions(string id) => Get<VersionsResponse>($"/api/items/{id}/versions");
 
+    /// Searches the subtitle sites for the item.
+    public async Task<OnlineSubtitleSearch> SearchOnlineSubtitles(string id) =>
+        Json.Parse<OnlineSubtitleSearch>((await Send(HttpMethod.Get, $"/api/items/{id}/subtitles/online", timeout: TimeSpan.FromSeconds(40))).Body);
+
+    /// Downloads a search result to the server; it comes back as a track of the session.
+    public Task<SubtitleTrack> FetchOnlineSubtitle(string id, OnlineSubtitle sub, string? sessionId) =>
+        Post<SubtitleTrack>($"/api/items/{id}/subtitles/online",
+            new { provider = sub.Provider, id = sub.Id, language = sub.Language, name = sub.Name, sessionId }, TimeSpan.FromSeconds(60));
+
     /// Null, or why the server owner stopped this stream.
     public async Task<string?> ReportProgress(string id, double position, double duration, bool? paused = null)
     {
@@ -224,7 +233,20 @@ public sealed class WrenTVApi
 
     // Streaming
     public Task<DiscoverSearch> DiscoverSearch(string q) => Get<DiscoverSearch>("/api/discover/search", [("q", q)]);
-    public Task<Item> AddStreamTitle(int tmdbId, string mediaType) => Post<Item>("/api/streaming/titles", new { tmdbId, mediaType });
+    /// Adds a TMDB title to the server's streaming catalog. A slow TMDB answer
+    /// can fail the first try, so it goes again once, except when the server said no.
+    public async Task<Item> AddStreamTitle(int tmdbId, string mediaType)
+    {
+        try { return await Post<Item>("/api/streaming/titles", new { tmdbId, mediaType }); }
+        catch (WrenTVException e) when (e.Status is < 400 or > 499)
+        {
+            return await Post<Item>("/api/streaming/titles", new { tmdbId, mediaType });
+        }
+    }
+
+    /// Readies titles' detail pages on the server, for a card the viewer has settled on.
+    public Task WarmTitles(IEnumerable<string> ids) =>
+        Send(HttpMethod.Post, "/api/discover/warm", [("ids", string.Join(",", ids))]);
 
     // Layouts. Servers from before layouts answer 404.
     public Task<LayoutResponse> Layout(string scope, int offset = 0, int? limit = null)

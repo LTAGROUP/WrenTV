@@ -46,4 +46,24 @@ final class TitleLogos {
             sending = false
         }
     }
+
+    @ObservationIgnored private var warmed: Set<String> = []
+    @ObservationIgnored private var settling: Task<Void, Never>?
+
+    /// A card the viewer has settled on: once focus or the pointer rests on it
+    /// a moment, the server readies its detail page, so opening it doesn't
+    /// wait on TMDB. Moving on quickly asks for nothing.
+    func focused(_ t: TitleView) {
+        settling?.cancel()
+        guard t.item == nil, !warmed.contains(t.id) else { return }
+        settling = Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled, let api = api() else { return }
+            warmed.insert(t.id)
+            if (try? await api.warmTitles([t.id])) == nil { warmed.remove(t.id) }
+        }
+    }
+
+    /// Focus moved on before the card settled.
+    func unfocused() { settling?.cancel() }
 }

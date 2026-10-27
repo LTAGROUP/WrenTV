@@ -319,9 +319,24 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     // Streaming
     suspend fun discoverSearch(q: String): DiscoverSearch = get("/api/discover/search", mapOf("q" to q))
 
-    suspend fun addStreamTitle(tmdbId: Int, mediaType: String): Item = post("/api/streaming/titles", buildJsonObject {
-        put("tmdbId", tmdbId); put("mediaType", mediaType)
-    })
+    /**
+     * Adds the title with one quiet retry: a timeout or a server hiccup
+     * usually clears, while a refusal (can't stream, unknown title) is
+     * thrown as it is.
+     */
+    suspend fun addStreamTitle(tmdbId: Int, mediaType: String): Item {
+        suspend fun add(): Item = post("/api/streaming/titles", buildJsonObject {
+            put("tmdbId", tmdbId); put("mediaType", mediaType)
+        })
+        return try {
+            add()
+        } catch (e: WrenTVException) {
+            if (e.status in 400..499) throw e
+            add()
+        } catch (e: java.io.IOException) {
+            add()
+        }
+    }
 
     /** A link to save the item's file on this device; status "pending" while a streamed title is still being found. */
     suspend fun deviceDownload(id: String, fileId: String?): DeviceDownload =

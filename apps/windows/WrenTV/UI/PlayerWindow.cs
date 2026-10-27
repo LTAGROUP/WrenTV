@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Windows.System;
 using WrenTV.Core;
 using WrenTV.Player;
@@ -10,8 +11,9 @@ using static WrenTV.Player.PlayerModel;
 
 namespace WrenTV.UI;
 
-/// Plays a movie or episode: seek bar, tracks, versions, chapters, skip
-/// intro / credits and the next episode.
+/// Plays a movie or episode: seek bar, tracks, versions, chapters, the
+/// season's episodes, subtitle-site search, stats, skip intro / credits and
+/// the next episode.
 sealed class PlayerWindow : VideoWindow
 {
     readonly PlayerModel? model;
@@ -29,6 +31,10 @@ sealed class PlayerWindow : VideoWindow
     readonly Slider volume;
     readonly Button mute;
     readonly Button fullscreen;
+    readonly Button episodes, stats;
+    readonly Flyout episodesFlyout = BarFlyout(), statsFlyout = BarFlyout(), searchFlyout = BarFlyout();
+    readonly DispatcherTimer statsTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    readonly Grid statsGrid = new() { ColumnSpacing = 16, RowSpacing = 3 };
     bool dragging;
     /// What each menu last showed: menus are only rebuilt when that changes,
     /// so an open menu doesn't close under the viewer.
@@ -58,6 +64,14 @@ sealed class PlayerWindow : VideoWindow
         chapters.Content = Ui.Icon("", 18);
         (var volPanel, volume, mute) = VolumeControl(v => model?.SetVolume(v), () => model?.ToggleMute());
         fullscreen = BarButton("", "Full Screen (F)", ToggleFullscreen);
+        episodes = BarButton("", "Episodes (E)", () => episodesFlyout.ShowAt(episodes));
+        stats = BarButton("", "Stats (I)", () => statsFlyout.ShowAt(stats));
+        episodes.Visibility = Visibility.Collapsed;
+        episodesFlyout.Opening += (_, _) => { if (model?.Episode is { } ep) _ = ShowEpisodes(ep, ep.ParentId); };
+        statsFlyout.Content = Ui.Column(8, Ui.Text("Stats", 15, FontWeights.SemiBold), statsGrid);
+        statsFlyout.Opening += (_, _) => { RenderStats(); statsTimer.Start(); };
+        statsFlyout.Closed += (_, _) => statsTimer.Stop();
+        statsTimer.Tick += (_, _) => RenderStats();
         BuildBar(volPanel);
 
         if (Mpv == null)
@@ -106,7 +120,7 @@ sealed class PlayerWindow : VideoWindow
         titles.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(titles, 1);
         controls.Children.Add(titles);
-        var right = Ui.Row(2, skipPanel, chapters, versions, audio, subs, volPanel, fullscreen);
+        var right = Ui.Row(2, skipPanel, episodes, chapters, versions, audio, subs, stats, volPanel, fullscreen);
         skipPanel.Margin = new Thickness(0, 0, 10, 0);
         skipPanel.VerticalAlignment = VerticalAlignment.Center;
         right.VerticalAlignment = VerticalAlignment.Center;
@@ -124,6 +138,7 @@ sealed class PlayerWindow : VideoWindow
     protected override void Stopping()
     {
         upNextTimer?.Cancel();
+        statsTimer.Stop();
         model?.Stop();
     }
 
@@ -145,6 +160,8 @@ sealed class PlayerWindow : VideoWindow
                 else if (model.Skip == SkipKind.Credits) model.SkipCredits();
                 return true;
             case VirtualKey.N when model.UpNext != null: model.PlayNext(); return true;
+            case VirtualKey.E when model.Episode != null: ShowBar(); episodesFlyout.ShowAt(episodes); return true;
+            case VirtualKey.I: ShowBar(); statsFlyout.ShowAt(stats); return true;
             case VirtualKey.Escape when !IsFullscreen: Close(); return true;
         }
         return base.Key(k);
@@ -201,6 +218,7 @@ sealed class PlayerWindow : VideoWindow
         var skipKey = model.Phase == PhaseKind.Playing ? $"{model.Skip}|{model.Countdown}" : "";
         if (!Unchanged(skipPanel, skipKey)) RenderSkip();
 
+        episodes.Visibility = model.Episode != null ? Visibility.Visible : Visibility.Collapsed;
         RenderAudio();
         RenderSubtitles();
         RenderVersions();
@@ -286,11 +304,188 @@ sealed class PlayerWindow : VideoWindow
     {
         if (model == null) return;
         var tracks = model.Tracks.Where(t => t.Type == "sub").ToList();
-        if (Unchanged(subsMenu, string.Join(",", tracks.Select(t => $"{t.Id}{t.Selected}")))) return;
+        var key = string.Join(",", tracks.Select(t => $"{t.Id}{t.Selected}")) + "|" + model.OnlineSubtitles + "|" + string.Join(",", model.SideTracks.Select(t => t.Index));
+        if (Unchanged(subsMenu, key)) return;
         subsMenu.Items.Clear();
         subsMenu.Items.Add(Choice("Off", !tracks.Any(t => t.Selected), () => model.SelectTrack(null)));
         foreach (var t in tracks) subsMenu.Items.Add(Choice(t.Title, t.Selected, () => model.SelectTrack(t)));
-        subs.Visibility = tracks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (model.SideTracks.Count > 0 || model.OnlineSubtitles)
+        {
+            subsMenu.Items.Add(new MenuFlyoutSeparator());
+            subsMenu.Items.Add(Header("Online"));
+            foreach (var t in model.SideTracks)
+            {
+                var item = new MenuFlyoutItem { Text = t.Title ?? t.Language ?? "Subtitles" };
+                item.Click += (_, _) => model.ShowSideTrack(t);
+                subsMenu.Items.Add(item);
+            }
+            if (model.OnlineSubtitles)
+            {
+                var search = new MenuFlyoutItem { Text = "Search Online…", Icon = new FontIcon { Glyph = "" } };
+                search.Click += (_, _) => _ = SearchOnline();
+                subsMenu.Items.Add(search);
+            }
+        }
+        subs.Visibility = tracks.Count > 0 || model.SideTracks.Count > 0 || model.OnlineSubtitles ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    static Flyout BarFlyout()
+    {
+        var f = new Flyout { Placement = FlyoutPlacementMode.Top, ShouldConstrainToRootBounds = false };
+        var style = new Style(typeof(FlyoutPresenter));
+        style.Setters.Add(new Setter(FrameworkElement.MaxWidthProperty, 1100.0));
+        style.Setters.Add(new Setter(FrameworkElement.MaxHeightProperty, 560.0));
+        f.FlyoutPresenterStyle = style;
+        return f;
+    }
+
+    /// The season's episodes in a row, with the show's other seasons above it.
+    async Task ShowEpisodes(Item ep, string? seasonId)
+    {
+        if (model == null || seasonId == null) return;
+        var api = App.State.Api;
+        var column = Ui.Column(12, Ui.Spinner());
+        episodesFlyout.Content = column;
+        var seasonsTask = ep.ShowId is { } show ? model.Children(show) : Task.FromResult(new List<Item>());
+        var eps = (await model.Children(seasonId)).OrderBy(e => e.EpisodeNumber).ToList();
+        var seasons = (await seasonsTask).OrderBy(x => x.SeasonNumber).ToList();
+        if (episodesFlyout.Content != column) return;
+        column.Children.Clear();
+        if (seasons.Count > 1)
+        {
+            var row = Ui.Row(6);
+            foreach (var se in seasons)
+            {
+                var b = Ui.Button(se.DisplayTitle, () => _ = ShowEpisodes(ep, se.Id), accent: se.Id == seasonId);
+                b.Padding = new Thickness(12, 5, 12, 5);
+                row.Children.Add(b);
+            }
+            column.Children.Add(new ScrollViewer { Content = row, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Enabled });
+        }
+        var cards = Ui.Row(12);
+        FrameworkElement? current = null;
+        foreach (var e in eps)
+        {
+            var playing = e.Id == model.ItemId;
+            var frame = new Grid { Width = 220, Height = 124 };
+            frame.Children.Add(Ui.Frame(Ui.Image(api?.ImageUrl(e.StillPath ?? e.BackdropPath, "w300"), 300), 220, 124, 8));
+            if (e.Progress is { Position: > 0, Watched: false } pr && !playing)
+            {
+                var bar = Ui.Progress(pr.Fraction);
+                bar.VerticalAlignment = VerticalAlignment.Bottom;
+                frame.Children.Add(bar);
+            }
+            if (playing)
+            {
+                frame.Children.Add(new Border
+                {
+                    Background = Theme.EmberBrush, CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 1, 6, 2), Margin = new Thickness(6),
+                    HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Child = Ui.Text("Playing", 11, FontWeights.SemiBold),
+                });
+                frame.Children.Add(new Border { BorderBrush = Theme.EmberBrush, BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(8) });
+            }
+            else if (e.IsWatched)
+            {
+                var check = Ui.Icon("", 16, Theme.EmberBrush);
+                check.HorizontalAlignment = HorizontalAlignment.Right;
+                check.VerticalAlignment = VerticalAlignment.Top;
+                check.Margin = new Thickness(8);
+                frame.Children.Add(check);
+            }
+            var cell = Ui.Column(4, frame, Ui.Text($"{e.EpisodeNumber}. {e.Title}", 13, maxLines: 1));
+            if (e.RuntimeMin is int min && min > 0) cell.Children.Add(Ui.Secondary(Format.Runtime(min), 12));
+            cell.Width = 220;
+            var card = new Button
+            {
+                Content = cell, Padding = new Thickness(4), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                BorderThickness = new Thickness(0), IsEnabled = !playing,
+            };
+            var pick = e;
+            card.Click += (_, _) => { episodesFlyout.Hide(); model.PlayEpisode(pick); };
+            cards.Children.Add(card);
+            if (playing) current = card;
+        }
+        column.Children.Add(new ScrollViewer { Content = cards, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Enabled });
+        if (current is { } c)
+            c.Loaded += (_, _) => c.StartBringIntoView(new BringIntoViewOptions { HorizontalAlignmentRatio = 0, AnimationDesired = false });
+    }
+
+    void RenderStats()
+    {
+        if (model == null) return;
+        statsGrid.Children.Clear();
+        statsGrid.RowDefinitions.Clear();
+        if (statsGrid.ColumnDefinitions.Count == 0)
+        {
+            statsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            statsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            statsGrid.MinWidth = 360;
+        }
+        var rows = model.Stats();
+        for (var i = 0; i < rows.Count; i++)
+        {
+            statsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var k = Ui.Secondary(rows[i].Item1, 12);
+            var v = Ui.Text(rows[i].Item2, 12, wrap: true);
+            v.IsTextSelectionEnabled = true;
+            Grid.SetRow(k, i);
+            Grid.SetRow(v, i);
+            Grid.SetColumn(v, 1);
+            statsGrid.Children.Add(k);
+            statsGrid.Children.Add(v);
+        }
+    }
+
+    /// Searches the subtitle sites and lists what they have; picking one downloads it.
+    async Task SearchOnline()
+    {
+        if (model == null) return;
+        var column = Ui.Column(10, Ui.Text("Online Subtitles", 15, FontWeights.SemiBold), Ui.Spinner("Searching…"));
+        column.Width = 520;
+        searchFlyout.Content = column;
+        searchFlyout.ShowAt(subs);
+        List<OnlineSubtitle> found;
+        try { found = await model.SearchOnlineSubtitles(); }
+        catch (Exception e)
+        {
+            column.Children.RemoveAt(1);
+            column.Children.Add(Ui.Secondary(e.Message, 13, 4));
+            return;
+        }
+        if (searchFlyout.Content != column) return;
+        column.Children.RemoveAt(1);
+        if (found.Count == 0)
+        {
+            column.Children.Add(Ui.Secondary("Nothing found.", 13));
+            return;
+        }
+        var list = Ui.Column(2);
+        foreach (var r in found.Take(60))
+        {
+            var label = Ui.Column(1, Ui.Text(r.Name.Length > 0 ? r.Name : r.Provider, 13, maxLines: 2), Ui.Secondary(r.Detail, 12));
+            var b = new Button
+            {
+                Content = label, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left,
+                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0), Padding = new Thickness(10, 6, 10, 6),
+            };
+            var pick = r;
+            b.Click += async (_, _) =>
+            {
+                foreach (var x in list.Children.OfType<Button>()) x.IsEnabled = false;
+                try
+                {
+                    await model.AddOnlineSubtitle(pick);
+                    searchFlyout.Hide();
+                }
+                catch (Exception e)
+                {
+                    column.Children.Add(Ui.Secondary(e.Message, 12, 3));
+                    foreach (var x in list.Children.OfType<Button>()) x.IsEnabled = true;
+                }
+            };
+            list.Children.Add(b);
+        }
+        column.Children.Add(new ScrollViewer { Content = list, MaxHeight = 420 });
     }
 
     void RenderVersions()

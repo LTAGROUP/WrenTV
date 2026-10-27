@@ -73,6 +73,10 @@ struct TitleCard: View {
         }
         .frame(width: width)
         .contentShape(Rectangle())
+        .onHover { on in
+            guard state.canStream else { return }
+            if on { state.logos.focused(title) } else { state.logos.unfocused() }
+        }
     }
 }
 

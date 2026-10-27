@@ -40,6 +40,17 @@ public sealed class PlayerModel
     public int? Countdown { get; private set; }
     public Item? UpNext { get; private set; }
     Item? nextEpisode;
+    /// This episode, for the episode list; null for a movie.
+    public Item? Episode { get; private set; }
+    /// The server can search the subtitle sites for this title.
+    public bool OnlineSubtitles { get; private set; }
+    /// Subtitles downloaded from the sites for this session, not yet loaded into mpv.
+    public List<SubtitleTrack> SideTracks { get; private set; } = [];
+    PlayResponse? response;
+    /// The next play request asks for a new link: the last one failed.
+    bool freshLink;
+    /// The version that failed, so the server tries another first.
+    string? failedFile;
     /// Direct play: switching audio is mpv's job. Otherwise the server's stream has one audio track.
     bool direct;
 
@@ -47,6 +58,10 @@ public sealed class PlayerModel
     public event Action? Changed;
     /// Only the position moved.
     public event Action? Ticked;
+    /// No credits marker: the countdown starts this long before the end of an
+    /// episode that has a next one.
+    const double UpNextLead = 30;
+
     /// Playback is done and the window should close.
     public event Action? CloseRequested;
 
@@ -107,7 +122,11 @@ public sealed class PlayerModel
             if (ct.IsCancellationRequested || stopped) return;
             try
             {
-                resp = await api.Play(ItemId, new PlayRequest { FileId = FileId, AudioIndex = AudioIndex });
+                var req = new PlayRequest { FileId = FileId, AudioIndex = AudioIndex, FailedFileId = failedFile };
+                if (freshLink) req.Retry = true;
+                freshLink = false;
+                failedFile = null;
+                resp = await api.Play(ItemId, req);
             }
             catch (Exception e)
             {
@@ -134,6 +153,9 @@ public sealed class PlayerModel
             return;
         }
         sessionId = resp.SessionId;
+        response = resp;
+        OnlineSubtitles = resp.OnlineSubtitles ?? false;
+        SideTracks = (resp.Subtitles ?? []).Where(t => t.Index >= 10000 && t.Url != null).ToList();
         FileId = resp.FileId ?? FileId;
         Versions = resp.Versions ?? [];
         WatchVersions();
@@ -261,6 +283,7 @@ public sealed class PlayerModel
     /// Starts over after a failure. The failed stream is closed on the server first.
     public void Retry()
     {
+        freshLink = true;
         var old = sessionId;
         sessionId = null;
         if (old != null) _ = api.StopSession(old);
@@ -274,6 +297,7 @@ public sealed class PlayerModel
         if (lastAutoRetry is not { } at || DateTime.UtcNow - at > TimeSpan.FromMinutes(2))
         {
             lastAutoRetry = DateTime.UtcNow;
+            failedFile = FileId;
             Retry();
             return;
         }
@@ -297,11 +321,15 @@ public sealed class PlayerModel
     {
         var t = Position;
         if (markers.Intro is { } i && t < i.Start) dismissed.Remove(SkipKind.Intro);
-        if (markers.Credits is { } c0 && t < c0.Start - 1) { dismissed.Remove(SkipKind.Credits); CancelCountdown(); }
+        // No credits marker: count down over the last seconds of an episode
+        // that has a next one, so it still moves on before the end.
+        var credits = markers.Credits ?? (nextEpisode != null && Duration >= 300
+            ? new TimeRange { Start = Duration - UpNextLead, End = Duration + 1 } : null);
+        if (credits is { } c0 && t < c0.Start - 1) { dismissed.Remove(SkipKind.Credits); CancelCountdown(); }
 
         SkipKind? next = null;
         if (markers.Intro is { } intro && t >= intro.Start && t < intro.End - 1 && !dismissed.Contains(SkipKind.Intro)) next = SkipKind.Intro;
-        else if (markers.Credits is { } c && t >= c.Start && t < c.End - 1 && !dismissed.Contains(SkipKind.Credits)) next = SkipKind.Credits;
+        else if (credits is { } c && t >= c.Start && t < c.End - 1 && !dismissed.Contains(SkipKind.Credits)) next = SkipKind.Credits;
         if (next == SkipKind.Credits && nextEpisode != null && Countdown == null && countdown == null && !Paused) StartCountdown();
         if (Skip != next)
         {
@@ -384,6 +412,8 @@ public sealed class PlayerModel
             var d = await api.Item(ItemId);
             if (d.Item.Kind != "episode") return null;
             var ep = d.Item;
+            Episode = ep;
+            Changed?.Invoke();
             if (ep.ParentId is { } pid)
             {
                 var season = await api.Item(pid);
@@ -459,6 +489,25 @@ public sealed class PlayerModel
         // Moving on counts as finishing this one.
         var (id, dur) = (ItemId, Duration);
         if (Phase == PhaseKind.Playing) _ = api.ReportProgress(id, dur, dur);
+        SwitchTo(next);
+    }
+
+    /// Plays another episode picked from the episode list.
+    public void PlayEpisode(Item ep)
+    {
+        if (ep.Id == ItemId) return;
+        var (id, pos, dur) = (ItemId, Position, Duration);
+        if (Phase == PhaseKind.Playing && pos > 5) _ = api.ReportProgress(id, pos, dur);
+        SwitchTo(ep);
+    }
+
+    void SwitchTo(Item next)
+    {
+        freshLink = false;
+        failedFile = null;
+        Episode = null;
+        SideTracks = [];
+        CancelCountdown();
         var old = sessionId;
         sessionId = null;
         if (old != null) _ = api.StopSession(old);
@@ -477,6 +526,69 @@ public sealed class PlayerModel
         Position = 0;
         Start();
     }
+
+    // Episodes
+
+    /// A season's episodes, or a show's seasons.
+    public async Task<List<Item>> Children(string id)
+    {
+        try { return (await api.Item(id)).Children ?? []; } catch { return []; }
+    }
+
+    // Subtitle sites
+
+    /// Searches the subtitle sites for this title; throws when the search fails.
+    public async Task<List<OnlineSubtitle>> SearchOnlineSubtitles() =>
+        (await api.SearchOnlineSubtitles(ItemId)).Results ?? [];
+
+    /// Downloads a subtitle the search found and turns it on.
+    public async Task AddOnlineSubtitle(OnlineSubtitle sub)
+    {
+        var track = await api.FetchOnlineSubtitle(ItemId, sub, sessionId);
+        ShowSideTrack(track);
+    }
+
+    /// Loads a subtitle-site download into mpv, which lists it with its own tracks.
+    public void ShowSideTrack(SubtitleTrack track)
+    {
+        if (track.Url is not { } url) return;
+        mpv.Command("sub-add", api.Absolute(url).ToString(), "select", track.Title ?? track.Language ?? "Online");
+        SideTracks = SideTracks.Where(t => t.Index != track.Index).ToList();
+        Changed?.Invoke();
+    }
+
+    // Stats
+
+    /// What the stats panel shows: how the title is playing right now.
+    public List<(string, string)> Stats()
+    {
+        var rows = new List<(string, string)>();
+        var r = response;
+        rows.Add(("Playback", MethodLabel is { Length: > 0 } m ? m : "—"));
+        if (Versions.FirstOrDefault(v => v.Id == FileId) is { Label.Length: > 0 } ver) rows.Add(("Version", ver.Label));
+        if (r?.Info is { } info)
+        {
+            if (info.Container.Length > 0) rows.Add(("Container", info.Container));
+            if (info.Bitrate is long b && b > 0) rows.Add(("Source bitrate", Mbps(b)));
+            if (info.Video?.FirstOrDefault() is { } v)
+                rows.Add(("Video", string.Join(" · ", new[] { v.Codec, v.Width is { } w ? $"{w}×{v.Height}" : null, v.Hdr }.Where(x => !string.IsNullOrEmpty(x)))));
+            if ((info.Audio?.FirstOrDefault(a => a.TypeIndex == (AudioIndex ?? r.Decision?.AudioIndex)) ?? info.Audio?.FirstOrDefault()) is { } au)
+            {
+                var s = au.CodecLabel;
+                if (r.Decision?.AudioCodec is { Length: > 0 } c && c != au.Codec) s += " → " + c.ToUpperInvariant();
+                rows.Add(("Audio", s));
+            }
+        }
+        if (mpv.Get("width") is { } pw && mpv.Get("height") is { } ph) rows.Add(("Showing", $"{pw}×{ph}"));
+        if (mpv.Get("hwdec-current") is { Length: > 0 } hw) rows.Add(("Decoder", hw == "no" ? "Software" : $"Hardware ({hw})"));
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        if (double.TryParse(mpv.Get("video-bitrate"), inv, out var vb) && vb > 0) rows.Add(("Stream bitrate", Mbps(vb)));
+        if (double.TryParse(mpv.Get("demuxer-cache-duration"), inv, out var cache)) rows.Add(("Buffer ahead", $"{cache:0.0} s"));
+        if (mpv.Get("frame-drop-count") is { } drops) rows.Add(("Dropped frames", drops));
+        return rows;
+    }
+
+    static string Mbps(double bps) => $"{bps / 1_000_000:0.0} Mbps";
 
     static string Describe(PlayResponse r)
     {
