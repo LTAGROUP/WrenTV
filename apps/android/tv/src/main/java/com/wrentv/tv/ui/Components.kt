@@ -336,6 +336,7 @@ fun TitleCard(title: TitleView, modifier: Modifier = Modifier, rank: Int? = null
     val context = LocalContext.current
     val logo = state.logos[title]
     LaunchedEffect(title.id) { state.logos.want(title) }
+    LaunchedEffect(focused) { if (focused && state.canStream) state.logos.focused(title) }
     LaunchedEffect(logo) {
         state.api?.imageUrl(logo, "w500")?.let { SingletonImageLoader.get(context).enqueue(ImageRequest.Builder(context).data(it).build()) }
     }

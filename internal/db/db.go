@@ -405,6 +405,29 @@ var migrations = []string{
 		PRIMARY KEY (user_id, kind, tmdb_id, season, episode)
 	);
 	CREATE INDEX items_tmdb ON items(kind, tmdb_id);`,
+	// Where a tracker says a user paused a title the server doesn't have,
+	// as a percentage: it becomes a resume point once the title is added.
+	`CREATE TABLE external_progress (
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		kind TEXT NOT NULL CHECK (kind IN ('movie','episode')),
+		tmdb_id INTEGER NOT NULL,
+		season INTEGER NOT NULL DEFAULT -1,
+		episode INTEGER NOT NULL DEFAULT -1,
+		percent REAL NOT NULL,
+		paused_at INTEGER NOT NULL,
+		PRIMARY KEY (user_id, kind, tmdb_id, season, episode)
+	);`,
+	// Subtitles fetched from a subtitle site for a title, kept as WebVTT
+	// files (subtitles/<key>.vtt in the data directory) for every later play.
+	`CREATE TABLE online_subtitles (
+		item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+		key TEXT NOT NULL,
+		provider TEXT NOT NULL,
+		language TEXT NOT NULL DEFAULT '',
+		name TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY (item_id, key)
+	);`,
 }
 
 // fkOff lists migrations (1-based) that rebuild tables. They run with

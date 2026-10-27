@@ -29,6 +29,7 @@ type fakeProvider struct {
 	slow    map[string]time.Duration
 	adds    int
 	checked int
+	linked  int
 }
 
 func (f *fakeProvider) Name() string { return "torbox" }
@@ -59,6 +60,7 @@ func (f *fakeProvider) Add(_ context.Context, hash, _ string) (*Torrent, error) 
 func (f *fakeProvider) Link(_ context.Context, ref, file string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.linked++
 	if f.stale {
 		f.stale = false
 		return "", ErrStale
@@ -656,5 +658,73 @@ func TestAddonFailureClipNotPlayed(t *testing.T) {
 	}
 	if sts, _ := d.StreamsForItem(ctx, it.ID); len(sts) != 0 {
 		t.Fatalf("the failed version should be dropped, have %d", len(sts))
+	}
+}
+
+// Links are reused for as long as their provider's lifetime says; a stream
+// that breaks while playing is found again, then dropped the second time.
+func TestLinkLifetimeAndPlaybackFailures(t *testing.T) {
+	ctx := context.Background()
+	hash := strings.Repeat("d", 40)
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	cfg := &config.Config{Streaming: config.StreamingConfig{Enabled: true, Qualities: []string{"1080p"},
+		LinkTTLMinutes: map[string]int{"torbox": 180}}}
+	prov := &fakeProvider{cdn: "http://cdn.invalid", cached: map[string][]RemoteFile{hash: {{ID: "1", Name: "Film.1080p.mkv", Size: 100}}}}
+	s := New(Deps{Cfg: cfg, DB: d, TMDB: tmdb.New("test", "en-US", d), Hub: library.NewHub()})
+	s.testProviders = []Provider{prov}
+
+	lib, _ := d.StreamLibrary(ctx, "movies")
+	it := &db.Item{LibraryID: lib.ID, Kind: "movie", MatchKey: "tmdb:5", Title: "Film", TMDBID: 5, SeasonNumber: -1, EpisodeNumber: -1}
+	d.InsertItem(ctx, it)
+	st := &db.Stream{ItemID: it.ID, Quality: "1080p", InfoHash: hash, FileName: "Film.1080p.mkv", Size: 100,
+		Provider: "torbox", ProviderRef: "t-" + hash, ProviderFile: "1"}
+	if err := d.PutStream(ctx, st, &db.MediaFile{ItemID: it.ID, LibraryID: lib.ID, Size: 100}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := s.linkFor(ctx, st.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	// Two hours on, TorBox's three-hour lifetime still covers it.
+	s.mu.Lock()
+	c := s.links[st.ID]
+	c.at = time.Now().Add(-2 * time.Hour)
+	s.links[st.ID] = c
+	s.mu.Unlock()
+	s.linkFor(ctx, st.ID, false)
+	if prov.linked != 1 {
+		t.Fatalf("links asked for = %d, want the cached one reused", prov.linked)
+	}
+	s.Invalidate(st.ID)
+	s.linkFor(ctx, st.ID, false)
+	if prov.linked != 2 {
+		t.Fatalf("links asked for = %d, want a fresh one after Invalidate", prov.linked)
+	}
+
+	if s.PlaybackFailed(ctx, st.ID) {
+		t.Fatal("dropped on the first failure")
+	}
+	got, err := d.GetStream(ctx, st.ID)
+	if err != nil || got.Provider != "" || got.Failures != 1 {
+		t.Fatalf("after one failure = %+v, %v; want it to be found again", got, err)
+	}
+	// Found again from scratch on the next play.
+	if _, _, err := s.linkFor(ctx, st.ID, false); err != nil || prov.adds != 1 {
+		t.Fatalf("relink = %v, adds = %d", err, prov.adds)
+	}
+	// Finding it again reset the count: it takes two failures in a row,
+	// with no fresh find between, to drop it.
+	if s.PlaybackFailed(ctx, st.ID) {
+		t.Fatal("dropped although it was found again since")
+	}
+	if !s.PlaybackFailed(ctx, st.ID) {
+		t.Fatal("not dropped after failing twice in a row")
+	}
+	if _, err := d.GetStream(ctx, st.ID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("stream still stored: %v", err)
 	}
 }

@@ -44,6 +44,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -85,6 +87,17 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.wrentv.tv.ui.Choice
 import com.wrentv.tv.ui.ChoicePanel
+import com.wrentv.tv.ui.ListRow
+import com.wrentv.tv.ui.Panel
+import com.wrentv.tv.data.Item
+import com.wrentv.tv.data.OnlineSubtitle
+import com.wrentv.tv.data.languageName
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import com.wrentv.tv.ui.LocalAppState
 import com.wrentv.tv.ui.LocalNavigator
 import com.wrentv.tv.ui.PillButton
@@ -96,7 +109,10 @@ import com.wrentv.tv.ui.formatClock
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.delay
 
-private enum class PlayerPanel { Audio, Subtitles, Version, Chapters }
+private enum class PlayerPanel { Audio, Subtitles, OnlineSubtitles, Version, Chapters, Episodes }
+
+/** The Subtitles panel's "Search online" row. */
+private const val SEARCH_ONLINE = "online"
 
 /**
  * Full-screen playback. With the controls hidden the remote works the
@@ -125,6 +141,7 @@ fun PlayerScreen(target: PlayTarget) {
 
     var controls by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<PlayerPanel?>(null) }
+    var stats by remember { mutableStateOf(false) }
     // Bumped on every key press so the controls stay up while in use.
     var touched by remember { mutableIntStateOf(0) }
     val root = remember { FocusRequester() }
@@ -248,7 +265,7 @@ fun PlayerScreen(target: PlayTarget) {
         }
 
         AnimatedVisibility(controls && c.upNext == null, enter = fadeIn(), exit = fadeOut()) {
-            Controls(c, playButton, seekBar, onPanel = { panel = it }, onSkip = {
+            Controls(c, playButton, seekBar, onPanel = { panel = it }, onStats = { stats = !stats }, onSkip = {
                 when (c.skip) {
                     PlayerController.Skip.Intro -> c.skipIntro()
                     PlayerController.Skip.Credits -> c.skipCredits()
@@ -256,6 +273,8 @@ fun PlayerScreen(target: PlayTarget) {
                 }
             })
         }
+
+        if (stats) Stats(c, Modifier.align(Alignment.TopEnd).padding(top = 32.dp, end = 48.dp))
 
         c.upNext?.let { UpNext(c, back = { nav.back() }) }
     }
@@ -267,9 +286,14 @@ fun PlayerScreen(target: PlayTarget) {
         }
         PlayerPanel.Subtitles -> ChoicePanel(
             "Subtitles",
-            listOf(Choice<String?>(null, "Off")) + c.subtitleOptions.map { Choice<String?>(it.key, it.label) },
-            c.subtitleKey, { panel = null },
-        ) { c.selectSubtitle(it) }
+            listOf(Choice<String?>(null, "Off")) + c.subtitleOptions.map { Choice<String?>(it.key, it.label) } +
+                (if (c.onlineSubtitles) listOf(Choice<String?>(SEARCH_ONLINE, "Search online…", "OpenSubtitles and other sites")) else emptyList()),
+            c.subtitleKey,
+            // Picking "Search online" opens the next panel before this one closes.
+            { if (panel == PlayerPanel.Subtitles) panel = null },
+        ) { if (it == SEARCH_ONLINE) panel = PlayerPanel.OnlineSubtitles else c.selectSubtitle(it) }
+        PlayerPanel.OnlineSubtitles -> OnlineSubtitlesPanel(c) { panel = null }
+        PlayerPanel.Episodes -> EpisodesPanel(c) { panel = null }
         PlayerPanel.Version -> ChoicePanel("Version", c.versions.map { Choice(it.id, it.label.ifEmpty { if (it.height > 0) "${it.height}p" else "Version" }) }, c.fileId, { panel = null }) {
             c.selectVersion(it)
         }
@@ -282,7 +306,7 @@ fun PlayerScreen(target: PlayTarget) {
 }
 
 @Composable
-private fun Controls(c: PlayerController, playButton: FocusRequester, seekBar: FocusRequester, onPanel: (PlayerPanel) -> Unit, onSkip: () -> Unit) {
+private fun Controls(c: PlayerController, playButton: FocusRequester, seekBar: FocusRequester, onPanel: (PlayerPanel) -> Unit, onStats: () -> Unit, onSkip: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         // Light scrims: just enough for the title and panel over bright scenes.
         Box(Modifier.fillMaxWidth().height(160.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent))))
@@ -324,9 +348,11 @@ private fun Controls(c: PlayerController, playButton: FocusRequester, seekBar: F
                     // Smaller than the transport, so it stays the centre of the panel.
                     Row(Modifier.align(Alignment.CenterEnd), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (c.audioOptions.size > 1) PlayerButton(Icons.Rounded.Audiotrack, "Audio", { onPanel(PlayerPanel.Audio) }, small = true)
-                        if (c.subtitleOptions.isNotEmpty()) PlayerButton(Icons.Rounded.Subtitles, "Subtitles", { onPanel(PlayerPanel.Subtitles) }, small = true)
+                        if (c.episode != null) PlayerButton(Icons.Rounded.VideoLibrary, "Episodes", { onPanel(PlayerPanel.Episodes) }, small = true)
+                        if (c.subtitleOptions.isNotEmpty() || c.onlineSubtitles) PlayerButton(Icons.Rounded.Subtitles, "Subtitles", { onPanel(PlayerPanel.Subtitles) }, small = true)
                         if (c.versions.size > 1) PlayerButton(Icons.Rounded.Layers, "Version", { c.refreshVersions(); onPanel(PlayerPanel.Version) }, small = true)
                         if (c.chapters.size > 1) PlayerButton(Icons.Rounded.Toc, "Chapters", { onPanel(PlayerPanel.Chapters) }, small = true)
+                        PlayerButton(Icons.Rounded.Info, "Stats", onStats, small = true)
                     }
                 }
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -343,6 +369,134 @@ private fun Controls(c: PlayerController, playButton: FocusRequester, seekBar: F
 }
 
 private val PanelWidth = 720.dp
+
+/** How the title is playing, refreshed every second while it shows. */
+@Composable
+private fun Stats(c: PlayerController, modifier: Modifier = Modifier) {
+    var rows by remember { mutableStateOf(c.stats()) }
+    LaunchedEffect(c) {
+        while (true) {
+            rows = c.stats()
+            delay(1000)
+        }
+    }
+    Column(
+        modifier.widthIn(max = 520.dp).background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(14.dp)).padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        rows.forEach { (k, v) ->
+            Row {
+                Text(k, style = MaterialTheme.typography.labelMedium, color = Wren.tertiary, modifier = Modifier.width(120.dp))
+                Text(v, style = MaterialTheme.typography.labelMedium, color = Wren.text)
+            }
+        }
+    }
+}
+
+/** Searches the subtitle sites and adds the one picked to what's playing. */
+@Composable
+private fun OnlineSubtitlesPanel(c: PlayerController, onDismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var results by remember { mutableStateOf<List<OnlineSubtitle>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var adding by remember { mutableStateOf<OnlineSubtitle?>(null) }
+    val first = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        results = try {
+            c.searchOnlineSubtitles()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            error = e.message ?: "The search failed."
+            emptyList()
+        }
+        awaitFrame()
+        runCatching { first.requestFocus() }
+    }
+    Panel(onDismiss, "Search online", width = 720.dp) {
+        val rs = results
+        when {
+            rs == null || adding != null -> Box(Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) { Spinner() }
+            error != null && rs.isEmpty() -> Text(error ?: "", style = MaterialTheme.typography.bodyLarge, color = Wren.secondary)
+            rs.isEmpty() -> Text("No subtitles found for this title.", style = MaterialTheme.typography.bodyLarge, color = Wren.secondary)
+            else -> {
+                error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Wren.ember, modifier = Modifier.padding(bottom = 10.dp)) }
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+                    itemsIndexed(rs) { i, r ->
+                        ListRow(
+                            title = r.name.ifEmpty { r.provider },
+                            detail = listOfNotNull(languageName(r.language) ?: r.language.uppercase(), r.provider,
+                                if (r.hearingImpaired) "SDH" else null, if (r.machineTranslated) "Machine translated" else null,
+                                if (r.downloads > 0) "${r.downloads} downloads" else null).joinToString(" · "),
+                            onClick = {
+                                adding = r
+                                scope.launch {
+                                    try {
+                                        c.addOnlineSubtitle(r)
+                                        onDismiss()
+                                    } catch (e: Exception) {
+                                        if (e is kotlinx.coroutines.CancellationException) throw e
+                                        error = e.message ?: "Couldn't download that subtitle."
+                                        adding = null
+                                    }
+                                }
+                            },
+                            modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** The show's episodes by season; picking one plays it. */
+@Composable
+private fun EpisodesPanel(c: PlayerController, onDismiss: () -> Unit) {
+    val ep = c.episode ?: return
+    val state = LocalAppState.current
+    var seasons by remember { mutableStateOf<List<Item>>(emptyList()) }
+    var seasonId by remember { mutableStateOf(ep.parentId) }
+    var episodes by remember { mutableStateOf<List<Item>?>(null) }
+    val current = remember { FocusRequester() }
+    LaunchedEffect(ep.showId) {
+        seasons = ep.showId?.let { runCatching { c.children(it) }.getOrNull() }.orEmpty().sortedBy { it.seasonNumber }
+    }
+    LaunchedEffect(seasonId) {
+        episodes = null
+        episodes = seasonId?.let { runCatching { c.children(it) }.getOrNull() }.orEmpty().sortedBy { it.episodeNumber }
+        awaitFrame()
+        runCatching { current.requestFocus() }
+    }
+    Panel(onDismiss, ep.showTitle ?: "Episodes", width = 820.dp) {
+        if (seasons.size > 1) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 14.dp)) {
+                items(seasons) { s -> PillButton(s.displayTitle, { seasonId = s.id }, primary = s.id == seasonId) }
+            }
+        }
+        val list = episodes
+        if (list == null) {
+            Box(Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) { Spinner() }
+            return@Panel
+        }
+        val focusAt = list.indexOfFirst { it.id == c.itemId }.coerceAtLeast(0)
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+            itemsIndexed(list) { i, e ->
+                ListRow(
+                    title = "${e.episodeNumber}. ${e.title}",
+                    detail = listOfNotNull(e.runtimeMin?.takeIf { it > 0 }?.let { "$it min" }, if (e.isWatched) "Watched" else null,
+                        if (e.id == c.itemId) "Playing" else null).joinToString(" · ").ifEmpty { null },
+                    checked = if (e.id == c.itemId) true else null,
+                    leading = {
+                        RemoteImage(state.api?.imageUrl(e.stillPath ?: e.backdropPath, "w300"),
+                            Modifier.width(128.dp).height(72.dp).clip(RoundedCornerShape(8.dp)))
+                    },
+                    onClick = { onDismiss(); c.playEpisode(e) },
+                    modifier = if (i == focusAt) Modifier.focusRequester(current) else Modifier,
+                )
+            }
+        }
+    }
+}
 
 /** A plain icon on the panel, white when focused, with its name in a tip above it. */
 @Composable

@@ -263,11 +263,25 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     suspend fun trending(): TrendingResponse = get("/api/discover/trending")
     /** Logo paths by title id ("movie:<tmdbId>"), "" for a title without one. */
     suspend fun titleLogos(ids: List<String>): Map<String, String> = get("/api/discover/logos", mapOf("ids" to ids.joinToString(",")))
+    /** Asks the server to ready these titles' detail pages in the background; it answers at once. */
+    suspend fun warmTitles(ids: List<String>) { send("POST", "/api/discover/warm", mapOf("ids" to ids.joinToString(","))) }
     suspend fun search(q: String): List<Item> = get("/api/search", mapOf("q" to q))
 
     suspend fun play(id: String, req: PlayRequest): PlayResponse =
         json.decodeFromString(serializer<PlayResponse>(), send("POST", "/api/items/$id/play", body = enc(req), http = Http.slow))
     suspend fun versions(id: String): VersionsResponse = get("/api/items/$id/versions")
+
+    /** Searches the subtitle sites the server has set up, in [lang] (e.g. "en,fr") or the viewer's languages. */
+    suspend fun searchOnlineSubtitles(id: String, lang: String? = null): OnlineSubtitleSearch =
+        json.decodeFromString(serializer<OnlineSubtitleSearch>(),
+            send("GET", "/api/items/$id/subtitles/online", lang?.let { mapOf("lang" to it) } ?: emptyMap(), http = Http.slow))
+
+    /** Downloads a search result to the server and returns it as a track of session [sid]. */
+    suspend fun fetchOnlineSubtitle(id: String, sub: OnlineSubtitle, sid: String?): SubtitleTrack =
+        json.decodeFromString(serializer<SubtitleTrack>(), send("POST", "/api/items/$id/subtitles/online", body = buildJsonObject {
+            put("provider", sub.provider); put("id", sub.id); put("language", sub.language); put("name", sub.name)
+            sid?.let { put("sessionId", it) }
+        }, http = Http.slow))
 
     /** Null, or why the server owner stopped this stream. */
     suspend fun reportProgress(id: String, position: Double, duration: Double, paused: Boolean = false): String? = try {

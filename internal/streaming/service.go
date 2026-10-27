@@ -90,8 +90,9 @@ type Service struct {
 }
 
 type cachedLink struct {
-	url string
-	at  time.Time
+	url      string
+	at       time.Time
+	provider string
 	// checked is when the CDN last answered for url; opening the item
 	// warms the link, so play right after needn't ask again.
 	checked time.Time
@@ -329,6 +330,15 @@ func (s *Service) AddTitle(ctx context.Context, kind string, tmdbID int) (*db.It
 		return it, nil
 	}
 	it := &db.Item{LibraryID: lib.ID, Kind: kind, MatchKey: fmt.Sprintf("tmdb:%d", tmdbID), SeasonNumber: -1, EpisodeNumber: -1}
+	// Someone is waiting on this, so a slow step is worth a line in the log.
+	start := time.Now()
+	var fetched time.Duration
+	defer func() {
+		if took := time.Since(start); took > 3*time.Second {
+			slog.Warn("slow title add", "kind", kind, "tmdb", tmdbID, "ms", took.Milliseconds(),
+				"tmdb_ms", fetched.Milliseconds(), "db_ms", (took - fetched).Milliseconds())
+		}
+	}()
 	var show *tmdb.Show
 	switch kind {
 	case "movie":
@@ -343,6 +353,7 @@ func (s *Service) AddTitle(ctx context.Context, kind string, tmdbID int) (*db.It
 		}
 		library.ApplyShow(it, show)
 	}
+	fetched = time.Since(start)
 	it.SortTitle = ""
 	if err := s.DB.InsertItem(ctx, it); err != nil {
 		// Someone else added it at the same moment.
@@ -362,7 +373,23 @@ func (s *Service) AddTitle(ctx context.Context, kind string, tmdbID int) (*db.It
 			defer cancel()
 			s.syncEpisodes(ctx, it, show)
 			// Simkl marks for its episodes can only land once they exist.
-			_ = s.DB.ApplyExternalWatched(ctx)
+			if err := s.DB.ApplyExternalWatchedFor(ctx, "show", tmdbID); err != nil {
+				slog.Warn("apply watched marks", "show", tmdbID, "err", err)
+			}
+			if err := s.DB.ApplyExternalProgressFor(ctx, "show", tmdbID); err != nil {
+				slog.Warn("apply paused", "show", tmdbID, "err", err)
+			}
+		}()
+	} else {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			if err := s.DB.ApplyExternalWatchedFor(ctx, "movie", tmdbID); err != nil {
+				slog.Warn("apply watched marks", "movie", tmdbID, "err", err)
+			}
+			if err := s.DB.ApplyExternalProgressFor(ctx, "movie", tmdbID); err != nil {
+				slog.Warn("apply paused", "movie", tmdbID, "err", err)
+			}
 		}()
 	}
 	s.Hub.Publish(library.Event{Type: "item.added", LibraryID: lib.ID, ItemID: it.ID})
@@ -1434,18 +1461,22 @@ func (s *Service) ServeInternal(w http.ResponseWriter, r *http.Request, token st
 // up a new release.
 func (s *Service) linkFor(ctx context.Context, streamID string, force bool) (string, int64, error) {
 	s.mu.Lock()
-	if c, ok := s.links[streamID]; ok && !force && time.Since(c.at) < time.Hour {
-		s.mu.Unlock()
+	c, ok := s.links[streamID]
+	s.mu.Unlock()
+	if ok && !force && time.Since(c.at) < s.linkTTL(c.provider) {
 		return c.url, 0, nil
 	}
-	s.mu.Unlock()
 	st, err := s.DB.GetStream(ctx, streamID)
 	if err != nil {
 		return "", 0, ErrUnavailable
 	}
 	remember := func(u string) (string, int64, error) {
+		provider := st.Provider
+		if st.Link != "" {
+			provider = "addon"
+		}
 		s.mu.Lock()
-		s.links[streamID] = cachedLink{url: u, at: time.Now()}
+		s.links[streamID] = cachedLink{url: u, at: time.Now(), provider: provider}
 		s.mu.Unlock()
 		return u, st.Size, nil
 	}
@@ -1520,6 +1551,7 @@ func (s *Service) linkFor(ctx context.Context, streamID string, force bool) (str
 			if f, ok := PickFile(tor.Files, st.FileName, season, episode); ok {
 				if u, err := up.LinkUsenet(ctx, tor.Ref, f.ID); err == nil {
 					_ = s.DB.SetStreamProvider(ctx, st.ID, p.Name(), tor.Ref, f.ID)
+					st.Provider = p.Name()
 					return remember(u)
 				}
 			}
@@ -1544,6 +1576,7 @@ func (s *Service) linkFor(ctx context.Context, streamID string, force bool) (str
 				continue
 			}
 			_ = s.DB.SetStreamProvider(ctx, st.ID, p.Name(), tor.Ref, f.ID)
+			st.Provider = p.Name()
 			return remember(u)
 		}
 	}
@@ -1552,6 +1585,47 @@ func (s *Service) linkFor(ctx context.Context, streamID string, force bool) (str
 		_ = s.DB.PutStreamLookup(ctx, db.StreamLookup{ItemID: st.ItemID, LookedAt: 0})
 	}
 	return "", 0, ErrUnavailable
+}
+
+// linkTTL is how long a provider's resolved link is reused.
+func (s *Service) linkTTL(provider string) time.Duration {
+	if m := s.cfg().LinkTTLMinutes[provider]; m > 0 {
+		return time.Duration(m) * time.Minute
+	}
+	return time.Hour
+}
+
+// Invalidate throws away a stream's resolved link, so the next play asks
+// the provider for a fresh one.
+func (s *Service) Invalidate(streamID string) {
+	s.mu.Lock()
+	delete(s.links, streamID)
+	delete(s.cdnFails, streamID)
+	s.mu.Unlock()
+}
+
+// PlaybackFailed records a stream that broke while it played: a torrent
+// no longer cached, a post that lost articles. Its link is thrown away and
+// it's found again from scratch next time; one that breaks twice is
+// dropped, so another source plays and the title is looked up again.
+func (s *Service) PlaybackFailed(ctx context.Context, streamID string) (dropped bool) {
+	s.Invalidate(streamID)
+	st, err := s.DB.GetStream(ctx, streamID)
+	if err != nil {
+		return true
+	}
+	var n int
+	if st.Provider == usenetProvider {
+		// The post's layout is kept: it's read from the news servers again.
+		n, err = s.DB.CountStreamFailure(ctx, st.ID)
+	} else {
+		n, err = s.DB.StreamFailed(ctx, st.ID)
+	}
+	if err != nil || n >= 2 {
+		s.dropStream(ctx, streamID, "failed during playback")
+		return true
+	}
+	return false
 }
 
 // Forget drops an item's streams so the next play looks them up again.

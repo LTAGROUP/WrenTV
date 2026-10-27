@@ -125,8 +125,8 @@ func (s *Server) handleAddStreamTitle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 502, err.Error())
 		return
 	}
-	// Turn any Simkl marks for this title into watch state right away.
-	_ = s.DB.ApplyExternalWatched(ctx)
+	// A title added just now picks up its Simkl marks in the background
+	// (AddTitle); the page doesn't wait on that write.
 	writeJSON(w, 200, it)
 }
 

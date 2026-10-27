@@ -270,6 +270,23 @@ a.person:focus-visible .face { border-color: var(--accent); transform: scale(1.0
   background: #121016d9; color: var(--cream); cursor: pointer; backdrop-filter: blur(6px); animation: fade-up .25s var(--ease) both; transition: background .15s, border-color .15s; }
 .skip:hover { background: var(--accent); border-color: var(--accent); }
 .player:has(.chapters) .skip { opacity: 0; pointer-events: none; }
+.chapters.wide { width: 420px; max-height: 62vh; }
+.chapters .ep-head { display: flex; align-items: center; gap: 8px; padding-right: 6px; }
+.chapters .ep-head h3 { flex: 1; }
+.chapters .ep-head select, .chapters .ep-head input { background: var(--bg-3); color: var(--cream); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 13px; }
+.chapters .ep-head input { width: 170px; }
+.chapters button.ep { align-items: center; }
+.chapters .ep .still { position: relative; width: 120px; aspect-ratio: 16/9; flex: none; border-radius: 6px; overflow: hidden; background: var(--bg-3); }
+.chapters .ep .still img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.chapters .ep .seen { position: absolute; right: 4px; top: 4px; font-style: normal; font-size: 11px; background: #000a; border-radius: 4px; padding: 0 4px; }
+.chapters .ep .t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.chapters button:disabled { opacity: .6; cursor: progress; }
+.stats { position: absolute; z-index: 4; left: 22px; top: 86px; max-width: min(520px, calc(100% - 44px)); background: #121016e6; border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 34px 10px 14px; font-size: 12px; font-variant-numeric: tabular-nums; animation: fade-up .2s var(--ease) both; }
+.stats dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; margin: 0; }
+.stats dt { color: var(--muted); } .stats dd { margin: 0; color: var(--cream); overflow-wrap: anywhere; }
+.stats .x { position: absolute; right: 6px; top: 4px; border: 0; background: transparent; color: var(--muted); font-size: 18px; cursor: pointer; }
+@media (max-width: 600px) { .chapters.wide { width: auto; left: 16px; right: 16px; } .chapters .ep .still { width: 88px; } }
 .upnext { position: absolute; right: 32px; bottom: 110px; background: #121016f0; border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: flex; gap: 14px;
   align-items: center; max-width: 460px; box-shadow: 0 20px 50px #000c; animation: fade-up .3s var(--ease) both; }
 .upnext .thumb { width: 160px; flex: none; }

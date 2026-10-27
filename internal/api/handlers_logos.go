@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 )
 
 // maxLogoBatch caps one request: a shelf's visible cards and a few past them.
@@ -31,7 +33,8 @@ func (s *Server) handleTitleLogos(w http.ResponseWriter, r *http.Request) {
 			keys = append(keys, k)
 		}
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	// Warming, not something the user picked: it mustn't queue ahead of an open.
+	ctx, cancel := context.WithTimeout(tmdb.Prefetch(r.Context()), 10*time.Second)
 	defer cancel()
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -68,4 +71,51 @@ func (s *Server) handleTitleLogos(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 	writeJSON(w, 200, out)
+}
+
+// maxDetailWarm caps one warm request: the focused title and its neighbours.
+const maxDetailWarm = 3
+
+// detailWarms bounds detail warming server-wide, so fast shelf scrolling on
+// several screens can't build a queue in front of real lookups.
+var detailWarms = make(chan struct{}, 4)
+
+// handleWarmTitleDetails readies what a TMDB title's detail page shows first
+// (its details, logo and artwork, then cast, trailer and more like this) for
+// a poster the user has settled on, so opening it finds them cached. It
+// answers at once; the lookups run in the background on the warming budget
+// and are dropped, not queued, when enough are already running.
+func (s *Server) handleWarmTitleDetails(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusAccepted)
+	if !s.TMDB.Enabled() {
+		return
+	}
+	n := 0
+	for _, key := range strings.Split(r.URL.Query().Get("ids"), ",") {
+		kind, num, ok := strings.Cut(strings.TrimSpace(key), ":")
+		id, err := strconv.Atoi(num)
+		if !ok || err != nil || id <= 0 || (kind != "movie" && kind != "show") {
+			continue
+		}
+		if n++; n > maxDetailWarm {
+			break
+		}
+		select {
+		case detailWarms <- struct{}{}:
+		default:
+			return
+		}
+		go func() {
+			defer func() { <-detailWarms }()
+			ctx, cancel := context.WithTimeout(tmdb.Prefetch(context.Background()), 20*time.Second)
+			defer cancel()
+			if kind == "movie" {
+				if _, err := s.TMDB.Movie(ctx, id); err == nil {
+					_, _ = s.TMDB.MovieExtras(ctx, id)
+				}
+			} else if _, err := s.TMDB.Show(ctx, id); err == nil {
+				_, _ = s.TMDB.ShowExtras(ctx, id)
+			}
+		}()
+	}
 }

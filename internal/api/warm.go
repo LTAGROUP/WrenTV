@@ -62,6 +62,12 @@ func (s *Server) warmItem(it *db.Item, u *db.User) {
 	warms.m[it.ID] = w
 	warms.mu.Unlock()
 
+	// Community markers too, so the first play doesn't wait on IntroDB.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		s.communityMarkers(ctx, it)
+	}()
 	go func() {
 		defer close(w.done)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)

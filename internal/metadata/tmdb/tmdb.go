@@ -73,6 +73,20 @@ func Interactive(ctx context.Context) context.Context {
 	return context.WithValue(ctx, interactiveKey{}, true)
 }
 
+type prefetchKey struct{}
+
+// Prefetch marks ctx as warming for something the user may open next. It
+// takes the background budget even inside a signed-in request, so warming a
+// shelf never queues ahead of the title someone actually picked.
+func Prefetch(ctx context.Context) context.Context {
+	return context.WithValue(ctx, prefetchKey{}, true)
+}
+
+// waitedOn reports whether someone is waiting on ctx's lookups.
+func waitedOn(ctx context.Context) bool {
+	return ctx.Value(interactiveKey{}) != nil && ctx.Value(prefetchKey{}) == nil
+}
+
 // pause waits d, or less if ctx ends first.
 func pause(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
@@ -104,11 +118,17 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, maxAge
 		return json.Unmarshal(b, out)
 	}
 
-	v, err, _ := c.sf.Do(key, func() (any, error) {
+	// Callers asking for the same thing share one fetch. It runs on its own
+	// clock, not the first caller's: a shelf's warming giving up must not fail
+	// the open that joined it. Each caller still stops waiting with its own ctx.
+	quick := waitedOn(ctx)
+	ch := c.sf.DoChan(key, func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
 		params.Set("api_key", c.key)
 		var body []byte
 		limiter, perTry := c.limiter, 15*time.Second
-		if ctx.Value(interactiveKey{}) != nil {
+		if quick {
 			// A stalled connection is retried sooner than the client's timeout.
 			limiter, perTry = c.quick, 6*time.Second
 		}
@@ -154,14 +174,27 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, maxAge
 			case resp.StatusCode >= 300:
 				return nil, fmt.Errorf("tmdb %s: %s", path, resp.Status)
 			}
-			c.cache.CachePut(ctx, "tmdb:"+key, body)
 			c.remember(key, body)
+			if quick {
+				// The memory copy serves it from now on, so the page doesn't
+				// also wait on the database's write lock to persist it.
+				go c.cache.CachePut(context.WithoutCancel(ctx), "tmdb:"+key, body)
+			} else {
+				c.cache.CachePut(ctx, "tmdb:"+key, body)
+			}
 			return body, nil
 		}
 		return nil, fmt.Errorf("tmdb %s: rate limited", path)
 	})
-	if err != nil {
-		return err
+	var v any
+	select {
+	case r := <-ch:
+		if r.Err != nil {
+			return r.Err
+		}
+		v = r.Val
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 	return json.Unmarshal(v.([]byte), out)
 }

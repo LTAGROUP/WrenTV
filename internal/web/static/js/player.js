@@ -22,8 +22,13 @@ const ico = {
   vol: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9v6h4l5 4V5L8 9z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 010 7M19 6a8.5 8.5 0 010 12"/></svg>',
   mute: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9v6h4l5 4V5L8 9z" fill="currentColor"/><path d="M17 9l5 6M22 9l-5 6"/></svg>',
   chapters: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h11M4 12h16M4 18h9"/><circle cx="19" cy="6" r="1.5" fill="currentColor"/><circle cx="17" cy="18" r="1.5" fill="currentColor"/></svg>',
+  episodes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="13" height="10" rx="2"/><path d="M7 19h13M20 9v10"/></svg>',
   full: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
 };
+
+// UPNEXT_LEAD is how many seconds before an unmarked episode ends the
+// next-episode countdown starts.
+const UPNEXT_LEAD = 30;
 
 let current = null;
 
@@ -61,7 +66,7 @@ class Player {
         <select data-audio data-caption="Audio" title="Audio" hidden></select>
         <select data-subs data-caption="Subtitles" title="Subtitles" hidden></select>
         <select data-quality data-caption="Quality" title="Quality">${qualities.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
-        <button class="btn ghost small" data-info title="Playback info">ⓘ</button>
+        <button class="btn ghost small" data-info title="Stats for nerds (I)">ⓘ</button>
       </div>
       <div class="controls">
         <div class="timeline" data-timeline><div class="track"><div class="buf"></div><div class="done"></div><div class="marks"></div></div>
@@ -74,6 +79,7 @@ class Player {
           <span class="chap"></span>
           <button class="cbtn" data-mute title="Mute (M)">${ico.vol}</button>
           <input type="range" min="0" max="1" step="0.05" data-volume aria-label="Volume">
+          <button class="cbtn" data-episodes title="Episodes (E)" hidden>${ico.episodes}</button>
           <button class="cbtn" data-chapters title="Chapters (C)" hidden>${ico.chapters}</button>
           <button class="cbtn" data-full title="Full screen (F)">${ico.full}</button>
         </div>
@@ -90,7 +96,7 @@ class Player {
     const r = this.root;
     const v = this.video;
     $('[data-close]', r).onclick = () => this.close();
-    $('[data-info]', r).onclick = () => this.showInfo();
+    $('[data-info]', r).onclick = () => this.toggleStats();
     $('[data-quality]', r).onchange = (e) => {
       this.quality = e.target.value;
       lsSet('wrentv.quality', this.quality);
@@ -105,12 +111,21 @@ class Player {
       this.subsPicked = false;
       this.reload();
     };
-    $('[data-subs]', r).onchange = (e) => { this.subsPicked = true; this.selectSubs(e.target.value); };
+    $('[data-subs]', r).onchange = (e) => {
+      if (e.target.value === 'online') {
+        e.target.value = this.subsValue || '';
+        this.searchSubs();
+        return;
+      }
+      this.subsPicked = true;
+      this.selectSubs(e.target.value);
+    };
     $('[data-toggle]', r).onclick = () => this.toggle();
     $('[data-back]', r).onclick = () => this.seek(v.currentTime - 10);
     $('[data-fwd]', r).onclick = () => this.seek(v.currentTime + 10);
     $('[data-full]', r).onclick = () => this.toggleFullscreen();
     $('[data-chapters]', r).onclick = () => this.toggleChapters();
+    $('[data-episodes]', r).onclick = () => this.toggleEpisodes();
     $('[data-mute]', r).onclick = () => { v.muted = !v.muted; };
     $('[data-volume]', r).oninput = (e) => { v.volume = Number(e.target.value); v.muted = v.volume === 0; lsSet('wrentv.volume', v.volume); };
     this.bindTimeline();
@@ -119,7 +134,7 @@ class Player {
       if (e.target.closest?.('select, input, .dd-menu')) return;
       const k = e.key;
       if (k === 'Escape') {
-        if ($('.chapters', r)) return this.toggleChapters(false);
+        if ($('.chapters', r)) return $('.chapters', r).remove();
         if (!document.fullscreenElement) this.close();
       } else if (k === 'f') this.toggleFullscreen();
       else if (k === ' ' || k === 'k') { e.preventDefault(); this.toggle(); }
@@ -127,6 +142,8 @@ class Player {
       else if (k === 'ArrowLeft') { e.preventDefault(); this.seek(v.currentTime - 10); }
       else if (k === 'm') v.muted = !v.muted;
       else if (k === 'c' && this.chapters.length) this.toggleChapters();
+      else if (k === 'e' && this.item?.kind === 'episode') this.toggleEpisodes();
+      else if (k === 'i') this.toggleStats();
       else if (k === 's') $('.skip', r)?.click();
       else return;
       this.onMove();
@@ -160,6 +177,7 @@ class Player {
       this.show = d.show;
       $('h2', r).textContent = this.item.kind === 'episode' ? this.show?.title || this.item.title : this.item.title;
       $('.sub', r).textContent = this.item.kind === 'episode' ? `S${this.item.seasonNumber} · E${this.item.episodeNumber} — ${this.item.title}` : this.item.year || '';
+      $('[data-episodes]', r).hidden = this.item.kind !== 'episode';
       const bg = this.item.backdropPath || this.show?.backdropPath;
       if (bg) v.poster = img(bg, 'w1280');
     } catch {}
@@ -177,14 +195,19 @@ class Player {
     this.setWait('Starting…');
     const { caps, maxWidth } = this.caps();
     let res;
+    // A play started again after a failure gets a fresh link, and the
+    // version that broke is skipped; only the first ask says so.
+    let retry = this.failed ? { retry: true, failedFileId: this.failed } : {};
+    this.failed = undefined;
     for (;;) {
       if (this.closed) return;
       try {
-        res = await api(`/api/items/${this.itemId}/play`, { method: 'POST', body: { caps, maxWidth, fileId: this.fileId, audioIndex: this.audioIndex } });
+        res = await api(`/api/items/${this.itemId}/play`, { method: 'POST', body: { caps, maxWidth, fileId: this.fileId, audioIndex: this.audioIndex, ...retry } });
       } catch (e) {
         this.setWait(e.message, true);
         return;
       }
+      retry = {};
       if (res.status === 'ready') break;
       this.setWait(res.message || 'Preparing stream…');
       await new Promise((ok) => setTimeout(ok, 4000));
@@ -249,9 +272,11 @@ class Player {
       hls.on(window.Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
         if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-        else {
+        else if (data.response?.code === 410) {
           this.setWait('Playback failed: ' + (data.details || data.type), true);
-          if (data.response?.code === 410) this.report(true); // stopped: the progress answer says why
+          this.report(true); // stopped: the progress answer says why
+        } else if (!this.recover()) {
+          this.setWait('Playback failed: ' + (data.details || data.type), true);
         }
       });
       hls.loadSource(url);
@@ -355,9 +380,11 @@ class Player {
   }
 
   // updateSkip shows "Skip Intro" inside the intro, and at the credits either
-  // the next-episode countdown or "Skip Credits".
+  // the next-episode countdown or "Skip Credits". An episode with no credits
+  // marker gets the countdown over its last seconds instead.
   updateSkip(t) {
-    const { intro, credits } = this.markers;
+    const { intro } = this.markers;
+    const credits = this.markers.credits || this.closingStretch();
     const inIntro = intro && t >= intro.start && t < intro.end - 1 && !this.dismissed.has('intro');
     const inCredits = credits && t >= credits.start && t < credits.end - 1 && !this.dismissed.has('credits');
     let btn = $('.skip', this.root);
@@ -380,12 +407,20 @@ class Player {
     this.creditsShown = true;
     if (this.item?.kind === 'episode') {
       this.nextEpisode().then((next) => {
-        if (next) this.showUpNext(next, { atCredits: true });
-        else this.showSkipCredits();
+        if (next) this.showUpNext(next, { atCredits: !credits.guessed });
+        else if (!credits.guessed) this.showSkipCredits();
       });
     } else {
       this.showSkipCredits();
     }
+  }
+
+  // closingStretch stands in for unmarked credits on an episode: long enough
+  // before the end that the countdown finishes before the picture does.
+  closingStretch() {
+    const d = this.dur();
+    if (this.item?.kind !== 'episode' || d < 300) return null;
+    return { start: d - UPNEXT_LEAD, end: d + 1, guessed: true };
   }
 
   showSkipCredits() {
@@ -405,10 +440,11 @@ class Player {
   toggleChapters(force) {
     const r = this.root;
     const open = $('.chapters', r);
-    if (open || force === false) { open?.remove(); return; }
+    open?.remove();
+    if (open?.dataset.panel === 'chapters' || force === false) return;
     const t = this.video.currentTime;
     const cur = this.chapterAt(t);
-    const menu = el(`<div class="chapters"><h3>Chapters</h3>${this.chapters.map((c, i) => `<button data-i="${i}" class="${c === cur ? 'cur' : ''}">
+    const menu = el(`<div class="chapters" data-panel="chapters"><h3>Chapters</h3>${this.chapters.map((c, i) => `<button data-i="${i}" class="${c === cur ? 'cur' : ''}">
       <span class="ts">${fmtDuration(c.start)}</span><span class="t">${esc(c.title || `Chapter ${i + 1}`)}</span></button>`).join('')}</div>`);
     for (const b of $$('button', menu)) b.onclick = () => { this.seek(this.chapters[Number(b.dataset.i)].start); menu.remove(); };
     r.append(menu);
@@ -431,15 +467,17 @@ class Player {
     const text = subs.filter((s) => s.url);
     sel.innerHTML = `<option value="">Subtitles off</option>` + subs.map((s) => s.url
       ? `<option value="${s.index}">${esc(trackLabel(s))}</option>`
-      : `<option value="${s.index}" disabled>${esc(trackLabel(s))} (picture, app only)</option>`).join('');
+      : `<option value="${s.index}" disabled>${esc(trackLabel(s))} (picture, app only)</option>`).join('')
+      + (this.res.onlineSubtitles ? '<option value="online">Search online…</option>' : '');
     // Keep the viewer's choice across reloads (quality changes); otherwise use
     // the track the server picked from their subtitle language setting.
     const pick = this.subsPicked ? prev : String(this.res.subtitleIndex ?? -1);
     sel.value = text.some((s) => String(s.index) === pick) ? pick : '';
-    sel.hidden = !subs.length;
+    sel.hidden = !subs.length && !this.res.onlineSubtitles;
   }
 
   selectSubs(index) {
+    this.subsValue = index;
     const gen = (this.subsGen = (this.subsGen || 0) + 1);
     clearTimeout(this.subsTimer);
     const v = this.video;
@@ -475,6 +513,19 @@ class Player {
     load();
   }
 
+  // recover starts a stream that broke partway again from the same spot,
+  // once every two minutes: the server resolves a fresh link, or plays
+  // another version if this one keeps failing.
+  recover() {
+    const now = Date.now();
+    if (!this.res?.fileId || now - (this.lastRecover || 0) < 120000) return false;
+    this.lastRecover = now;
+    this.failed = this.res.fileId;
+    if (!this.pinnedFile) this.fileId = undefined;
+    this.reload();
+    return true;
+  }
+
   async reload() {
     const at = this.video.currentTime || 0;
     await this.stopSession();
@@ -494,6 +545,8 @@ class Player {
   mediaError() {
     const err = this.video.error;
     if (!err || this.hls) return;
+    // A network error partway through is the stream breaking, not the browser.
+    if (err.code === MediaError.MEDIA_ERR_NETWORK && this.video.currentTime > 0 && this.recover()) return;
     this.setWait(`This browser can't play this stream (${err.message || 'error ' + err.code}). Try a lower quality.`, true);
     this.report(true);
   }
@@ -577,13 +630,137 @@ class Player {
     $('[data-x]', card).onclick = () => { clearInterval(timer); card.remove(); this.dismissed.add('credits'); };
   }
 
-  showInfo() {
+  // ---------- stats
+
+  // toggleStats shows what's playing and how, refreshed every second.
+  toggleStats() {
+    const open = $('.stats', this.root);
+    clearInterval(this.statsTimer);
+    if (open) { open.remove(); return; }
+    const box = el('<div class="stats"><button class="x" title="Close (I)">×</button><dl></dl></div>');
+    $('.x', box).onclick = () => this.toggleStats();
+    this.root.append(box);
+    const draw = () => { if (box.isConnected) $('dl', box).innerHTML = this.statsRows().map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join(''); };
+    draw();
+    this.statsTimer = setInterval(draw, 1000);
+  }
+
+  statsRows() {
     const r = this.res;
-    if (!r) return;
+    if (!r) return [['Status', 'Starting']];
     const d = r.decision || {};
-    const v = r.info?.video?.[0];
-    const mk = r.markers?.source ? ` · skip markers from ${r.markers.source}` : '';
-    toast(`${d.method?.toUpperCase()} · video ${d.videoCopy ? 'original' : 'transcoded'} (${v?.codec || '?'}${v?.hdr ? ' ' + v.hdr : ''}) · audio ${d.audioCopy ? 'original' : '→ ' + (d.audioCodec || '').toUpperCase()}${mk}${(d.reasons || []).length ? ' — ' + d.reasons.join('; ') : ''}`, 7000);
+    const info = r.info || {};
+    const v = info.video?.[0];
+    const a = (info.audio || []).find((x) => x.typeIndex === d.audioIndex) || info.audio?.[0];
+    const vid = this.video;
+    const mbps = (b) => (b ? `${(b / 1e6).toFixed(1)} Mbps` : '');
+    let ahead = 0;
+    for (let i = 0; i < vid.buffered.length; i++) {
+      if (vid.buffered.start(i) <= vid.currentTime + 0.5) ahead = Math.max(ahead, vid.buffered.end(i) - vid.currentTime);
+    }
+    const q = vid.getVideoPlaybackQuality?.();
+    const version = (r.versions || []).find((x) => x.id === r.fileId)?.label;
+    const rows = [
+      ['Playback', `${(d.method || '').toUpperCase()}${d.engine ? ' · ' + d.engine : ''}`],
+      ['Version', version || ''],
+      ['Container', info.container || ''],
+      ['Video', v ? `${v.codec || '?'} ${v.width}×${v.height}${v.hdr ? ' ' + v.hdr : ''} → ${d.videoCopy ? 'original' : 'transcoded'}` : ''],
+      ['Audio', a ? `${a.codec || '?'}${a.channels ? ' ' + a.channels + 'ch' : ''}${a.language ? ' · ' + a.language : ''} → ${d.audioCopy ? 'original' : (d.audioCodec || '').toUpperCase()}` : ''],
+      ['Source bitrate', mbps(info.bitrate)],
+      ['Showing', vid.videoWidth ? `${vid.videoWidth}×${vid.videoHeight}` : ''],
+      ['Buffer ahead', `${ahead.toFixed(1)} s`],
+      ['Dropped frames', q ? `${q.droppedVideoFrames} of ${q.totalVideoFrames}` : ''],
+      ['Connection', this.hls?.bandwidthEstimate ? mbps(this.hls.bandwidthEstimate) : ''],
+      ['Skip markers', r.markers?.source || 'none'],
+      ['Why', (d.reasons || []).join('; ')],
+    ];
+    return rows.filter(([, val]) => val);
+  }
+
+  // ---------- episodes
+
+  // toggleEpisodes lists the season's episodes (and the show's other
+  // seasons) to jump to.
+  async toggleEpisodes(seasonId) {
+    const r = this.root;
+    const open = $('.chapters', r);
+    open?.remove();
+    if (open?.dataset.panel === 'episodes' && !seasonId) return;
+    const it = this.item;
+    if (!it || it.kind !== 'episode') return;
+    const menu = el('<div class="chapters wide" data-panel="episodes"><h3>Episodes</h3><div class="muted small" style="padding:8px 10px">Loading…</div></div>');
+    r.append(menu);
+    try {
+      const [seasons, eps] = await Promise.all([
+        this.seasons || api(`/api/items/${it.showId}/children`).then((x) => (this.seasons = x.filter((s) => s.kind === 'season'))),
+        api(`/api/items/${seasonId || it.parentId}/children`),
+      ]);
+      if (!menu.isConnected) return;
+      const cur = seasonId || it.parentId;
+      menu.innerHTML = `<div class="ep-head"><h3>Episodes</h3>${seasons.length > 1
+        ? `<select data-season>${seasons.map((s) => `<option value="${esc(s.id)}" ${s.id === cur ? 'selected' : ''}>${esc(s.title || 'Season ' + s.seasonNumber)}</option>`).join('')}</select>` : ''}</div>`
+        + eps.map((e) => `<button data-id="${esc(e.id)}" class="ep ${e.id === this.itemId ? 'cur' : ''}">
+          <span class="still">${e.stillPath ? `<img src="${img(e.stillPath, 'w300')}" alt="" loading="lazy">` : ''}${e.progress?.watched ? '<i class="seen">✓</i>' : ''}</span>
+          <span class="t"><b>${e.episodeNumber}. ${esc(e.title)}</b>${e.runtimeMin ? `<span class="muted small">${e.runtimeMin} min</span>` : ''}</span></button>`).join('');
+      $('[data-season]', menu)?.addEventListener('change', (e) => this.toggleEpisodes(e.target.value));
+      for (const b of $$('button[data-id]', menu)) {
+        b.onclick = () => {
+          if (b.dataset.id === this.itemId) { menu.remove(); return; }
+          openPlayer(b.dataset.id, { ...this.opts, start: undefined, resume: true, fileId: undefined });
+        };
+      }
+      $('.cur', menu)?.scrollIntoView({ block: 'center' });
+    } catch (e) {
+      if (menu.isConnected) menu.innerHTML = `<h3>Episodes</h3><div class="error small" style="padding:8px 10px">${esc(e.message)}</div>`;
+    }
+  }
+
+  // ---------- online subtitles
+
+  // searchSubs looks the title up on the subtitle sites the server has keys
+  // for; a pick is fetched, kept for later plays, and turned on.
+  async searchSubs(lang) {
+    const r = this.root;
+    $('.chapters', r)?.remove();
+    const menu = el(`<div class="chapters wide" data-panel="subs"><div class="ep-head"><h3>Online subtitles</h3>
+      <input data-lang placeholder="Languages, e.g. en,fr" value="${esc(lang || '')}" aria-label="Languages"></div>
+      <div data-list><div class="muted small" style="padding:8px 10px">Searching…</div></div></div>`);
+    r.append(menu);
+    const input = $('[data-lang]', menu);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.searchSubs(input.value.trim()); e.stopPropagation(); });
+    const list = $('[data-list]', menu);
+    try {
+      const d = await api(`/api/items/${this.itemId}/subtitles/online${lang ? '?lang=' + encodeURIComponent(lang) : ''}`);
+      if (!menu.isConnected) return;
+      const rs = d.results || [];
+      if (!rs.length) { list.innerHTML = '<div class="muted small" style="padding:8px 10px">Nothing found. Try other languages.</div>'; return; }
+      list.innerHTML = rs.map((x, i) => `<button data-i="${i}"><span class="ts">${esc((x.language || '?').toUpperCase())}</span>
+        <span class="t">${esc(x.name)}<span class="muted small" style="display:block">${esc(x.provider)}${x.downloads ? ` · ${x.downloads.toLocaleString()} downloads` : ''}${x.hearingImpaired ? ' · SDH' : ''}${x.machineTranslated ? ' · machine translated' : ''}</span></span></button>`).join('');
+      for (const b of $$('button', list)) b.onclick = () => this.fetchSub(rs[Number(b.dataset.i)], b, menu);
+    } catch (e) {
+      if (menu.isConnected) list.innerHTML = `<div class="error small" style="padding:8px 10px">${esc(e.message)}</div>`;
+    }
+  }
+
+  async fetchSub(x, btn, menu) {
+    btn.disabled = true;
+    btn.classList.add('cur');
+    try {
+      const t = await api(`/api/items/${this.itemId}/subtitles/online`, { method: 'POST', body: { ...x, sessionId: this.sid } });
+      if (this.closed || !this.res) return;
+      const subs = (this.res.subtitles ||= []);
+      if (!subs.some((s) => s.index === t.index)) subs.push(t);
+      this.subsPicked = true;
+      this.fillTracks();
+      $('[data-subs]', this.root).value = String(t.index);
+      this.selectSubs(String(t.index));
+      menu.remove();
+      toast('Subtitles on: ' + (t.title || t.language));
+    } catch (e) {
+      btn.disabled = false;
+      btn.classList.remove('cur');
+      toast(e.message, 6000);
+    }
   }
 
   toggleFullscreen() {
@@ -610,6 +787,7 @@ class Player {
     if (this.closed) return;
     this.report(true);
     this.closed = true;
+    clearInterval(this.statsTimer);
     document.removeEventListener('keydown', this.onKey);
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     await this.stopSession();

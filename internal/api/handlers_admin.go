@@ -61,6 +61,8 @@ type settingsView struct {
 	TMDBKeySet      bool                    `json:"tmdbKeySet"`
 	OMDbKeySet      bool                    `json:"omdbKeySet"`
 	Fingerprint     bool                    `json:"markerFingerprinting"`
+	Community       bool                    `json:"markerCommunity"`
+	Subtitles       subtitlesView           `json:"subtitles"`
 	Streaming       streamingView           `json:"streaming"`
 	UserDefaults    config.UserLimitsConfig `json:"userDefaults"`
 	Webhooks        []config.WebhookConfig  `json:"webhooks"`
@@ -69,6 +71,20 @@ type settingsView struct {
 	RemoteAccess    *remoteAccessView       `json:"remoteAccess,omitempty"`
 	LiveTV          liveTVView              `json:"liveTv"`
 	RestartRequired bool                    `json:"restartRequired,omitempty"`
+}
+
+type subtitlesView struct {
+	OpenSubtitlesKeySet      bool   `json:"openSubtitlesKeySet"`
+	OpenSubtitlesUsername    string `json:"openSubtitlesUsername"`
+	OpenSubtitlesPasswordSet bool   `json:"openSubtitlesPasswordSet"`
+	SubDLKeySet              bool   `json:"subdlKeySet"`
+}
+
+type subtitlesPatch struct {
+	OpenSubtitlesAPIKey   *string `json:"openSubtitlesApiKey"`
+	OpenSubtitlesUsername *string `json:"openSubtitlesUsername"`
+	OpenSubtitlesPassword *string `json:"openSubtitlesPassword"`
+	SubDLAPIKey           *string `json:"subdlApiKey"`
 }
 
 type streamingView struct {
@@ -84,6 +100,7 @@ type streamingView struct {
 	Prefetch        bool                   `json:"prefetch"`
 	LookupOnOpen    bool                   `json:"lookupOnOpen"`
 	CheckAddonLinks bool                   `json:"checkAddonLinks"`
+	LinkTTLMinutes  map[string]int         `json:"linkTTLMinutes"`
 	Mode            string                 `json:"mode"`
 	MovieLibrary    string                 `json:"movieLibrary"`
 	ShowLibrary     string                 `json:"showLibrary"`
@@ -147,7 +164,7 @@ func (s *Server) settings() settingsView {
 	}
 	st := c.Streaming
 	sv := streamingView{Enabled: st.Enabled, Active: s.Streaming.Active(), Addons: nonNil(st.Addons), Qualities: nonNil(st.Qualities),
-		PerQuality: max(st.PerQuality, 1), Usenet: st.Usenet, MaxSizeGB: st.MaxSizeGB, Prefetch: st.Prefetch, LookupOnOpen: st.LookupOnOpen, CheckAddonLinks: st.CheckAddonLinks, Mode: st.Mode, MovieLibrary: st.MovieLibrary, ShowLibrary: st.ShowLibrary,
+		PerQuality: max(st.PerQuality, 1), Usenet: st.Usenet, MaxSizeGB: st.MaxSizeGB, Prefetch: st.Prefetch, LookupOnOpen: st.LookupOnOpen, CheckAddonLinks: st.CheckAddonLinks, LinkTTLMinutes: nonNilMap(st.LinkTTLMinutes), Mode: st.Mode, MovieLibrary: st.MovieLibrary, ShowLibrary: st.ShowLibrary,
 		DownloadQuality: st.DownloadQuality, Limits: st.Limits, Debrid: []debridView{},
 		UsenetCacheMB: st.UsenetCacheMB, UsenetDiskGB: st.UsenetDiskCacheGB, ExcludeWords: nonNil(st.ExcludeWords)}
 	if sv.MaxSizeGB == nil {
@@ -175,7 +192,9 @@ func (s *Server) settings() settingsView {
 	}
 	return settingsView{
 		ServerName: c.ServerName, PublicURL: c.PublicURL, HWAccel: c.Transcode.HWAccel, TMDBKeySet: c.Metadata.TMDBAPIKey != "",
-		OMDbKeySet: c.Metadata.OMDbAPIKey != "", Fingerprint: c.Markers.Fingerprint, Streaming: sv, UserDefaults: c.Users,
+		OMDbKeySet: c.Metadata.OMDbAPIKey != "", Fingerprint: c.Markers.Fingerprint, Community: c.Markers.Community, Streaming: sv,
+		Subtitles: subtitlesView{OpenSubtitlesKeySet: c.Subtitles.OpenSubtitles.APIKey != "", OpenSubtitlesUsername: c.Subtitles.OpenSubtitles.Username,
+			OpenSubtitlesPasswordSet: c.Subtitles.OpenSubtitles.Password != "", SubDLKeySet: c.Subtitles.SubDL.APIKey != ""}, UserDefaults: c.Users,
 		Webhooks: hooks, IntegrationKey: c.IntegrationKey, SimklClientID: c.Simkl.ClientID, RemoteAccess: s.remoteAccess(), LiveTV: s.liveTVView(),
 	}
 }
@@ -221,6 +240,7 @@ type streamingPatch struct {
 	Prefetch        *bool                   `json:"prefetch"`
 	LookupOnOpen    *bool                   `json:"lookupOnOpen"`
 	CheckAddonLinks *bool                   `json:"checkAddonLinks"`
+	LinkTTLMinutes  *map[string]int         `json:"linkTTLMinutes"`
 	Mode            *string                 `json:"mode"`
 	MovieLibrary    *string                 `json:"movieLibrary"`
 	ShowLibrary     *string                 `json:"showLibrary"`
@@ -409,6 +429,18 @@ func (s *Server) applyStreaming(r *http.Request, p *streamingPatch) error {
 	if p.CheckAddonLinks != nil {
 		c.CheckAddonLinks = *p.CheckAddonLinks
 	}
+	if p.LinkTTLMinutes != nil {
+		ttl := map[string]int{}
+		for k, v := range *p.LinkTTLMinutes {
+			if v < 0 || v > 7*24*60 {
+				return fmt.Errorf("a link lifetime must be between 0 and a week")
+			}
+			if v > 0 {
+				ttl[k] = v
+			}
+		}
+		c.LinkTTLMinutes = ttl
+	}
 	if p.Mode != nil {
 		if *p.Mode != "stream" && *p.Mode != "download" {
 			return fmt.Errorf("mode must be stream or download")
@@ -456,6 +488,8 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		TMDBAPIKey   *string                  `json:"tmdbApiKey"`
 		OMDbAPIKey   *string                  `json:"omdbApiKey"`
 		Fingerprint  *bool                    `json:"markerFingerprinting"`
+		Community    *bool                    `json:"markerCommunity"`
+		Subtitles    *subtitlesPatch          `json:"subtitles"`
 		Streaming    *streamingPatch          `json:"streaming"`
 		LiveTV       *liveTVPatch             `json:"liveTv"`
 		UserDefaults *config.UserLimitsConfig `json:"userDefaults"`
@@ -494,6 +528,23 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		c.Markers.Fingerprint = *req.Fingerprint
 		if c.Markers.Fingerprint && s.Markers != nil {
 			s.Markers.Kick()
+		}
+	}
+	if req.Community != nil {
+		c.Markers.Community = *req.Community
+	}
+	if p := req.Subtitles; p != nil {
+		oc := &c.Subtitles.OpenSubtitles
+		for _, f := range []struct {
+			from *string
+			to   *string
+		}{{p.OpenSubtitlesAPIKey, &oc.APIKey}, {p.OpenSubtitlesUsername, &oc.Username}, {p.SubDLAPIKey, &c.Subtitles.SubDL.APIKey}} {
+			if f.from != nil {
+				*f.to = strings.TrimSpace(*f.from)
+			}
+		}
+		if p.OpenSubtitlesPassword != nil {
+			oc.Password = *p.OpenSubtitlesPassword
 		}
 	}
 	if req.Streaming != nil {

@@ -563,7 +563,16 @@ data class ClientCaps(
 )
 
 @Serializable
-data class PlayRequest(val fileId: String? = null, val audioIndex: Int? = null, val caps: ClientCaps, val maxWidth: Int? = null)
+data class PlayRequest(
+    val fileId: String? = null,
+    val audioIndex: Int? = null,
+    val caps: ClientCaps,
+    val maxWidth: Int? = null,
+    /** Started again after a failure: the server resolves a fresh link. */
+    val retry: Boolean = false,
+    /** The version that broke while playing; the server plays another if it has one. */
+    val failedFileId: String? = null,
+)
 
 @Serializable
 data class Decision(
@@ -607,7 +616,24 @@ data class PlayResponse(
     val versions: List<MediaVersion>? = null,
     /** Seek bar frames, when the server makes them. */
     val thumbs: SeekThumbs? = null,
+    /** The server can search subtitle sites for this title. */
+    val onlineSubtitles: Boolean = false,
 )
+
+/** A subtitle a subtitle site has for the title. */
+@Serializable
+data class OnlineSubtitle(
+    val provider: String,
+    val id: String,
+    val name: String = "",
+    val language: String = "",
+    val downloads: Int = 0,
+    val hearingImpaired: Boolean = false,
+    val machineTranslated: Boolean = false,
+)
+
+@Serializable
+data class OnlineSubtitleSearch(val enabled: Boolean = false, val results: List<OnlineSubtitle> = emptyList())
 
 /** Frame n (url + n + ".jpg") is the picture at n × interval seconds. */
 @Serializable

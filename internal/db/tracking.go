@@ -233,6 +233,50 @@ func (d *DB) ApplyExternalWatched(ctx context.Context) error {
 	return tx.Commit()
 }
 
+// ApplyExternalWatchedFor is ApplyExternalWatched for one title, by its kind
+// ("movie" or "show") and TMDB id: what a title just added needs, without
+// sweeping every user's marks.
+func (d *DB) ApplyExternalWatchedFor(ctx context.Context, kind string, tmdbID int) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var qs []string
+	switch kind {
+	case "movie":
+		qs = []string{
+			`INSERT INTO watch_state (user_id, item_id, position, duration, watched, updated_at)
+				SELECT x.user_id, i.id, 0, 0, 1, x.watched_at FROM external_watched x
+				JOIN items i ON i.kind='movie' AND i.tmdb_id=x.tmdb_id WHERE x.kind='movie' AND x.tmdb_id=?1
+				ON CONFLICT(user_id, item_id) DO UPDATE SET watched=1, position=0 WHERE watch_state.watched=0`,
+			`DELETE FROM external_watched WHERE kind='movie' AND tmdb_id=?1
+				AND EXISTS (SELECT 1 FROM items i WHERE i.kind='movie' AND i.tmdb_id=?1)`,
+		}
+	case "show":
+		qs = []string{
+			`INSERT INTO watch_state (user_id, item_id, position, duration, watched, updated_at)
+				SELECT x.user_id, e.id, 0, 0, 1, x.watched_at FROM external_watched x
+				JOIN items s ON s.kind='show' AND s.tmdb_id=x.tmdb_id
+				JOIN items e ON e.show_id=s.id AND e.kind='episode' AND e.season_number=x.season AND e.episode_number=x.episode
+				WHERE x.kind='episode' AND x.tmdb_id=?1
+				ON CONFLICT(user_id, item_id) DO UPDATE SET watched=1, position=0 WHERE watch_state.watched=0`,
+			`DELETE FROM external_watched WHERE tmdb_id=?1 AND (
+				(kind='show' AND EXISTS (SELECT 1 FROM items i WHERE i.kind='show' AND i.tmdb_id=?1))
+				OR (kind='episode' AND EXISTS (SELECT 1 FROM items s JOIN items e ON e.show_id=s.id AND e.kind='episode'
+					WHERE s.kind='show' AND s.tmdb_id=?1 AND e.season_number=external_watched.season AND e.episode_number=external_watched.episode)))`,
+		}
+	default:
+		return nil
+	}
+	for _, q := range qs {
+		if _, err := tx.ExecContext(ctx, q, tmdbID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // ExternalWatched reports which of these movies or shows (by TMDB id) a
 // user watched elsewhere; a show counts once it's finished.
 func (d *DB) ExternalWatched(ctx context.Context, userID, kind string, tmdbIDs []int) (map[int]bool, error) {
@@ -257,4 +301,75 @@ func (d *DB) ExternalWatched(ctx context.Context, userID, kind string, tmdbIDs [
 		out[id] = true
 	}
 	return out, rows.Err()
+}
+
+// ExternalProgress is where a tracker says a user paused a title the server
+// doesn't have, by TMDB id (the show's, for an episode).
+type ExternalProgress struct {
+	Kind     string // "movie" or "episode"
+	TMDBID   int
+	Season   int
+	Episode  int
+	Percent  float64
+	PausedAt int64
+}
+
+// ImportExternalProgress keeps pause points for titles the server doesn't
+// have.
+func (d *DB) ImportExternalProgress(ctx context.Context, userID string, ps []ExternalProgress) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	st, err := tx.PrepareContext(ctx, `INSERT INTO external_progress (user_id, kind, tmdb_id, season, episode, percent, paused_at) VALUES (?,?,?,?,?,?,?)
+		ON CONFLICT DO UPDATE SET percent=excluded.percent, paused_at=excluded.paused_at WHERE excluded.paused_at >= external_progress.paused_at`)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	for _, p := range ps {
+		if p.PausedAt <= 0 {
+			p.PausedAt = Now()
+		}
+		if _, err := st.ExecContext(ctx, userID, p.Kind, p.TMDBID, p.Season, p.Episode, p.Percent, p.PausedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ApplyExternalProgressFor turns pause points for one title just added (kind
+// "movie" or "show", by TMDB id) into resume positions from its runtime,
+// then drops them. A pause older than the user's own progress loses.
+func (d *DB) ApplyExternalProgressFor(ctx context.Context, kind string, tmdbID int) error {
+	var match string
+	switch kind {
+	case "movie":
+		match = `JOIN items i ON i.kind='movie' AND i.tmdb_id=x.tmdb_id WHERE x.kind='movie'`
+	case "show":
+		match = `JOIN items s ON s.kind='show' AND s.tmdb_id=x.tmdb_id
+			JOIN items i ON i.show_id=s.id AND i.kind='episode' AND i.season_number=x.season AND i.episode_number=x.episode
+			WHERE x.kind='episode'`
+	default:
+		return nil
+	}
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`INSERT INTO watch_state (user_id, item_id, position, duration, watched, updated_at)
+			SELECT x.user_id, i.id, i.runtime_min*60*x.percent/100, i.runtime_min*60, 0, x.paused_at FROM external_progress x
+			` + match + ` AND x.tmdb_id=?1 AND i.runtime_min > 0
+			ON CONFLICT(user_id, item_id) DO UPDATE SET position=excluded.position, duration=excluded.duration, updated_at=excluded.updated_at
+			WHERE watch_state.watched=0 AND watch_state.updated_at < excluded.updated_at`,
+		`DELETE FROM external_progress WHERE rowid IN (SELECT x.rowid FROM external_progress x ` + match + ` AND x.tmdb_id=?1)`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, tmdbID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

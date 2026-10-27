@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -359,21 +360,28 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 		return movies, episodes, nil
 	}
 	resumed := 0
+	var elsewhere []db.ExternalProgress
 	for _, pb := range paused {
 		if pb.Progress <= 0 || pb.Progress >= 100 {
 			continue
 		}
 		var id string
 		if pb.Movie != nil {
-			id = m.find("movie", pb.Movie)
+			if id = m.find("movie", pb.Movie); id == "" {
+				if t := tmdbOf(pb.Movie); t > 0 {
+					elsewhere = append(elsewhere, db.ExternalProgress{Kind: "movie", TMDBID: t, Season: -1, Episode: -1, Percent: pb.Progress, PausedAt: when(pb.When())})
+				}
+			}
 		} else if show := cmp.Or(pb.Show, pb.Anime); show != nil {
+			sn, en := pb.SeasonEpisode()
 			if showID := m.find("show", show); showID != "" {
 				eps, err := episodeIDs(showID)
 				if err != nil {
 					return movies, episodes, err
 				}
-				sn, en := pb.SeasonEpisode()
 				id = eps[[2]int{sn, en}]
+			} else if t := tmdbOf(show); t > 0 && en > 0 {
+				elsewhere = append(elsewhere, db.ExternalProgress{Kind: "episode", TMDBID: t, Season: sn, Episode: en, Percent: pb.Progress, PausedAt: when(pb.When())})
 			}
 		}
 		if id == "" {
@@ -393,7 +401,46 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 	if resumed > 0 {
 		slog.Info("simkl import", "user", userID, "resumable", resumed)
 	}
+	if err := s.DB.ImportExternalProgress(ctx, userID, elsewhere); err != nil {
+		return movies, episodes, err
+	}
+	s.addPaused(ctx, userID, elsewhere)
 	return movies, episodes, nil
+}
+
+// maxPausedAdds caps how many titles one import adds for Continue Watching.
+const maxPausedAdds = 20
+
+// addPaused adds the most recently paused titles the server doesn't have to
+// the streaming library, where their pause points become resume positions.
+func (s *Service) addPaused(ctx context.Context, userID string, ps []db.ExternalProgress) {
+	if s.AddTitle == nil || len(ps) == 0 {
+		return
+	}
+	sort.Slice(ps, func(i, j int) bool { return ps[i].PausedAt > ps[j].PausedAt })
+	seen := map[[2]any]bool{}
+	for _, p := range ps {
+		kind := map[string]string{"movie": "movie", "episode": "show"}[p.Kind]
+		k := [2]any{kind, p.TMDBID}
+		if seen[k] {
+			continue
+		}
+		if seen[k] = true; len(seen) > maxPausedAdds {
+			return
+		}
+		if err := s.AddTitle(ctx, userID, kind, p.TMDBID); err != nil {
+			slog.Warn("simkl paused title", "kind", kind, "tmdb", p.TMDBID, "err", err)
+			if ctx.Err() != nil {
+				return
+			}
+			continue
+		}
+		// A title already there applies now; a new show applies once its
+		// episodes are in.
+		if err := s.DB.ApplyExternalProgressFor(ctx, kind, p.TMDBID); err != nil {
+			slog.Warn("apply paused", "kind", kind, "tmdb", p.TMDBID, "err", err)
+		}
+	}
 }
 
 // SimklWatchlist lists one status ("plantowatch", "watching", "completed"…)

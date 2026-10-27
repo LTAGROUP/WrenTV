@@ -2,6 +2,7 @@ package com.wrentv.tv.data
 
 import androidx.compose.runtime.mutableStateMapOf
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -40,6 +41,24 @@ class TitleLogos(private val scope: CoroutineScope, private val api: () -> WrenT
                 }
             }
             sending = false
+        }
+    }
+
+    private val warmed = mutableSetOf<String>()
+    private var settling: Job? = null
+
+    /**
+     * A card the user has settled on: once focus rests on it a moment, the
+     * server readies its detail page (details, artwork, cast), so opening it
+     * doesn't wait on TMDB. Passing focus on quickly asks for nothing.
+     */
+    fun focused(t: TitleView) {
+        settling?.cancel()
+        if (t.item != null || t.id in warmed) return
+        settling = scope.launch {
+            delay(500)
+            warmed += t.id
+            if (runCatching { api()?.warmTitles(listOf(t.id)) }.isFailure) warmed -= t.id
         }
     }
 }

@@ -3,6 +3,7 @@ package tracking
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -67,7 +68,9 @@ func (f *fakeSimkl) handler(t *testing.T) http.HandlerFunc {
 		case "/sync/playback":
 			io.WriteString(w, `[{"progress":40,"paused_at":"2024-03-01T00:00:00Z","type":"episode","episode":{"season":1,"episode":3},
 				"show":{"title":"Severance","year":2022,"ids":{"imdb":"tt11280740"}}},
-				{"progress":25,"paused_at":"2024-03-02T00:00:00Z","type":"movie","movie":{"title":"Not Here","year":2001,"ids":{"tmdb":"5"}}}]`)
+				{"progress":25,"paused_at":"2024-03-02T00:00:00Z","type":"movie","movie":{"title":"Not Here","year":2001,"ids":{"tmdb":"5"}}},
+				{"progress":50,"paused_at":"2024-03-03T00:00:00Z","type":"episode","episode":{"season":2,"episode":4},
+				"show":{"title":"Far Away","year":2015,"ids":{"tmdb":"888"}}}]`)
 			return
 		case "/sync/all-items/shows/completed":
 			io.WriteString(w, `{"shows":[{"status":"completed","last_watched_at":"2024-04-01T00:00:00Z","show":{"title":"Elsewhere","year":2010,"ids":{"tmdb":"777"}},
@@ -249,6 +252,14 @@ func TestLinkAndImport(t *testing.T) {
 func TestImportPausedAndMissingTitles(t *testing.T) {
 	s, _, d, u, items := setup(t)
 	ctx := context.Background()
+	var mu sync.Mutex
+	var added []string
+	s.AddTitle = func(_ context.Context, userID, kind string, tmdbID int) error {
+		mu.Lock()
+		defer mu.Unlock()
+		added = append(added, fmt.Sprintf("%s:%d", kind, tmdbID))
+		return nil
+	}
 	if _, err := s.LinkSimkl(ctx, u.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -293,5 +304,38 @@ func TestImportPausedAndMissingTitles(t *testing.T) {
 	_ = d.QueryRowContext(ctx, `SELECT COUNT(*) FROM external_watched`).Scan(&left)
 	if left != 1 { // episode 2 isn't on the server yet
 		t.Fatalf("%d marks left", left)
+	}
+
+	// Paused titles the server lacks are added for Continue Watching, the
+	// latest first, and resume once they're in.
+	mu.Lock()
+	if got := strings.Join(added, ","); got != "show:888,movie:5" {
+		t.Fatalf("added %s", got)
+	}
+	mu.Unlock()
+	far := &db.Item{LibraryID: lib, Kind: "show", Title: "Far Away", TMDBID: 888, MatchKey: "fa"}
+	if err := d.InsertItem(ctx, far); err != nil {
+		t.Fatal(err)
+	}
+	ep4 := &db.Item{LibraryID: lib, Kind: "episode", ShowID: far.ID, ParentID: far.ID, Title: "Four", SeasonNumber: 2, EpisodeNumber: 4, RuntimeMin: 40, MatchKey: "fa24"}
+	if err := d.InsertItem(ctx, ep4); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ApplyExternalProgressFor(ctx, "show", 888); err != nil {
+		t.Fatal(err)
+	}
+	if ws, _ := d.GetWatchState(ctx, u.ID, ep4.ID); ws == nil || ws.Watched || ws.Position != 1200 || ws.Duration != 2400 {
+		t.Fatalf("paused episode %+v", ws)
+	}
+	// The movie was also watched to the end elsewhere: that wins.
+	if err := d.ApplyExternalProgressFor(ctx, "movie", 5); err != nil {
+		t.Fatal(err)
+	}
+	if ws, _ := d.GetWatchState(ctx, u.ID, movie.ID); ws == nil || !ws.Watched {
+		t.Fatalf("movie %+v", ws)
+	}
+	_ = d.QueryRowContext(ctx, `SELECT COUNT(*) FROM external_progress`).Scan(&left)
+	if left != 0 {
+		t.Fatalf("%d pauses left", left)
 	}
 }

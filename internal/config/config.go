@@ -43,6 +43,7 @@ type Config struct {
 	Simkl        SimklConfig        `yaml:"simkl"`
 	Scanner      ScannerConfig      `yaml:"scanner"`
 	Markers      MarkersConfig      `yaml:"markers"`
+	Subtitles    SubtitlesConfig    `yaml:"subtitles"`
 
 	// LegacyTorrents is read from configs written before streaming replaced
 	// torrents, so a Real-Debrid key carries over. Never written back.
@@ -58,9 +59,31 @@ type legacyTorrents struct {
 
 // MarkersConfig controls intro/credits detection. Chapter names are always
 // used; Fingerprint additionally compares the audio of episodes in a season
-// (a background job) to find intros and credits in files without chapters.
+// (a background job) to find intros and credits in files without chapters,
+// and Community fills what's left (streamed titles above all) from
+// viewer-submitted IntroDB timestamps.
 type MarkersConfig struct {
 	Fingerprint bool `yaml:"fingerprint"`
+	Community   bool `yaml:"community"`
+}
+
+// SubtitlesConfig holds the online subtitle providers players can search.
+// A provider is on once it has a key.
+type SubtitlesConfig struct {
+	OpenSubtitles OpenSubtitlesConfig `yaml:"opensubtitles"`
+	SubDL         SubDLConfig         `yaml:"subdl"`
+}
+
+// OpenSubtitlesConfig is an opensubtitles.com API consumer key. An account
+// is optional and raises the daily download limit.
+type OpenSubtitlesConfig struct {
+	APIKey   string `yaml:"api_key"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+type SubDLConfig struct {
+	APIKey string `yaml:"api_key"`
 }
 
 // The Wren TV account service. Every server uses this one; the publishable
@@ -197,6 +220,10 @@ type StreamingConfig struct {
 	// so dead ones are dropped before play. Off, links from addons that give
 	// a size are only opened when played (debrid links are always checked).
 	CheckAddonLinks bool `yaml:"check_addon_links"`
+	// LinkTTLMinutes is how long a resolved play link is reused before the
+	// provider is asked for a fresh one, by provider ("realdebrid",
+	// "alldebrid", "torbox", or "addon" for addon links); 0 = an hour.
+	LinkTTLMinutes map[string]int `yaml:"link_ttl_minutes"`
 	// Mode: "stream" stores only the stream; "download" also saves the file
 	// into the download library, which then replaces the stream.
 	Mode string `yaml:"mode"`
@@ -325,7 +352,7 @@ func defaults() Config {
 		},
 		Users:   UserLimitsConfig{DeviceDownloads: true, MaxDownloads: 2},
 		Scanner: ScannerConfig{Watch: true, IntervalMin: 30, ProbeWorkers: 4},
-		Markers: MarkersConfig{Fingerprint: true},
+		Markers: MarkersConfig{Fingerprint: true, Community: true},
 	}
 }
 

@@ -127,6 +127,13 @@ func (d *DB) StreamFailed(ctx context.Context, id string) (int, error) {
 	return n, err
 }
 
+// CountStreamFailure counts a failed playback and keeps where the stream was found.
+func (d *DB) CountStreamFailure(ctx context.Context, id string) (int, error) {
+	var n int
+	err := d.QueryRowContext(ctx, `UPDATE streams SET failures=failures+1, updated_at=? WHERE id=? RETURNING failures`, Now(), id).Scan(&n)
+	return n, err
+}
+
 func (d *DB) DeleteStream(ctx context.Context, id string) error {
 	_, err := d.ExecContext(ctx, `DELETE FROM streams WHERE id=?`, id)
 	return err

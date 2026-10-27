@@ -29,9 +29,12 @@ import com.wrentv.tv.data.DownloadManager
 import com.wrentv.tv.data.Item
 import com.wrentv.tv.data.Markers
 import com.wrentv.tv.data.MediaVersion
+import com.wrentv.tv.data.OnlineSubtitle
 import com.wrentv.tv.data.PlayRequest
 import com.wrentv.tv.data.PlayResponse
 import com.wrentv.tv.data.SeekThumbs
+import com.wrentv.tv.data.SubtitleTrack
+import com.wrentv.tv.data.TimeRange
 import com.wrentv.tv.data.WrenTVApi
 import com.wrentv.tv.data.languageName
 import kotlin.math.roundToInt
@@ -46,6 +49,9 @@ import java.util.Locale
 
 /** A track the viewer can pick in the audio or subtitle panel. */
 data class TrackOption(val key: String, val label: String)
+
+/** Seconds before an unmarked episode ends that the next-episode countdown starts. */
+private const val UP_NEXT_LEAD = 30.0
 
 /**
  * Plays one title: asks the server how (direct file or HLS), drives
@@ -86,6 +92,10 @@ class PlayerController(
     var audioKey by mutableStateOf<String?>(null); private set
     var subtitleOptions by mutableStateOf<List<TrackOption>>(emptyList()); private set
     var subtitleKey by mutableStateOf<String?>(null); private set
+    /** The server can search subtitle sites for this title. */
+    var onlineSubtitles by mutableStateOf(false); private set
+    /** The playing episode, once looked up, for the episode picker. */
+    var episode by mutableStateOf<Item?>(null); private set
     var versions by mutableStateOf<List<MediaVersion>>(emptyList()); private set
     var fileId by mutableStateOf(target.fileId); private set
     var chapters by mutableStateOf<List<Chapter>>(emptyList()); private set
@@ -137,6 +147,9 @@ class PlayerController(
     private val failedAudio = mutableSetOf<String>()
     private var startedAt = 0.0
     private var lastAutoRetry = 0L
+    /** The next play is a retry, and the version that broke partway, if one did. */
+    private var freshLink = false
+    private var failedFile: String? = null
 
     val isOffline: Boolean get() = localFile != null
     val currentChapter: Chapter? get() = chapters.lastOrNull { it.start <= position + 0.01 }
@@ -233,10 +246,16 @@ class PlayerController(
         }
         val api = api ?: run { phase = Phase.Failed("Not connected to the server."); return }
         var resp: PlayResponse
+        // Only the first ask says it's a retry.
+        var retry = freshLink
+        var failed = failedFile
+        freshLink = false
+        failedFile = null
         while (true) {
             if (stopped) return
             resp = try {
-                api.play(itemId, PlayRequest(fileId = fileId, audioIndex = audioIndex, caps = DeviceCaps.current(context, failedAudio)))
+                api.play(itemId, PlayRequest(fileId = fileId, audioIndex = audioIndex, caps = DeviceCaps.current(context, failedAudio),
+                    retry = retry, failedFileId = failed)).also { retry = false; failed = null }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 phase = Phase.Failed(e.message ?: "Couldn't start playback")
@@ -264,10 +283,8 @@ class PlayerController(
         audioOptions = audio.map { TrackOption("a${it.typeIndex}", it.label.ifEmpty { "Track ${it.typeIndex + 1}" }) }
         if (audioIndex == null) audioIndex = resp.decision?.audioIndex
         audioKey = audioIndex?.let { "a$it" }
-        subtitleOptions = resp.subtitles.orEmpty().map { s ->
-            TrackOption("s${s.index}", listOfNotNull(languageName(s.language), s.title?.takeIf { it.isNotEmpty() }, if (s.forced) "Forced" else null)
-                .joinToString(" · ").ifEmpty { "Track ${s.index + 1}" })
-        }
+        subtitleOptions = resp.subtitles.orEmpty().map(::subtitleOption)
+        onlineSubtitles = resp.onlineSubtitles
         // The viewer's language setting picks the first time; restarts keep their choice.
         if (!subtitleChosen) {
             subtitleKey = resp.subtitleIndex?.takeIf { it >= 0 }?.let { "s$it" }
@@ -280,18 +297,81 @@ class PlayerController(
 
         val item = MediaItem.Builder().setUri(api.absolute(path))
         if (resp.method != "direct") item.setMimeType(MimeTypes.APPLICATION_M3U8)
-        item.setSubtitleConfigurations(resp.subtitles.orEmpty().mapNotNull { s ->
-            val url = s.url ?: return@mapNotNull null
-            MediaItem.SubtitleConfiguration.Builder(Uri.parse(api.absolute(url)))
-                .setMimeType(MimeTypes.TEXT_VTT)
-                .setLanguage(s.language)
-                .setId("wren-sub-${s.index}")
-                .build()
-        })
+        item.setSubtitleConfigurations(resp.subtitles.orEmpty().mapNotNull { subtitleConfig(api, it) })
         subtitlePending = true
         play(item.build(), startAt ?: if (fromStart) 0.0 else resp.resumePosition ?: 0.0)
         if (nextEpisode == null) nextEpisode = findNextEpisode()
     }
+
+    private fun subtitleOption(s: SubtitleTrack) = TrackOption("s${s.index}",
+        listOfNotNull(languageName(s.language), s.title?.takeIf { it.isNotEmpty() }, if (s.forced) "Forced" else null)
+            .joinToString(" · ").ifEmpty { "Track ${s.index + 1}" })
+
+    private fun subtitleConfig(api: WrenTVApi, s: SubtitleTrack): MediaItem.SubtitleConfiguration? {
+        val url = s.url ?: return null
+        return MediaItem.SubtitleConfiguration.Builder(Uri.parse(api.absolute(url)))
+            .setMimeType(MimeTypes.TEXT_VTT)
+            .setLanguage(s.language)
+            .setId("wren-sub-${s.index}")
+            .build()
+    }
+
+    /** Searches the subtitle sites for this title; throws when the search fails. */
+    suspend fun searchOnlineSubtitles(): List<OnlineSubtitle> =
+        api?.searchOnlineSubtitles(itemId)?.results.orEmpty()
+
+    /**
+     * Downloads a subtitle the search found and shows it. A side-loaded track
+     * can only be added by loading the stream again, from the same spot.
+     */
+    suspend fun addOnlineSubtitle(sub: OnlineSubtitle) {
+        val api = api ?: return
+        val resp = response ?: return
+        val track = api.fetchOnlineSubtitle(itemId, sub, sessionId)
+        val subs = resp.subtitles.orEmpty().filter { it.index != track.index } + track
+        response = resp.copy(subtitles = subs)
+        subtitleOptions = subs.map(::subtitleOption)
+        subtitleChosen = true
+        subtitleKey = "s${track.index}"
+        val current = player.currentMediaItem ?: return
+        val item = current.buildUpon().setSubtitleConfigurations(subs.mapNotNull { subtitleConfig(api, it) }).build()
+        subtitlePending = true
+        play(item, player.currentPosition / 1000.0)
+    }
+
+    /** A season's episodes, or a show's seasons. */
+    suspend fun children(id: String): List<Item> = api?.item(id)?.children.orEmpty()
+
+    /** What the stats overlay shows: how the title is playing right now. */
+    fun stats(): List<Pair<String, String>> {
+        val rows = mutableListOf<Pair<String, String>>()
+        val r = response
+        rows += "Playback" to listOfNotNull(methodLabel.ifEmpty { null }, r?.engine).joinToString(" · ").ifEmpty { if (isOffline) "Downloaded" else "—" }
+        versions.firstOrNull { it.id == fileId }?.label?.takeIf { it.isNotEmpty() }?.let { rows += "Version" to it }
+        r?.info?.let { info ->
+            if (info.container.isNotEmpty()) rows += "Container" to info.container
+            info.bitrate?.takeIf { it > 0 }?.let { rows += "Bitrate" to mbps(it) }
+        }
+        player.videoFormat?.let { f ->
+            rows += "Video" to listOfNotNull(f.codecs ?: f.sampleMimeType, if (f.width > 0) "${f.width}×${f.height}" else null,
+                f.frameRate.takeIf { it > 0 }?.let { String.format(Locale.ROOT, "%.3g fps", it) },
+                f.bitrate.takeIf { it > 0 }?.let { mbps(it.toLong()) }).joinToString(" · ")
+        }
+        player.audioFormat?.let { f ->
+            rows += "Audio" to listOfNotNull(f.codecs ?: f.sampleMimeType, f.channelCount.takeIf { it > 0 }?.let { "${it}ch" },
+                f.sampleRate.takeIf { it > 0 }?.let { "${it / 1000.0} kHz" }).joinToString(" · ")
+        }
+        rows += "Buffered" to String.format(Locale.ROOT, "%.1f s", player.totalBufferedDuration / 1000.0)
+        player.videoDecoderCounters?.let { c ->
+            c.ensureUpdated()
+            rows += "Dropped frames" to "${c.droppedBufferCount} of ${c.renderedOutputBufferCount + c.droppedBufferCount}"
+        }
+        markers.source?.takeIf { it.isNotEmpty() }?.let { rows += "Skip markers" to it }
+        r?.decision?.reasons?.takeIf { it.isNotEmpty() }?.let { rows += "Why" to it.joinToString("; ") }
+        return rows
+    }
+
+    private fun mbps(bps: Long) = String.format(Locale.ROOT, "%.1f Mbps", bps / 1_000_000.0)
 
     private fun play(item: MediaItem, start: Double) {
         startedAt = start
@@ -464,6 +544,7 @@ class PlayerController(
      */
     private fun failed(message: String) {
         if (phase != Phase.Playing) return
+        if (!isOffline) failedFile = fileId
         val now = android.os.SystemClock.elapsedRealtime()
         if (!isOffline && (lastAutoRetry == 0L || now - lastAutoRetry > 120_000)) {
             lastAutoRetry = now
@@ -475,6 +556,7 @@ class PlayerController(
 
     /** Starts over after a failure, closing the failed stream on the server first. */
     fun retry() {
+        freshLink = true
         val old = sessionId
         sessionId = null
         player.stop()
@@ -549,7 +631,10 @@ class PlayerController(
     private fun updateSkip() {
         val t = position
         val intro = markers.intro
+        // An episode with no credits marker counts down over its last
+        // seconds instead, so it can still roll on to the next.
         val credits = markers.credits
+            ?: if (nextEpisode != null && duration >= 300) TimeRange(duration - UP_NEXT_LEAD, duration + 1) else null
         // Seeking back before a marker offers it again.
         if (intro != null && t < intro.start) dismissed.remove(Skip.Intro)
         if (credits != null && t < credits.start - 1) {
@@ -623,6 +708,7 @@ class PlayerController(
         return runCatching {
             val ep = api.item(itemId).item
             if (ep.kind != "episode") return null
+            episode = ep
             ep.parentId?.let { pid ->
                 api.item(pid).children.orEmpty().filter { it.episodeNumber > ep.episodeNumber }.minByOrNull { it.episodeNumber }
             }?.let { return it }
@@ -659,6 +745,19 @@ class PlayerController(
         val next = upNext ?: return
         // Moving on counts as finishing this one.
         if (phase == Phase.Playing) report(duration)
+        switchTo(next)
+    }
+
+    /** Plays another episode picked from the episode list. */
+    fun playEpisode(ep: Item) {
+        if (ep.id == itemId) return
+        if (phase == Phase.Playing && position > 5) report(position)
+        switchTo(ep)
+    }
+
+    private fun switchTo(next: Item) {
+        freshLink = false
+        failedFile = null
         localFile = downloads.item(next.id)?.let { x -> downloads.localFile(x)?.absolutePath }
         val old = sessionId
         sessionId = null
@@ -668,6 +767,8 @@ class PlayerController(
         subtitle = "${next.episodeLabel} — ${next.title}"
         upNext = null
         nextEpisode = null
+        episode = null
+        cancelCountdown()
         dismissed.clear()
         skip = null
         chapters = emptyList()

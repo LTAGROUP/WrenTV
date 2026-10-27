@@ -617,3 +617,10 @@ func nonNil[T any](s []T) []T {
 	}
 	return s
 }
+
+func nonNilMap[K comparable, V any](m map[K]V) map[K]V {
+	if m == nil {
+		return map[K]V{}
+	}
+	return m
+}

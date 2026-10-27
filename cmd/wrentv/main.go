@@ -35,6 +35,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/markers"
 	"github.com/LTAGROUP/wrentv/internal/metadata/omdb"
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
+	"github.com/LTAGROUP/wrentv/internal/onlinesubs"
 	"github.com/LTAGROUP/wrentv/internal/simkl"
 	"github.com/LTAGROUP/wrentv/internal/stream"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
@@ -212,6 +213,13 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	streamer := streaming.New(streaming.Deps{Cfg: cfg, DB: d, TMDB: tm, Scanner: scanner, Hub: hub, Hooks: hooks, Server: serverInfo, HTTPPort: port})
 	streamer.Start(ctx)
 	tracker := tracking.New(d, simkl.New(func() string { return cfg.Simkl.ClientID }, version), hooks, serverInfo)
+	tracker.AddTitle = func(ctx context.Context, userID, kind string, tmdbID int) error {
+		if u, err := d.UserByID(ctx, userID); err != nil || !u.AllowStreaming || !streamer.Active() {
+			return err
+		}
+		_, err := streamer.AddTitle(ctx, kind, tmdbID)
+		return err
+	}
 	tracker.Start(ctx)
 	marksEvents, _ := hub.Subscribe()
 	tracker.ApplyMarksOn(ctx, marksEvents)
@@ -226,6 +234,8 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	srv := &api.Server{
 		Version: version, Cfg: cfg, DB: d, Scanner: scanner, Watcher: watcher, TMDB: tm, Streams: streams,
 		OMDb: omdb.New(func() string { return cfg.Metadata.OMDbAPIKey }, d), Markers: analyzer,
+		Community: markers.NewCommunity(d, func() bool { return cfg.Markers.Community }),
+		Subtitles: onlinesubs.New(func() config.SubtitlesConfig { return cfg.Subtitles }, "WrenTV v"+version),
 		Streaming: streamer, LiveTV: live, Hub: hub, Hooks: hooks, Tracking: tracker, Images: images.New(filepath.Join(dataDir, "images")),
 		Thumbs: thumbs.New(filepath.Join(cfg.DataDir, "cache", "thumbs"), cfg.Transcode.FFmpegPath),
 		Sys:    sysstat.Start(),

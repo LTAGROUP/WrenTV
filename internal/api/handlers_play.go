@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/LTAGROUP/wrentv/internal/db"
 	"github.com/LTAGROUP/wrentv/internal/library"
+	"github.com/LTAGROUP/wrentv/internal/markers"
 	"github.com/LTAGROUP/wrentv/internal/media"
 	"github.com/LTAGROUP/wrentv/internal/stream"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
@@ -30,6 +32,12 @@ type playRequest struct {
 	AudioIndex *int             `json:"audioIndex"`
 	Caps       media.ClientCaps `json:"caps"`
 	MaxWidth   int              `json:"maxWidth"`
+	// Retry is a play started again after it failed: the stream's link is
+	// resolved afresh instead of reused.
+	Retry bool `json:"retry"`
+	// FailedFileID is the version that broke while playing; another plays
+	// if there is one.
+	FailedFileID string `json:"failedFileId"`
 }
 
 type subtitleTrack struct {
@@ -54,6 +62,8 @@ type playResponse struct {
 	Resume    float64         `json:"resumePosition,omitempty"`
 	Info      *media.Info     `json:"info,omitempty"`
 	Subtitles []subtitleTrack `json:"subtitles,omitempty"`
+	// OnlineSubtitles: subtitle sites can be searched for this title.
+	OnlineSubtitles bool `json:"onlineSubtitles,omitempty"`
 	// SubtitleIndex is the track to show from the viewer's preferences, or -1 for off.
 	SubtitleIndex int    `json:"subtitleIndex"`
 	FileID        string `json:"fileId,omitempty"`
@@ -167,7 +177,18 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 202, playResponse{Status: "pending", Message: "Finding a source…"})
 		return
 	}
+	if req.FailedFileID != "" {
+		files, req = s.skipFailed(ctx, files, req)
+		if len(files) == 0 {
+			_, _ = s.Streaming.Ensure(ctx, it, 0)
+			writeJSON(w, 202, playResponse{Status: "pending", Message: "Finding another stream…"})
+			return
+		}
+	}
 	f := chooseFile(files, req)
+	if req.Retry && f.StreamID != "" && s.Streaming != nil {
+		s.Streaming.Invalidate(f.StreamID)
+	}
 	if f.StreamID != "" && !s.prepared(ctx, f, req.Caps) {
 		// Probing a stream and indexing its keyframes can take a while:
 		// it's done apart from this request, which hands back to the
@@ -289,7 +310,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	resp := playResponse{
 		Status: "ready", SessionID: sess.ID, Engine: dec.Engine, Method: dec.Method, Decision: &dec,
 		Duration: info.Duration, Info: info, FileID: f.ID,
-		Chapters: nonNil(info.Chapters), Markers: s.markersFor(ctx, f, info),
+		Chapters: nonNil(info.Chapters), Markers: s.markersFor(ctx, it, f, info),
 		SubtitleIndex: startingSubtitle(info, prefs, dec.AudioIndex),
 	}
 	resp.Versions = versionViews(files)
@@ -313,34 +334,67 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Subtitles = append(resp.Subtitles, t)
 	}
+	resp.Subtitles = append(resp.Subtitles, s.onlineTracks(ctx, it.ID, sess.ID)...)
+	resp.OnlineSubtitles = s.Subtitles.Enabled() && (it.Kind == "movie" || it.Kind == "episode")
 	writeJSON(w, 200, resp)
 }
 
-// markersFor combines chapter-named markers with fingerprint results;
-// chapters win where both exist.
-func (s *Server) markersFor(ctx context.Context, f *db.MediaFile, info *media.Info) media.Markers {
+// markersFor combines chapter-named markers with fingerprint results, then
+// community timestamps for whatever is still missing; earlier sources win
+// where several exist.
+func (s *Server) markersFor(ctx context.Context, it *db.Item, f *db.MediaFile, info *media.Info) media.Markers {
 	m := media.MarkersFromChapters(info.Chapters, info.Duration)
 	if m.Intro != nil && m.Credits != nil {
 		return m
 	}
-	fm, err := s.DB.GetFileMarkers(ctx, f.ID)
-	if err != nil || fm.Mtime != f.MTime {
-		return m
-	}
-	used := false
-	if m.Intro == nil && fm.Intro != nil {
-		m.Intro, used = &media.Range{Start: fm.Intro[0], End: fm.Intro[1]}, true
-	}
-	if m.Credits == nil && fm.Credits != nil {
-		m.Credits, used = &media.Range{Start: fm.Credits[0], End: fm.Credits[1]}, true
-	}
-	if used {
-		if m.Source == "" {
-			m.Source = "fingerprint"
-		} else {
-			m.Source += "+fingerprint"
+	if fm, err := s.DB.GetFileMarkers(ctx, f.ID); err == nil && fm.Mtime == f.MTime {
+		used := false
+		if m.Intro == nil && fm.Intro != nil {
+			m.Intro, used = &media.Range{Start: fm.Intro[0], End: fm.Intro[1]}, true
+		}
+		if m.Credits == nil && fm.Credits != nil {
+			m.Credits, used = &media.Range{Start: fm.Credits[0], End: fm.Credits[1]}, true
+		}
+		if used {
+			m.Source = joinSource(m.Source, "fingerprint")
 		}
 	}
+	if m.Intro != nil && m.Credits != nil {
+		return m
+	}
+	// Playback doesn't wait long on a third party; a slow answer is still
+	// cached for the next play.
+	cctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	cm := markers.Fit(s.communityMarkers(cctx, it), info.Duration)
+	used := false
+	if m.Intro == nil && cm.Intro != nil {
+		m.Intro, used = cm.Intro, true
+	}
+	if m.Credits == nil && cm.Credits != nil {
+		m.Credits, used = cm.Credits, true
+	}
+	if used {
+		m.Source = joinSource(m.Source, "community")
+	}
+	return m
+}
+
+func joinSource(have, add string) string {
+	if have == "" {
+		return add
+	}
+	return have + "+" + add
+}
+
+// communityMarkers asks IntroDB about a movie, or an episode by its show's
+// IMDb id.
+func (s *Server) communityMarkers(ctx context.Context, it *db.Item) media.Markers {
+	if s.Community == nil || (it.Kind != "movie" && it.Kind != "episode") {
+		return media.Markers{}
+	}
+	imdb, season, episode := s.imdbTarget(ctx, it)
+	m, _ := s.Community.Lookup(ctx, imdb, season, episode)
 	return m
 }
 
@@ -377,6 +431,26 @@ func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
 // best: a version it can play without transcoding beats one that needs it
 // (a 1080p file is served instead of transcoding the 4K one down), then a
 // version that fits the requested quality, then a file over a stream.
+// skipFailed counts a streamed version that broke while it played and
+// leaves it out, so another source plays; when it's the only one it's
+// tried again with a fresh link.
+func (s *Server) skipFailed(ctx context.Context, files []*db.MediaFile, req playRequest) ([]*db.MediaFile, playRequest) {
+	for i, f := range files {
+		if f.ID != req.FailedFileID || f.StreamID == "" || s.Streaming == nil {
+			continue
+		}
+		dropped := s.Streaming.PlaybackFailed(ctx, f.StreamID)
+		if dropped || len(files) > 1 {
+			files = slices.Delete(slices.Clone(files), i, i+1)
+		}
+		if req.FileID == f.ID {
+			req.FileID = ""
+		}
+		break
+	}
+	return files, req
+}
+
 func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 	for _, f := range files {
 		if f.ID == req.FileID {

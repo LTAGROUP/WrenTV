@@ -27,6 +27,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/markers"
 	"github.com/LTAGROUP/wrentv/internal/metadata/omdb"
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
+	"github.com/LTAGROUP/wrentv/internal/onlinesubs"
 	"github.com/LTAGROUP/wrentv/internal/stream"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
 	"github.com/LTAGROUP/wrentv/internal/sysstat"
@@ -44,7 +45,9 @@ type Server struct {
 	Watcher   *library.Watcher
 	TMDB      *tmdb.Client
 	OMDb      *omdb.Client
+	Community *markers.Community // IntroDB timestamps for what has no markers of its own
 	Markers   *markers.Analyzer
+	Subtitles *onlinesubs.Service // subtitle sites players can search
 	Streams   *stream.Manager
 	Streaming *streaming.Service
 	LiveTV    *livetv.Service
@@ -112,6 +115,10 @@ func (s *Server) Router() http.Handler {
 			http.Error(w, msg, http.StatusGone)
 			return
 		}
+		if name, ok := strings.CutPrefix(chi.URLParam(r, "*"), "online/"); ok {
+			s.serveOnlineSubtitle(w, r, sess.ItemID, name)
+			return
+		}
 		sess.ServeHTTP(w, r, chi.URLParam(r, "*"))
 	})
 	r.HandleFunc("/live/{sid}/*", func(w http.ResponseWriter, r *http.Request) {
@@ -164,6 +171,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/discover/trending", s.handleTrending)
 		r.Get("/api/discover/search", s.handleDiscoverSearch)
 		r.Get("/api/discover/logos", s.handleTitleLogos)
+		r.Post("/api/discover/warm", s.handleWarmTitleDetails)
 		r.Post("/api/streaming/titles", s.handleAddStreamTitle)
 		r.Post("/api/items/{id}/download", s.handleDeviceDownload)
 		r.Post("/api/items/{id}/progress", s.handleProgress)
@@ -176,6 +184,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/companies/{id}", s.handleCompany)
 		r.Post("/api/items/{id}/play", s.handlePlay)
 		r.Get("/api/items/{id}/versions", s.handleVersions)
+		r.Get("/api/items/{id}/subtitles/online", s.handleSearchOnlineSubtitles)
+		r.Post("/api/items/{id}/subtitles/online", s.handleFetchOnlineSubtitle)
 		r.Delete("/api/sessions/{sid}", s.handleStopSession)
 		r.Get("/api/livetv/channels", s.handleLiveChannels)
 		r.Get("/api/livetv/guide", s.handleLiveGuide)

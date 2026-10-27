@@ -427,6 +427,11 @@ function streamingTab(s, libs) {
         <input type="password" data-key placeholder="${d.keySet ? 'Paste a new key to replace' : 'API key'}" autocomplete="off">
         <div class="acts"><button type="button" class="btn small" data-check>Check</button>${d.keySet ? '<button type="button" class="btn small danger" data-remove>Disconnect</button>' : ''}</div>
       </div>`).join('')}</div>
+      <h3 class="sub-h">Link lifetime</h3>
+      <p class="small muted">How long a play link is reused before the service is asked for a fresh one. Shorter catches links that stopped working
+        sooner (a torrent no longer cached); longer asks the service less often. A stream that fails while playing always gets a fresh link.</p>
+      <div class="form-grid">${[...st.debrid.map((d) => [d.provider, d.name]), ['addon', 'Addon links']].map(([p, name]) => `<div class="field"><label>${esc(name)}</label>
+        <div class="unit-input"><input name="stTTL-${p}" type="number" min="0" max="10080" step="1" value="${st.linkTTLMinutes?.[p] || ''}" placeholder="60"><span>minutes</span></div></div>`).join('')}</div>
     </div>
 
     <div class="panel"><h2>Usenet</h2>
@@ -677,7 +682,18 @@ export async function viewSettings() {
       <div class="panel"><h2>Playback</h2><div class="form-grid">
         <div class="field"><label>Hardware acceleration</label><select name="hwaccel">${hw.map((h) => `<option ${h === s.hwaccel ? 'selected' : ''}>${h}</option>`).join('')}</select></div>
       </div>
-        <label class="check"><input type="checkbox" name="markerFingerprinting" ${s.markerFingerprinting ? 'checked' : ''}> Detect intros and credits by comparing episode audio (background job; chapters are always used)</label></div>
+        <label class="check"><input type="checkbox" name="markerFingerprinting" ${s.markerFingerprinting ? 'checked' : ''}> Detect intros and credits by comparing episode audio (background job; chapters are always used)</label>
+        <label class="check"><input type="checkbox" name="markerCommunity" ${s.markerCommunity ? 'checked' : ''}> Use community intro and credits timestamps from IntroDB where nothing else has them (streamed titles)</label></div>
+      <div class="panel"><h2>Online subtitles</h2>
+        <p class="small muted">Lets players search subtitle sites when a file has none in the right language. A provider is used once it has a key.</p>
+        <div class="form-grid">
+        <div class="field"><label>OpenSubtitles API key ${s.subtitles?.openSubtitlesKeySet ? '<span class="ok">· set</span>' : ''}</label><input name="osApiKey" type="password" placeholder="${s.subtitles?.openSubtitlesKeySet ? 'Leave blank to keep' : 'Consumer key'}" autocomplete="off">
+          <span class="small muted">Create a consumer at <a href="https://www.opensubtitles.com/en/consumers" target="_blank" rel="noopener" style="color:var(--accent)">opensubtitles.com</a></span></div>
+        <div class="field"><label>OpenSubtitles username</label><input name="osUsername" value="${esc(s.subtitles?.openSubtitlesUsername || '')}" placeholder="Optional: raises the daily download limit" autocomplete="off"></div>
+        <div class="field"><label>OpenSubtitles password ${s.subtitles?.openSubtitlesPasswordSet ? '<span class="ok">· set</span>' : ''}</label><input name="osPassword" type="password" placeholder="${s.subtitles?.openSubtitlesPasswordSet ? 'Leave blank to keep' : ''}" autocomplete="new-password"></div>
+        <div class="field"><label>SubDL API key ${s.subtitles?.subdlKeySet ? '<span class="ok">· set</span>' : ''}</label><input name="subdlApiKey" type="password" placeholder="${s.subtitles?.subdlKeySet ? 'Leave blank to keep' : 'Optional'}" autocomplete="off">
+          <span class="small muted">Free key at <a href="https://subdl.com/panel/api" target="_blank" rel="noopener" style="color:var(--accent)">subdl.com</a></span></div>
+      </div></div>
     </div>
 
     ${streamingTab(s, libs)}
@@ -902,6 +918,7 @@ export async function viewSettings() {
       prefetch: !!v.stPrefetch,
       lookupOnOpen: !!v.stLookupOnOpen,
       checkAddonLinks: !!v.stCheckLinks,
+      linkTTLMinutes: Object.fromEntries([...s.streaming.debrid.map((d) => d.provider), 'addon'].map((p) => [p, int(v['stTTL-' + p])])),
       providerOrder: $$('.debrid', node).map((r) => r.dataset.provider),
       addons,
       qualities: $$('input[name=stQ]:checked', node).map((c) => c.value),
@@ -926,6 +943,7 @@ export async function viewSettings() {
     const body = {
       serverName: v.serverName, publicUrl: v.publicUrl, hwaccel: v.hwaccel,
       markerFingerprinting: !!v.markerFingerprinting,
+      markerCommunity: !!v.markerCommunity,
       streaming,
       liveTv: readLiveTv(v),
       userDefaults: { deviceDownloads: !!v.udDevice, maxStreams: int(v.udStreams), maxDownloads: int(v.udDownloads) },
@@ -940,6 +958,10 @@ export async function viewSettings() {
     if (v.simklClientId !== undefined) body.simklClientId = v.simklClientId.trim();
     if (v.tmdbApiKey) body.tmdbApiKey = v.tmdbApiKey;
     if (v.omdbApiKey) body.omdbApiKey = v.omdbApiKey;
+    body.subtitles = { openSubtitlesUsername: String(v.osUsername || '').trim() };
+    if (v.osApiKey) body.subtitles.openSubtitlesApiKey = v.osApiKey;
+    if (v.osPassword) body.subtitles.openSubtitlesPassword = v.osPassword;
+    if (v.subdlApiKey) body.subtitles.subdlApiKey = v.subdlApiKey;
     const err = $('[data-err]', node);
     err.hidden = true;
     const save = $('[data-save]', node);

@@ -85,7 +85,10 @@ document.addEventListener('click', async (e) => {
   const v = !a.dataset.streamPlay && seeds.get(`${a.dataset.media}:${a.dataset.streamTitle}`);
   if (v) openingPreview(v);
   try {
-    const it = await api('/api/streaming/titles', { method: 'POST', body: { tmdbId: Number(a.dataset.streamTitle), mediaType: a.dataset.media } });
+    const add = () => api('/api/streaming/titles', { method: 'POST', body: { tmdbId: Number(a.dataset.streamTitle), mediaType: a.dataset.media } });
+    // One quiet retry: a slow or failed first answer usually clears, while a
+    // refusal (can't stream, unknown title) is shown as it is.
+    const it = await add().catch((ex) => (ex.status >= 400 && ex.status < 500 ? Promise.reject(ex) : add()));
     if (a.dataset.streamPlay && it.kind === 'movie') openPlayer(it.id, { resume: true });
     // Unless they've gone somewhere else meanwhile.
     else if (!v || $('#page [data-opening]')) go('/item/' + it.id);
@@ -97,6 +100,26 @@ document.addEventListener('click', async (e) => {
     a.classList.remove('busy');
   }
 }, true);
+
+// A poster the pointer or focus rests on gets its detail page readied on the
+// server (details, artwork, cast), so opening it doesn't wait on TMDB.
+const warmed = new Set();
+let settling = null, settlingOn = null;
+function settle(e) {
+  const a = e.target.closest?.('[data-stream-title]');
+  if (a === settlingOn) return;
+  settlingOn = a;
+  clearTimeout(settling);
+  if (!a || a.dataset.streamPlay) return;
+  const id = `${a.dataset.media === 'tv' ? 'show' : a.dataset.media}:${a.dataset.streamTitle}`;
+  if (warmed.has(id)) return;
+  settling = setTimeout(() => {
+    warmed.add(id);
+    api(`/api/discover/warm?ids=${encodeURIComponent(id)}`, { method: 'POST' }).catch(() => warmed.delete(id));
+  }, 500);
+}
+document.addEventListener('mouseover', settle);
+document.addEventListener('focusin', settle);
 
 export const isAdmin = () => state.user && (state.user.role === 'owner' || state.user.role === 'admin' || state.user.isAdmin);
 

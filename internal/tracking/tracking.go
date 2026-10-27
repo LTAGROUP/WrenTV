@@ -43,6 +43,10 @@ type Service struct {
 	Simkl  *simkl.Client
 	Hooks  *webhook.Sender
 	Server func() webhook.Server
+	// AddTitle, when set, adds a title the server doesn't have to the
+	// streaming library for a user, so a pause imported for it can show in
+	// Continue Watching. It does nothing for a user who can't stream.
+	AddTitle func(ctx context.Context, userID, kind string, tmdbID int) error
 
 	mu      sync.Mutex
 	plays   map[string]*play
