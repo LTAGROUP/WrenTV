@@ -14,7 +14,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.alpha
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Replay10
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -22,6 +21,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import coil3.compose.AsyncImage
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -174,9 +175,19 @@ fun PlayerScreen(target: PlayTarget) {
         c.commitScrub()
     }
 
-    LaunchedEffect(controls, touched, c.paused, panel, shelf) {
+    // Resuming hides the controls sooner; any later press goes back to the usual wait.
+    // The press clears it before the resume sets it, so these two stay in this order.
+    var resumed by remember { mutableStateOf(false) }
+    var wasPaused by remember { mutableStateOf(c.paused) }
+    LaunchedEffect(touched) { resumed = false }
+    LaunchedEffect(c.paused) {
+        if (wasPaused && !c.paused) resumed = true
+        wasPaused = c.paused
+    }
+
+    LaunchedEffect(controls, touched, c.paused, panel, shelf, resumed) {
         if (controls && panel == null && !shelf && !c.paused) {
-            delay(5000)
+            delay(if (resumed) 3000 else 5000)
             controls = false
         }
     }
@@ -365,9 +376,9 @@ private fun Controls(
                 Modifier.width(PanelWidth)
                     .background(Color(0xFF141418).copy(alpha = 0.68f), RoundedCornerShape(20.dp))
                     .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(20.dp))
-                    .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 14.dp),
+                    .padding(start = 20.dp, end = 20.dp, top = PanelTop, bottom = 14.dp),
             ) {
-                Box(Modifier.fillMaxWidth().height(54.dp)) {
+                Box(Modifier.fillMaxWidth().height(ButtonRow)) {
                     c.currentChapter?.title?.takeIf { it.isNotEmpty() && c.chapters.size > 1 }?.let {
                         Text(it, style = MaterialTheme.typography.labelMedium, color = Wren.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.align(Alignment.CenterStart).widthIn(max = 190.dp))
@@ -411,6 +422,10 @@ private fun Controls(
 }
 
 private val PanelWidth = 720.dp
+
+/** The panel's button row and the padding above it, which place the button tips. */
+private val ButtonRow = 54.dp
+private val PanelTop = 10.dp
 
 /** How the title is playing, refreshed every second while it shows. */
 @Composable
@@ -569,7 +584,7 @@ private fun ShelfEpisode(image: String?, e: Item, playing: Boolean, onClick: () 
     }
 }
 
-/** A plain icon on the panel, white when focused, with its name in a tip above it. */
+/** A plain icon on the panel, white when focused, with its name in a tip above the panel. */
 @Composable
 private fun PlayerButton(icon: ImageVector, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, big: Boolean = false, small: Boolean = false) {
     var focused by remember { mutableStateOf(false) }
@@ -588,10 +603,17 @@ private fun PlayerButton(icon: ImageVector, label: String, onClick: () -> Unit, 
         ) {
             Icon(icon, contentDescription = label, modifier = Modifier.align(Alignment.Center).size(if (big) 32.dp else if (small) 21.dp else 27.dp))
         }
-        // Takes no room, so the buttons stay evenly spaced.
+        // Takes no room, so the buttons stay evenly spaced. Every tip's bottom sits the same
+        // distance above the panel, whatever the button's size.
+        val lift = (ButtonRow - size) / 2 + PanelTop + 8.dp
         Text(
             label, style = MaterialTheme.typography.labelMedium, color = Wren.text, maxLines = 1,
-            modifier = Modifier.align(Alignment.TopCenter).wrapContentSize(unbounded = true).offset(y = -(size / 2 + 8.dp)).alpha(tip)
+            modifier = Modifier
+                .layout { m, c ->
+                    val p = m.measure(Constraints())
+                    layout(c.maxWidth, 0) { p.place((c.maxWidth - p.width) / 2, -lift.roundToPx() - p.height) }
+                }
+                .alpha(tip)
                 .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 3.dp),
         )
     }
