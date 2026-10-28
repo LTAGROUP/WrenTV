@@ -456,8 +456,9 @@ func (s *Server) skipFailed(ctx context.Context, userID string, files []*db.Medi
 
 // chooseFile returns the requested version, else the one this client plays
 // best: a version it can play without transcoding beats one that needs it
-// (a 1080p file is served instead of transcoding the 4K one down), then a
-// version that fits the requested quality, then a file over a stream.
+// (a 1080p file is served instead of transcoding the 4K one down, a DTS or
+// TrueHD one only goes to a player that takes it), then a version that fits
+// the requested quality, then a file over a stream, then the biggest.
 func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 	for _, f := range files {
 		if f.ID == req.FileID {
@@ -465,8 +466,8 @@ func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 		}
 	}
 	type rank struct {
-		tier, streamed, fit, height, srank int
-		size                               int64
+		tier, streamed, fit, height, conv, srank int
+		size                                     int64
 	}
 	rankOf := func(f *db.MediaFile) rank {
 		rk := rank{tier: 1, size: -f.Size, srank: f.StreamRank}
@@ -475,10 +476,14 @@ func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 		if f.Probe != "" {
 			var info media.Info
 			if json.Unmarshal([]byte(f.Probe), &info) == nil && info.Duration > 0 {
-				if media.Decide(&info, req.Caps, -1).Method == media.MethodTranscode || !fits {
+				d := media.Decide(&info, req.Caps, -1)
+				if d.Method == media.MethodTranscode || !fits {
 					rk.tier = 2
 				} else {
 					rk.tier = 0
+				}
+				if d.AudioIndex >= 0 && !d.AudioCopy {
+					rk.conv = 1 // its sound would be converted for this player
 				}
 			}
 		} else if !fits {
@@ -496,13 +501,17 @@ func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 	}
 	less := func(a, b rank) bool {
 		switch {
-		// A quality's streams keep their order (best first) unless one is
-		// known to need transcoding: playing another once doesn't make it
-		// the default.
+		// A quality's streams go biggest first (the most bitrate) unless one
+		// is known to need transcoding: playing one once, which looks it
+		// over, doesn't make it the default.
 		case a.streamed == 1 && b.streamed == 1 && a.fit == b.fit && a.height == b.height && a.tier < 2 && b.tier < 2:
-			if a.srank != b.srank {
-				return a.srank < b.srank
+			if a.conv != b.conv {
+				return a.conv < b.conv
 			}
+			if a.size != b.size {
+				return a.size < b.size
+			}
+			return a.srank < b.srank
 		case a.tier != b.tier:
 			return a.tier < b.tier
 		case a.streamed != b.streamed:
@@ -511,6 +520,8 @@ func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 			return a.fit < b.fit
 		case a.height != b.height:
 			return a.height < b.height
+		case a.conv != b.conv:
+			return a.conv < b.conv
 		}
 		return a.size < b.size
 	}
@@ -664,6 +675,9 @@ func versionLabel(f *db.MediaFile) string {
 		parts = append(parts, fmt.Sprintf("%.1f GB", float64(f.Size)/(1<<30)))
 	case f.Size > 0:
 		parts = append(parts, fmt.Sprintf("%d MB", max(1, f.Size>>20)))
+	}
+	if f.Size > 0 && f.Duration > 60 {
+		parts = append(parts, fmt.Sprintf("%.0f Mbps", float64(f.Size)*8/f.Duration/1e6))
 	}
 	if f.StreamID != "" {
 		parts = append(parts, cmp.Or(f.Tag, "Stream"))
@@ -905,10 +919,7 @@ func (s *Server) startThumbs(f *db.MediaFile, src stream.Source, info *media.Inf
 	// Reading a streamed file costs bandwidth playback needs, so the frames
 	// wait until a player asks for one (most never do), and read at low
 	// priority when the source offers it.
-	j.Input = src.Input()
-	if bg, ok := src.(interface{ BackgroundInput() string }); ok {
-		j.Input = bg.BackgroundInput()
-	}
+	j.Input = stream.BackgroundInput(src)
 	ctx, cancel := context.WithCancel(context.Background())
 	var once sync.Once
 	s.thumbJobs.Store(sess.ID, func() { once.Do(func() { s.Thumbs.Start(ctx, j) }) })

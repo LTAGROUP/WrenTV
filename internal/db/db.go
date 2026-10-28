@@ -17,7 +17,10 @@ type DB struct {
 
 func Open(dataDir string) (*DB, error) {
 	path := filepath.Join(dataDir, "wrentv.db")
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)", path)
+	// Transactions begin IMMEDIATE: one that read first and wrote later
+	// failed with SQLITE_BUSY at once, without waiting out busy_timeout,
+	// whenever another write landed in between.
+	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(20000)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)&_txlock=immediate", path)
 	sqldb, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -420,6 +423,37 @@ var migrations = []string{
 	// Subtitles fetched from a subtitle site for a title, kept as WebVTT
 	// files (subtitles/<key>.vtt in the data directory) for every later play.
 	`CREATE TABLE online_subtitles (
+		item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+		key TEXT NOT NULL,
+		provider TEXT NOT NULL,
+		language TEXT NOT NULL DEFAULT '',
+		name TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY (item_id, key)
+	);`,
+	// A database that took another build's migrations at these numbers
+	// can lack the tables above; make any that are missing.
+	`CREATE TABLE IF NOT EXISTS external_watched (
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		kind TEXT NOT NULL CHECK (kind IN ('movie','show','episode')),
+		tmdb_id INTEGER NOT NULL,
+		season INTEGER NOT NULL DEFAULT -1,
+		episode INTEGER NOT NULL DEFAULT -1,
+		watched_at INTEGER NOT NULL,
+		PRIMARY KEY (user_id, kind, tmdb_id, season, episode)
+	);
+	CREATE INDEX IF NOT EXISTS items_tmdb ON items(kind, tmdb_id);
+	CREATE TABLE IF NOT EXISTS external_progress (
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		kind TEXT NOT NULL CHECK (kind IN ('movie','episode')),
+		tmdb_id INTEGER NOT NULL,
+		season INTEGER NOT NULL DEFAULT -1,
+		episode INTEGER NOT NULL DEFAULT -1,
+		percent REAL NOT NULL,
+		paused_at INTEGER NOT NULL,
+		PRIMARY KEY (user_id, kind, tmdb_id, season, episode)
+	);
+	CREATE TABLE IF NOT EXISTS online_subtitles (
 		item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
 		key TEXT NOT NULL,
 		provider TEXT NOT NULL,

@@ -313,11 +313,12 @@ func TestImportPausedAndMissingTitles(t *testing.T) {
 		t.Fatalf("added %s", got)
 	}
 	mu.Unlock()
-	far := &db.Item{LibraryID: lib, Kind: "show", Title: "Far Away", TMDBID: 888, MatchKey: "fa"}
+	// TMDB has no runtime for the episode: the show's is used.
+	far := &db.Item{LibraryID: lib, Kind: "show", Title: "Far Away", TMDBID: 888, RuntimeMin: 40, MatchKey: "fa"}
 	if err := d.InsertItem(ctx, far); err != nil {
 		t.Fatal(err)
 	}
-	ep4 := &db.Item{LibraryID: lib, Kind: "episode", ShowID: far.ID, ParentID: far.ID, Title: "Four", SeasonNumber: 2, EpisodeNumber: 4, RuntimeMin: 40, MatchKey: "fa24"}
+	ep4 := &db.Item{LibraryID: lib, Kind: "episode", ShowID: far.ID, ParentID: far.ID, Title: "Four", SeasonNumber: 2, EpisodeNumber: 4, MatchKey: "fa24"}
 	if err := d.InsertItem(ctx, ep4); err != nil {
 		t.Fatal(err)
 	}

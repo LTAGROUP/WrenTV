@@ -472,6 +472,7 @@ func (s *Service) syncEpisodes(ctx context.Context, show *db.Item, sh *tmdb.Show
 		} else if err != nil {
 			continue
 		}
+		var eps []*db.Item
 		for _, e := range r.data.Episodes {
 			if !aired(e.AirDate) {
 				continue
@@ -483,9 +484,12 @@ func (s *Service) syncEpisodes(ctx context.Context, show *db.Item, sh *tmdb.Show
 				Title: fmt.Sprintf("Episode %d", e.EpisodeNumber), SortTitle: fmt.Sprintf("%04d%04d", r.n, e.EpisodeNumber),
 				SeasonNumber: r.n, EpisodeNumber: e.EpisodeNumber}
 			library.ApplyEpisode(ep, e)
-			if s.DB.InsertItem(ctx, ep) == nil {
-				added = true
-			}
+			eps = append(eps, ep)
+		}
+		if err := s.DB.InsertItems(ctx, eps); err != nil {
+			slog.Warn("add episodes", "show", show.ID, "season", r.n, "err", err)
+		} else if len(eps) > 0 {
+			added = true
 		}
 	}
 	if added {

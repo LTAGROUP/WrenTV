@@ -339,6 +339,19 @@ func (d *DB) ImportExternalProgress(ctx context.Context, userID string, ps []Ext
 	return tx.Commit()
 }
 
+// lengthOf is an item's length in seconds for turning a tracker's percentage
+// into a position: its file's, else its runtime, else (an episode TMDB has
+// no runtime for) its show's. i is the item's alias.
+const lengthOf = `COALESCE(NULLIF((SELECT MAX(f.duration) FROM media_files f WHERE f.item_id=i.id),0),
+	NULLIF(i.runtime_min,0)*60, NULLIF((SELECT p.runtime_min FROM items p WHERE p.id=i.show_id),0)*60, 0)`
+
+// PlayLength is lengthOf for one item, 0 when nothing says.
+func (d *DB) PlayLength(ctx context.Context, itemID string) (float64, error) {
+	var n float64
+	err := d.QueryRowContext(ctx, `SELECT `+lengthOf+` FROM items i WHERE i.id=?`, itemID).Scan(&n)
+	return n, err
+}
+
 // ApplyExternalProgressFor turns pause points for one title just added (kind
 // "movie" or "show", by TMDB id) into resume positions from its runtime,
 // then drops them. A pause older than the user's own progress loses.
@@ -361,8 +374,8 @@ func (d *DB) ApplyExternalProgressFor(ctx context.Context, kind string, tmdbID i
 	defer tx.Rollback()
 	for _, q := range []string{
 		`INSERT INTO watch_state (user_id, item_id, position, duration, watched, updated_at)
-			SELECT x.user_id, i.id, i.runtime_min*60*x.percent/100, i.runtime_min*60, 0, x.paused_at FROM external_progress x
-			` + match + ` AND x.tmdb_id=?1 AND i.runtime_min > 0
+			SELECT x.user_id, i.id, ` + lengthOf + `*x.percent/100, ` + lengthOf + `, 0, x.paused_at FROM external_progress x
+			` + match + ` AND x.tmdb_id=?1 AND ` + lengthOf + ` > 0
 			ON CONFLICT(user_id, item_id) DO UPDATE SET position=excluded.position, duration=excluded.duration, updated_at=excluded.updated_at
 			WHERE watch_state.watched=0 AND watch_state.updated_at < excluded.updated_at`,
 		`DELETE FROM external_progress WHERE rowid IN (SELECT x.rowid FROM external_progress x ` + match + ` AND x.tmdb_id=?1)`,

@@ -194,6 +194,10 @@ struct ItemDetailView: View {
                     Label("\(next.inProgress ? "Resume" : "Play") \(next.episodeLabel)", systemImage: "play.fill")
                 }
                 .buttonStyle(.primaryCapsule)
+                if next.inProgress {
+                    Button { play(next, fromStart: true) } label: { Label("Start Over", systemImage: "arrow.counterclockwise") }
+                        .buttonStyle(.glassCapsule)
+                }
             }
             if let t = extras?.trailer {
                 Button { showTrailer = true } label: { Label("Trailer", systemImage: "play.rectangle") }

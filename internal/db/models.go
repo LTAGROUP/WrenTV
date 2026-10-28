@@ -328,6 +328,31 @@ func (d *DB) UpsertTopLevel(ctx context.Context, it *Item) (*Item, bool, error) 
 }
 
 func (d *DB) InsertItem(ctx context.Context, it *Item) error {
+	return insertItem(ctx, d, it)
+}
+
+// InsertItems inserts items together, in one write: a show's episodes one
+// at a time were hundreds of writes the details pages queued behind.
+func (d *DB) InsertItems(ctx context.Context, its []*Item) error {
+	if len(its) == 0 {
+		return nil
+	}
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, it := range its {
+		if err := insertItem(ctx, tx, it); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func insertItem(ctx context.Context, ex interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, it *Item) error {
 	if it.ID == "" {
 		it.ID = NewID()
 	}
@@ -343,7 +368,7 @@ func (d *DB) InsertItem(ctx context.Context, it *Item) error {
 		it.MatchState = "pending"
 	}
 	genres, _ := json.Marshal(it.Genres)
-	_, err := d.ExecContext(ctx, `INSERT INTO items (id, library_id, kind, parent_id, show_id, match_key, title, sort_title, original_title,
+	_, err := ex.ExecContext(ctx, `INSERT INTO items (id, library_id, kind, parent_id, show_id, match_key, title, sort_title, original_title,
 		year, overview, tagline, tmdb_id, imdb_id, season_number, episode_number, poster_path, backdrop_path, still_path, logo_path, rating,
 		content_rating, genres, runtime_min, air_date, match_state, added_at, updated_at)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -708,7 +733,7 @@ func (d *DB) FileByPath(ctx context.Context, path string) (*MediaFile, error) {
 }
 
 func (d *DB) FilesForItem(ctx context.Context, itemID string) ([]*MediaFile, error) {
-	return d.queryFiles(ctx, `SELECT `+fileCols+` FROM media_files WHERE item_id=? ORDER BY height DESC, stream_rank, size DESC`, itemID)
+	return d.queryFiles(ctx, `SELECT `+fileCols+` FROM media_files WHERE item_id=? ORDER BY height DESC, size DESC, stream_rank`, itemID)
 }
 
 func (d *DB) FilesForLibrary(ctx context.Context, libraryID string) ([]*MediaFile, error) {

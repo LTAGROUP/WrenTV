@@ -541,6 +541,7 @@ private fun Actions(
             if (next != null) {
                 PillButton("${if (next.inProgress) "Resume" else "Play"} S${next.seasonNumber}:E${next.episodeNumber}", { play(next, false) },
                     Modifier.rememberFocus("act:play", default = true), icon = Icons.Rounded.PlayArrow, primary = true)
+                if (next.inProgress) PillButton("Start Over", { play(next, true) }, Modifier.rememberFocus("act:restart"), icon = Icons.Rounded.Replay)
             }
         }
         extras?.trailer?.let { t ->

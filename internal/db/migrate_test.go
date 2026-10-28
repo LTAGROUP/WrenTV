@@ -81,13 +81,14 @@ func TestStreamingMigration(t *testing.T) {
 	if len(fs) != 1 || fs[0].StreamID != st2.ID {
 		t.Fatalf("files = %+v", fs)
 	}
-	// Another release is another option at the same quality, after the first.
+	// Another release is another option at the same quality, listed first
+	// when it's bigger (the most bitrate).
 	st3 := &Stream{ItemID: it.ID, Quality: "1080p", InfoHash: "ghi", Kind: "usenet", Rank: 1}
 	if err := d.PutStream(ctx, st3, &MediaFile{ItemID: it.ID, LibraryID: lib.ID, Height: 1080, Size: 1 << 40}); err != nil {
 		t.Fatal(err)
 	}
 	fs, _ = d.FilesForItem(ctx, it.ID)
-	if len(fs) != 2 || fs[0].StreamID != st2.ID || fs[1].StreamRank != 1 {
+	if len(fs) != 2 || fs[0].StreamID != st3.ID || fs[1].StreamID != st2.ID {
 		t.Fatalf("files = %+v", fs)
 	}
 	items, _, _ := d.QueryItems(ctx, ItemQuery{LibraryID: lib.ID, Kind: "movie"})

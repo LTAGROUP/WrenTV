@@ -155,6 +155,10 @@ class PlayerController(
     /** The next play is a retry, and the version that broke partway, if one did. */
     private var freshLink = false
     private var failedFile: String? = null
+    /** When the audio output last ran dry (0 when it hasn't since the last resync), and when it was resynced. */
+    private var underrunAt = 0L
+    private var resyncedAt = 0L
+    private var audioMime: String? = null
 
     val isOffline: Boolean get() = localFile != null
     val currentChapter: Chapter? get() = chapters.lastOrNull { it.start <= position + 0.01 }
@@ -169,9 +173,11 @@ class PlayerController(
             }
             override fun onAudioUnderrun(t: AnalyticsListener.EventTime, size: Int, ms: Long, since: Long) {
                 android.util.Log.w("WrenAudio", "underrun at ${t.currentPlaybackPositionMs} ms")
+                underrunAt = android.os.SystemClock.elapsedRealtime()
             }
             override fun onAudioInputFormatChanged(t: AnalyticsListener.EventTime, f: Format, r: DecoderReuseEvaluation?) {
                 android.util.Log.i("WrenAudio", "format ${f.sampleMimeType} ${f.channelCount}ch")
+                audioMime = f.sampleMimeType
             }
             override fun onPositionDiscontinuity(t: AnalyticsListener.EventTime, old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
                 android.util.Log.i("WrenAudio", "jump ${old.positionMs} -> ${new.positionMs} ms (reason $reason)")
@@ -223,6 +229,7 @@ class PlayerController(
                     val d = player.duration
                     if (d != C.TIME_UNSET && d > 0) duration = d / 1000.0
                     updateSkip()
+                    resyncAudio()
                 }
                 delay(250)
             }
@@ -525,6 +532,23 @@ class PlayerController(
         if (isOffline) return null
         val n = (seconds / t.interval).roundToInt().coerceAtLeast(0)
         return a.absolute(t.url + n + ".jpg")
+    }
+
+    /**
+     * Dolby and DTS sent through to the receiver keep a clock that slips when
+     * the stream starves (a long skip ahead, a slow stretch) and the output
+     * underruns: the sound then trails the picture until the audio track is
+     * made anew, which leaving and coming back did. Once playback has been
+     * steady for a moment, seeking to where it is makes the track anew.
+     */
+    private fun resyncAudio() {
+        if (underrunAt == 0L || audioMime?.let { MimeTypes.isAudio(it) && it != MimeTypes.AUDIO_RAW && it != MimeTypes.AUDIO_AAC && it != MimeTypes.AUDIO_OPUS } != true) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!player.isPlaying || player.playbackState != Player.STATE_READY || now - underrunAt < 2_000 || now - resyncedAt < 20_000) return
+        android.util.Log.i("WrenAudio", "resync at ${player.currentPosition} ms")
+        underrunAt = 0L
+        resyncedAt = now
+        player.seekTo(player.currentPosition)
     }
 
     fun seekTo(seconds: Double) {

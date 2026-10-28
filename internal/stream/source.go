@@ -22,6 +22,16 @@ type Source interface {
 	Close() error
 }
 
+// BackgroundInput is src's Input for reads that mustn't slow playback,
+// such as converting a whole subtitle track: a Usenet stream gives them
+// fewer connections and little read-ahead.
+func BackgroundInput(src Source) string {
+	if bg, ok := src.(interface{ BackgroundInput() string }); ok {
+		return bg.BackgroundInput()
+	}
+	return src.Input()
+}
+
 type FileSource struct {
 	path string
 	f    *os.File

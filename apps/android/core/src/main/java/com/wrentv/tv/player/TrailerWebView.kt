@@ -13,7 +13,10 @@ import okhttp3.HttpUrl
  * YouTube refuses embeds without a real http(s) origin and referrer ("Error
  * 153"), so the page is loaded as if from the server's own address, the way
  * the web client embeds it. A remote's centre and play keys pause and play,
- * left and right skip ten seconds; Back is left to the app.
+ * left and right skip ten seconds, up, down and the captions key turn
+ * captions on and off (they start off: YouTube turns them on from the
+ * device's caption setting, and its own button can't be reached with a
+ * remote); Back is left to the app.
  */
 @SuppressLint("SetJavaScriptEnabled", "ViewConstructor")
 class TrailerWebView(context: Context, key: String, server: HttpUrl?) : WebView(context) {
@@ -38,6 +41,7 @@ class TrailerWebView(context: Context, key: String, server: HttpUrl?) : WebView(
             KeyEvent.KEYCODE_MEDIA_PAUSE -> "p&&p.pauseVideo()"
             KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> "skip(10)"
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> "skip(-10)"
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CAPTIONS -> "cc()"
             else -> return super.dispatchKeyEvent(event)
         }
         evaluateJavascript(js, null)
@@ -63,9 +67,11 @@ class TrailerWebView(context: Context, key: String, server: HttpUrl?) : WebView(
                 var p;
                 function onYouTubeIframeAPIReady(){
                   p=new YT.Player('p',{videoId:'$safe',host:'https://www.youtube.com',
-                    playerVars:{autoplay:1,playsinline:1,rel:0,modestbranding:1,origin:'$origin'},
-                    events:{onReady:function(e){e.target.playVideo()}}});
+                    playerVars:{autoplay:1,playsinline:1,rel:0,modestbranding:1,cc_load_policy:0,iv_load_policy:3,origin:'$origin'},
+                    events:{onReady:function(e){e.target.unloadModule('captions');e.target.playVideo()}}});
                 }
+                var ccOn=false;
+                function cc(){if(!p)return;ccOn=!ccOn;ccOn?p.loadModule('captions'):p.unloadModule('captions')}
                 function toggle(){if(!p)return;p.getPlayerState()==1?p.pauseVideo():p.playVideo()}
                 function skip(s){if(p)p.seekTo(Math.max(0,p.getCurrentTime()+s),true)}
                 </script>

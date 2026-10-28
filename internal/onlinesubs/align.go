@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -91,6 +92,8 @@ type stretch struct{ from, to, off float64 }
 // Alignment says how to move a subtitle's cues onto the file's timing.
 type Alignment struct {
 	stretches []stretch
+	// cut holds the starts of lines from scenes the file doesn't have.
+	cut map[float64]bool
 }
 
 // OK reports whether enough of the subtitle matched the reference to trust.
@@ -134,6 +137,9 @@ func (a Alignment) Offset(t float64) float64 {
 func (a Alignment) Apply(cues []Cue) []Cue {
 	out := make([]Cue, 0, len(cues))
 	for _, c := range cues {
+		if a.cut[c.Start] {
+			continue
+		}
 		off := a.Offset(c.Start)
 		c.Start, c.End = c.Start+off, c.End+off
 		if c.End > 0 {
@@ -153,7 +159,7 @@ func Align(sub, ref []Cue, sameLang bool, refEnd float64) Alignment {
 	if sameLang {
 		anchors := textAnchors(sub, ref, refEnd)
 		if ss := stretches(anchors, 4); len(ss) > 0 || len(anchors) >= 12 {
-			return Alignment{stretches: ss}
+			return Alignment{stretches: ss, cut: cutLines(sub, ref, ss, refEnd)}
 		}
 	}
 	return Alignment{stretches: stretches(timingAnchors(sub, ref, refEnd), 1)}
@@ -161,27 +167,31 @@ func Align(sub, ref []Cue, sameLang bool, refEnd float64) Alignment {
 
 // textAnchors pairs subtitle cues with reference cues that say the same
 // thing. Releases split lines differently, so a cue matches when most of
-// its words are in one reference cue.
+// its words are in one reference cue. Each line is looked for around where
+// the lines before it matched, not where it sits: a longer cut's extra
+// scenes add up to more than Reach over a film. The longer nothing has
+// matched, the wider it looks, since a scene the file lacks can be as long
+// as the lines since the last match.
 func textAnchors(sub, ref []Cue, refEnd float64) []anchor {
 	refWords := make([]map[string]bool, len(ref))
 	for i, r := range ref {
 		refWords[i] = wordSet(r.Text)
 	}
 	var out []anchor
-	lo := 0
+	cur, last := 0.0, 0.0 // the offset the latest matches agree on, and where the last was
 	for _, s := range sub {
-		if s.Start-Reach > refEnd {
+		at := s.Start + cur
+		reach := Reach + max(s.Start-last-Reach, 0)
+		if at-reach > refEnd {
 			break
 		}
 		words := wordSet(s.Text)
 		if len(words) < 3 {
 			continue
 		}
-		for lo < len(ref) && ref[lo].Start < s.Start-Reach {
-			lo++
-		}
+		lo := sort.Search(len(ref), func(i int) bool { return ref[i].Start >= at-reach })
 		best, second, bestAt := 0.0, 0.0, 0.0
-		for j := lo; j < len(ref) && ref[j].Start <= s.Start+Reach; j++ {
+		for j := lo; j < len(ref) && ref[j].Start <= at+reach; j++ {
 			n := 0
 			for w := range words {
 				if refWords[j][w] {
@@ -203,8 +213,78 @@ func textAnchors(sub, ref []Cue, refEnd float64) []anchor {
 		// With the reference read only partway, a match counts once it's
 		// read a little past it: a rival later on is unlikely, and a stray
 		// has to agree with its neighbours to count.
-		if best >= 0.6 && best-second >= 0.25 && (s.Start+Reach <= refEnd || bestAt+settle <= refEnd) {
+		if best >= 0.6 && best-second >= 0.25 && (at+reach <= refEnd || bestAt+settle <= refEnd) {
 			out = append(out, anchor{s.Start, bestAt - s.Start})
+			last = s.Start
+			// Three of the last five agreeing move the window; one stray doesn't.
+			if n := len(out); n >= 3 {
+				offs := make([]float64, 0, 5)
+				for _, a := range out[max(0, n-5):] {
+					offs = append(offs, a.off)
+				}
+				cur = median(offs)
+			}
+		}
+	}
+	return out
+}
+
+// cutLines finds lines from scenes the file doesn't have (a longer cut's):
+// between two stretches where the subtitle runs longer than the file, the
+// lines that say nothing the file's track says there. A short line goes
+// with the nearest longer one.
+func cutLines(sub, ref []Cue, ss []stretch, refEnd float64) map[float64]bool {
+	out := map[float64]bool{}
+	for i := 1; i < len(ss); i++ {
+		a, b := ss[i-1], ss[i]
+		if b.off > a.off-2 || b.from+b.off > refEnd {
+			continue
+		}
+		from, to := a.to+a.off-5, b.from+b.off+5 // the stretch of the file between them
+		var long []float64
+		var short []float64
+		cutLong := map[float64]bool{}
+		for _, c := range sub {
+			if c.Start <= a.to+1 || c.Start >= b.from-1 {
+				continue
+			}
+			words := wordSet(c.Text)
+			if len(words) < 3 {
+				short = append(short, c.Start)
+				continue
+			}
+			long = append(long, c.Start)
+			said := false
+			for _, r := range ref {
+				if r.Start < from || r.Start > to {
+					continue
+				}
+				n := 0
+				for w := range wordSet(r.Text) {
+					if words[w] {
+						n++
+					}
+				}
+				if float64(n) >= 0.5*float64(len(words)) {
+					said = true
+					break
+				}
+			}
+			if !said {
+				cutLong[c.Start] = true
+				out[c.Start] = true
+			}
+		}
+		for _, t := range short {
+			near, gap := 0.0, math.Inf(1)
+			for _, l := range long {
+				if d := math.Abs(l - t); d < gap {
+					near, gap = l, d
+				}
+			}
+			if gap < 10 && cutLong[near] {
+				out[t] = true
+			}
 		}
 	}
 	return out

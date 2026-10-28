@@ -191,7 +191,8 @@ func (s *Session) SubtitleText(typeIdx int) (text string, complete bool, done <-
 }
 
 // extractSubtitle starts (or joins) converting one subtitle track to WebVTT.
-// It runs for as long as the session that started it.
+// It runs for as long as the session that started it, reading the whole
+// file at low priority: at full speed it starved the player beside it.
 func (m *Manager) extractSubtitle(s *Session, cache string, typeIdx int) *subExtraction {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -212,7 +213,7 @@ func (m *Manager) extractSubtitle(s *Session, cache string, typeIdx int) *subExt
 		defer close(x.done)
 		_ = os.MkdirAll(filepath.Dir(cache), 0o755)
 		part := cache + ".part"
-		cmd := exec.CommandContext(ctx, m.cfg.FFmpeg, "-nostdin", "-v", "error", "-y", "-i", s.Src.Input(),
+		cmd := exec.CommandContext(ctx, m.cfg.FFmpeg, "-nostdin", "-v", "error", "-y", "-i", BackgroundInput(s.Src),
 			"-map", fmt.Sprintf("0:s:%d", typeIdx), "-f", "webvtt", "-flush_packets", "1", part)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			x.err = strings.TrimSpace(string(out))

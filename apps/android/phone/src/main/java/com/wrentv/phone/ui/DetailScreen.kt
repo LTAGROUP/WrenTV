@@ -161,6 +161,7 @@ fun DetailScreen(itemId: String, seed: Item?) {
                                 if (resume) GlassButton("Start Over", Icons.Rounded.Replay, { play(item, true) })
                             } else if (item.kind == "show") d?.nextEpisode?.let { next ->
                                 PrimaryButton("${if (next.inProgress) "Resume" else "Play"} ${next.episodeLabel}", Icons.Rounded.PlayArrow, { play(next, false) })
+                                if (next.inProgress) GlassButton("Start Over", Icons.Rounded.Replay, { play(next, true) })
                             }
                             extras?.trailer?.let { t ->
                                 var watching by remember { mutableStateOf(false) }

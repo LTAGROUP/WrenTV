@@ -78,19 +78,32 @@ func TestPreferredSubtitle(t *testing.T) {
 	}
 }
 
-func TestChooseStreamRank(t *testing.T) {
+func TestChooseStreamSize(t *testing.T) {
 	web := withHEVC(media.ClientCaps{Engines: []string{"avplayer"}, NativeVideo: []string{"h264"}, NativeAudio: []string{"aac"}, NativeContainers: []string{"mp4"}})
 	stream := func(id string, rank int, size int64) *db.MediaFile {
 		return &db.MediaFile{ID: id, StreamID: id, Width: 3840, Height: 2160, StreamRank: rank, Size: size}
 	}
-	best, second := stream("best", 0, 10<<30), stream("second", 1, 50<<30)
-	// Playing the second choice once probes it; the first stays the default.
-	second.Probe, second.ProbedAt = probed("x", 3840, 2160, "hevc", 60000).Probe, 1
-	if got := chooseFile([]*db.MediaFile{second, best}, playRequest{Caps: web}).ID; got != "best" {
-		t.Fatalf("got %s, want the first-ranked stream", got)
+	small, big := stream("small", 0, 10<<30), stream("big", 1, 50<<30)
+	if got := chooseFile([]*db.MediaFile{small, big}, playRequest{Caps: web}).ID; got != "big" {
+		t.Fatalf("got %s, want the biggest stream", got)
 	}
-	if got := chooseFile([]*db.MediaFile{second, best}, playRequest{Caps: web, FileID: "second"}).ID; got != "second" {
+	// Playing the smaller one once looks it over; the biggest stays the default.
+	small.Probe, small.ProbedAt = probed("x", 3840, 2160, "hevc", 60000).Probe, 1
+	if got := chooseFile([]*db.MediaFile{small, big}, playRequest{Caps: web}).ID; got != "big" {
+		t.Fatalf("after a play: got %s, want the biggest stream", got)
+	}
+	if got := chooseFile([]*db.MediaFile{small, big}, playRequest{Caps: web, FileID: "small"}).ID; got != "small" {
 		t.Fatalf("explicit choice: got %s", got)
+	}
+	// One this player can't take as it is (TrueHD here) goes after the rest.
+	truehd := probed("y", 3840, 2160, "hevc", 60000)
+	var info media.Info
+	_ = json.Unmarshal([]byte(truehd.Probe), &info)
+	info.Audio[0].Codec = "truehd"
+	b, _ := json.Marshal(info)
+	big.Probe, big.ProbedAt = string(b), 1
+	if got := chooseFile([]*db.MediaFile{small, big}, playRequest{Caps: web}).ID; got != "small" {
+		t.Fatalf("TrueHD to a player without it: got %s, want small", got)
 	}
 }
 

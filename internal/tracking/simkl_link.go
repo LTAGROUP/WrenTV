@@ -359,7 +359,7 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 		slog.Warn("simkl playback import", "user", userID, "err", err)
 		return movies, episodes, nil
 	}
-	resumed := 0
+	resumed, skipped := 0, 0
 	var elsewhere []db.ExternalProgress
 	for _, pb := range paused {
 		if pb.Progress <= 0 || pb.Progress >= 100 {
@@ -387,20 +387,18 @@ func (s *Service) runImport(ctx context.Context, userID string) (movies, episode
 		if id == "" {
 			continue
 		}
-		it, err := s.DB.GetItem(ctx, id)
-		if err != nil || it.RuntimeMin <= 0 {
+		dur, err := s.DB.PlayLength(ctx, id)
+		if err != nil || dur <= 0 {
+			skipped++
 			continue
 		}
-		dur := float64(it.RuntimeMin * 60)
 		if ok, err := s.DB.ImportProgress(ctx, userID, id, dur*pb.Progress/100, dur, when(pb.When())); err != nil {
 			return movies, episodes, err
 		} else if ok {
 			resumed++
 		}
 	}
-	if resumed > 0 {
-		slog.Info("simkl import", "user", userID, "resumable", resumed)
-	}
+	slog.Info("simkl playback import", "user", userID, "paused", len(paused), "resumable", resumed, "not here", len(elsewhere), "no length", skipped)
 	if err := s.DB.ImportExternalProgress(ctx, userID, elsewhere); err != nil {
 		return movies, episodes, err
 	}
