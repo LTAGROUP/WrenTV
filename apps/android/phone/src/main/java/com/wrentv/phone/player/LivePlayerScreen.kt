@@ -67,7 +67,7 @@ fun LivePlayerScreen(target: LiveTarget) {
     val nav = LocalNavigator.current
     val pick = { all: List<LiveChannel> ->
         when {
-            target.ids != null -> target.ids.mapNotNull { id -> all.firstOrNull { it.id == id } }
+            target.ids != null -> all.associateBy { it.id }.let { byId -> target.ids.distinct().mapNotNull { byId[it] } }
             target.group != null -> all.filter { it.group == target.group }
             else -> all
         }

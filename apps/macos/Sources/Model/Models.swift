@@ -1401,6 +1401,14 @@ struct LiveChannel: Codable, Hashable, Identifiable {
     var next: LiveProgram?
     /// "sports", "news", "movies", "kids", "music" or "entertainment".
     var genre: String?
+    /// The id of the provider it comes from.
+    var source: String?
+}
+
+/// An IPTV provider the server's channels come from.
+struct LiveProvider: Codable, Hashable, Identifiable {
+    var id: String
+    var name: String
 }
 
 /// The guide's channel filters, in the order they're offered.
@@ -1412,9 +1420,59 @@ enum LiveGenre: String, CaseIterable, Identifiable {
 
 struct LiveChannelsResponse: Codable {
     var channels: [LiveChannel]
+    var providers: [LiveProvider]?
     /// The viewer's starred channels, and the ones they watched last (newest first).
     var favorites: [String]?
     var recents: [String]?
+    /// The shows the viewer follows: their airings lead the overview.
+    var shows: [String]?
+}
+
+/// One side of a game. Logo and color (hex, no '#') are missing for teams ESPN doesn't list.
+struct LiveTeam: Codable, Hashable {
+    var name: String
+    var short: String?
+    var logo: String?
+    var color: String?
+}
+
+/// The game a programme shows.
+struct LiveMatchup: Codable, Hashable {
+    var league: String?
+    var away: LiveTeam
+    var home: LiveTeam
+
+    /// "Bills at Chiefs", or the full names.
+    func title(short: Bool = false) -> String {
+        short ? "\(away.short ?? away.name) at \(home.short ?? home.name)" : "\(away.name) at \(home.name)"
+    }
+}
+
+/// A programme on a channel, on the overview's shelves.
+struct LiveTile: Codable, Hashable, Identifiable {
+    var channelId: String
+    var program: LiveProgram?
+    var matchup: LiveMatchup?
+    /// A picture for the programme: absolute, or a path on the server.
+    var art: String?
+
+    var id: String { "\(channelId)|\(program?.start ?? 0)" }
+}
+
+/// A row of the overview: games on now, the viewer's shows, news...
+struct LiveShelf: Codable, Hashable, Identifiable {
+    var id: String
+    var title: String
+    var tiles: [LiveTile]
+}
+
+struct LiveOverview: Codable {
+    var shelves: [LiveShelf]?
+}
+
+/// A show's title as the server keys followed shows: lower case, words only.
+func liveShowKey(_ title: String) -> String {
+    title.lowercased().split { !($0.isLetter || $0.isNumber) }.joined(separator: " ")
 }
 
 /// A programme coming up on a channel, from a guide search.

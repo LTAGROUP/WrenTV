@@ -1456,6 +1456,10 @@ func (s *Service) ServeInternal(w http.ResponseWriter, r *http.Request, token st
 		http.Error(w, "unknown stream", http.StatusNotFound)
 		return
 	}
+	if d, ok := src.(*debridSource); ok {
+		d.ServeInternal(w, r)
+		return
+	}
 	src.ServeHTTP(w, r)
 }
 

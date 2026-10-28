@@ -91,7 +91,8 @@ fun LivePlayerScreen(channelId: String, group: String? = null, ids: List<String>
     // Opened from a group, flipping stays in it, in the order the group page shows.
     val pick = { all: List<LiveChannel> ->
         when {
-            ids != null -> ids.mapNotNull { id -> all.firstOrNull { it.id == id } }
+            // By id, not a search per channel: a big provider's guide has thousands.
+            ids != null -> all.associateBy { it.id }.let { byId -> ids.distinct().mapNotNull { byId[it] } }
             group != null -> all.inGroup(group, System.currentTimeMillis() / 1000)
             else -> all
         }

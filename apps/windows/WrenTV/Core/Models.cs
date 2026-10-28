@@ -845,14 +845,72 @@ public sealed class LiveChannel
     public LiveProgram? Next { get; set; }
     /// "sports", "news", "movies", "kids", "music" or "entertainment".
     public string? Genre { get; set; }
+    /// The id of the provider it comes from.
+    public string? Source { get; set; }
+}
+
+/// An IPTV provider the server's channels come from.
+public sealed class LiveProvider
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
 }
 
 public sealed class LiveChannelsResponse
 {
     public List<LiveChannel> Channels { get; set; } = [];
+    public List<LiveProvider> Providers { get; set; } = [];
     /// The viewer's starred channels, and the ones they watched last (newest first).
     public List<string> Favorites { get; set; } = [];
     public List<string> Recents { get; set; } = [];
+    /// The titles of the shows the viewer follows.
+    public List<string> Shows { get; set; } = [];
+}
+
+/// One side of a game. Logo and color (hex, no '#') are missing for teams ESPN doesn't list.
+public sealed class LiveTeam
+{
+    public string Name { get; set; } = "";
+    public string? Short { get; set; }
+    public string? Logo { get; set; }
+    public string? Color { get; set; }
+}
+
+/// The game a programme shows.
+public sealed class LiveMatchup
+{
+    public string? League { get; set; }
+    public LiveTeam Away { get; set; } = new();
+    public LiveTeam Home { get; set; } = new();
+
+    /// "Bills at Chiefs", or the full names.
+    public string Title(bool shortNames = false) =>
+        shortNames ? $"{Away.Short ?? Away.Name} at {Home.Short ?? Home.Name}" : $"{Away.Name} at {Home.Name}";
+}
+
+/// A programme on a channel, on the overview's shelves.
+public sealed class LiveTile
+{
+    public string ChannelId { get; set; } = "";
+    public LiveProgram? Program { get; set; }
+    public LiveMatchup? Matchup { get; set; }
+    /// A picture for the programme: absolute, or a path on the server.
+    public string? Art { get; set; }
+
+    public string Id => $"{ChannelId}|{Program?.Start ?? 0}";
+}
+
+/// A row of the overview: games on now, the viewer's shows, news...
+public sealed class LiveShelf
+{
+    public string Id { get; set; } = "";
+    public string Title { get; set; } = "";
+    public List<LiveTile> Tiles { get; set; } = [];
+}
+
+public sealed class LiveOverviewResponse
+{
+    public List<LiveShelf> Shelves { get; set; } = [];
 }
 
 public sealed class LiveGuideChannel

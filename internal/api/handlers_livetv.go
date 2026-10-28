@@ -29,10 +29,12 @@ func (s *Server) handleLiveChannels(w http.ResponseWriter, r *http.Request) {
 	recents, _ := s.DB.LiveRecents(r.Context(), uid)
 	shows, _ := s.DB.LiveShows(r.Context(), uid)
 	chs := []livetv.ChannelView{}
+	providers := []livetv.Provider{}
 	if s.LiveTV.Active() {
 		chs = s.LiveTV.Channels()
+		providers = s.LiveTV.Providers()
 	}
-	writeJSON(w, 200, map[string]any{"channels": chs, "favorites": nonNil(favs), "recents": nonNil(recents), "shows": nonNil(shows)})
+	writeJSON(w, 200, map[string]any{"channels": chs, "providers": providers, "favorites": nonNil(favs), "recents": nonNil(recents), "shows": nonNil(shows)})
 }
 
 // handleLiveGuide is every channel's programmes for a few hours, from now

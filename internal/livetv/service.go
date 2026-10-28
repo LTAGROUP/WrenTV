@@ -388,6 +388,35 @@ func (s *Service) Groups() []Group {
 	return out
 }
 
+// Provider is a turned-on source with channels to show, for the guide's
+// provider filter.
+type Provider struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Providers lists the sources the visible channels come from, in the
+// configured order.
+func (s *Service) Providers() []Provider {
+	s.mu.RLock()
+	has := map[string]bool{}
+	for _, c := range s.visible {
+		has[c.Source] = true
+	}
+	s.mu.RUnlock()
+	out := []Provider{}
+	for _, src := range s.cfg.LiveTV.Sources {
+		if src.Enabled && has[src.ID] {
+			name := src.Name
+			if name == "" {
+				name = src.ID
+			}
+			out = append(out, Provider{ID: src.ID, Name: name})
+		}
+	}
+	return out
+}
+
 // Check fetches a source's playlist without saving anything: for the
 // dashboard's Check button.
 func (s *Service) Check(ctx context.Context, src config.LiveTVSource) (channels int, guides []string, err error) {

@@ -153,7 +153,11 @@ struct LivePlayerWindow: View {
             state.liveChannels = channels
             guard let ch = channels.first(where: { $0.id == target.channelId }) else { return }
             // Up and down follow the guide as it was filtered.
-            let list = target.channelIds.map { ids in ids.compactMap { id in channels.first { $0.id == id } } }
+            let list = target.channelIds.map { ids in
+                // By id, not a search per channel: a big provider's guide has thousands.
+                let byId = Dictionary(channels.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                return ids.compactMap { byId[$0] }
+            }
                 ?? target.group.map { g in channels.filter { $0.group == g } } ?? channels
             let m = LivePlayerModel(api: api, channel: ch, channels: list)
             model = m

@@ -34,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BookmarkAdd
 import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.Dashboard
+import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.LiveTv
@@ -166,10 +167,18 @@ fun LiveTvScreen() {
     var options by remember { mutableStateOf<Pick?>(null) }
     var searching by remember { mutableStateOf(false) }
     var pickingGroup by remember { mutableStateOf(false) }
+    // With more than one provider, the guide shows one of them ("" for all).
+    var provider by rememberSaveable { mutableStateOf(state.store.string("liveProvider", "")) }
+    LaunchedEffect(provider) { state.store.setString("liveProvider", provider) }
+    var pickingProvider by remember { mutableStateOf(false) }
+    val providers = state.liveProviders
+    val chosenProvider = providers.takeIf { it.size > 1 }?.firstOrNull { it.id == provider }
+    val mine = remember(channels, chosenProvider) { chosenProvider?.let { p -> channels?.filter { it.source == p.id } } ?: channels }
 
-    val groups = remember(channels) { channels?.map { it.groupName }?.distinct().orEmpty() }
-    val genres = remember(channels) { channels?.mapNotNull { it.genre }?.toSet().orEmpty().let { have -> LiveGenres.filter { it.first in have } } }
+    val groups = remember(mine) { mine?.map { it.groupName }?.distinct().orEmpty() }
+    val genres = remember(mine) { mine?.mapNotNull { it.genre }?.toSet().orEmpty().let { have -> LiveGenres.filter { it.first in have } } }
     val chips = buildList {
+        if (providers.size > 1) add(Triple("providers", chosenProvider?.name ?: "All providers", Icons.Rounded.Dns))
         add(Triple("all", "All", null))
         add(Triple("favorites", "Favorites", Icons.Rounded.Star))
         if (state.liveRecents.isNotEmpty()) add(Triple("recent", "Recent", Icons.Rounded.History))
@@ -177,11 +186,11 @@ fun LiveTvScreen() {
         // Providers have hundreds of groups: they're picked from a list, not a chip each.
         if (groups.size > 1) add(Triple("groups", if (filter.startsWith("group:")) filter.removePrefix("group:") else "Groups", Icons.Rounded.FilterList))
     }
-    val shown = remember(channels, filter, now, state.liveFavorites, state.liveRecents) {
-        val all = channels.orEmpty()
+    val shown = remember(mine, filter, now, state.liveFavorites, state.liveRecents) {
+        val all = mine.orEmpty()
         when {
             filter == "favorites" -> all.filter { it.id in state.liveFavorites }
-            filter == "recent" -> state.liveRecents.mapNotNull { id -> byId[id] }
+            filter == "recent" -> state.liveRecents.mapNotNull { id -> byId[id] }.filter { chosenProvider == null || it.source == chosenProvider.id }
             filter.startsWith("genre:") -> all.filter { it.genre == filter.removePrefix("genre:") }.sortedBy { !it.onAir(now) }
             filter.startsWith("group:") -> all.inGroup(filter.removePrefix("group:"), now)
             else -> all.sortedBy { !it.onAir(now) }
@@ -226,7 +235,14 @@ fun LiveTvScreen() {
                 ) {
                     items(chips, key = { "chip:${it.first}" }) { (key, label, icon) ->
                         Chip(
-                            label, key == chosenKey, { if (key == "groups") pickingGroup = true else filter = key },
+                            label, key == chosenKey || (key == "providers" && chosenProvider != null),
+                            {
+                                when (key) {
+                                    "groups" -> pickingGroup = true
+                                    "providers" -> pickingProvider = true
+                                    else -> filter = key
+                                }
+                            },
                             (if (key == chips[chosenIndex].first) Modifier.focusRequester(chosen) else Modifier).rememberFocus("chip:$key"),
                             icon = icon,
                         )
@@ -272,9 +288,21 @@ fun LiveTvScreen() {
     if (pickingGroup) {
         ChoicePanel(
             "Channel groups",
-            groups.map { g -> Choice("group:$g", g, "${channels.orEmpty().count { it.groupName == g }} channels") },
+            groups.map { g -> Choice("group:$g", g, "${mine.orEmpty().count { it.groupName == g }} channels") },
             filter, onDismiss = { pickingGroup = false },
         ) { filter = it }
+    }
+    if (pickingProvider) {
+        ChoicePanel(
+            "Providers",
+            listOf(Choice("", "All providers", "${channels.orEmpty().size} channels")) +
+                providers.map { p -> Choice(p.id, p.name, "${channels.orEmpty().count { it.source == p.id }} channels") },
+            chosenProvider?.id ?: "", onDismiss = { pickingProvider = false },
+        ) {
+            provider = it
+            // A group belongs to one provider's playlist.
+            if (filter.startsWith("group:")) filter = "all"
+        }
     }
 }
 
@@ -299,7 +327,9 @@ private fun Overview(
     ReportScroll(list)
     // Following a show or starring a channel changes the shelves.
     val loaded = rememberLoaded("livetv-overview", refresh = listOf(tick / 2, state.liveShows, state.liveFavorites)) { state.api?.liveOverview() }
-    val shelves = loaded.value?.map { sh -> sh to sh.tiles.filter { it.channelId in byId } }?.filter { it.second.isNotEmpty() }
+    val shelves = loaded.value
+        ?.map { sh -> sh to sh.tiles.filter { it.channelId in byId }.distinctBy { "${it.channelId}:${it.program?.start}" } }
+        ?.filter { it.second.isNotEmpty() }
     var focused by remember { mutableStateOf<LiveTile?>(null) }
     val hero = focused ?: shelves?.firstOrNull()?.second?.firstOrNull()
     val heroCh = hero?.let { byId[it.channelId] }

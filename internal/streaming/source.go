@@ -91,11 +91,19 @@ type debridSource struct {
 	url string
 	// served is the size of the file upstream first sent.
 	served int64
+	// chunks keeps what ffmpeg reads (see chunkCache); made on first use.
+	chunks *chunkCache
+	stop   context.CancelFunc
 }
 
 func (s *debridSource) Input() string {
 	return fmt.Sprintf("http://127.0.0.1:%d/internal/stream/%s", s.svc.HTTPPort, s.token)
 }
+
+// BackgroundInput is Input for reads all over the file, such as seek
+// thumbnails: they go straight upstream instead of pushing playback's
+// chunks out of the cache.
+func (s *debridSource) BackgroundInput() string { return s.Input() + "?bg=1" }
 
 func (s *debridSource) Size() int64           { return s.size }
 func (s *debridSource) ReaderAt() io.ReaderAt { return s }
@@ -105,11 +113,63 @@ func (s *debridSource) Close() error {
 		s.svc.mu.Lock()
 		delete(s.svc.sources, s.token)
 		s.svc.mu.Unlock()
+		s.mu.Lock()
+		if s.stop != nil {
+			s.stop()
+		}
+		s.chunks = nil
+		s.mu.Unlock()
 		if s.release != nil {
 			s.release()
 		}
 	})
 	return nil
+}
+
+// cache is the stream's chunk cache, once upstream has said how big the
+// file is (an addon's own idea of it can be a little off); nil before.
+func (s *debridSource) cache() *chunkCache {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.chunks == nil && s.served > 0 && s.stop == nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.chunks, s.stop = newChunkCache(ctx, s.served, s.t, func(ctx context.Context, rng string) (*http.Response, error) {
+			return s.open(ctx, http.MethodGet, rng)
+		}), cancel
+	}
+	return s.chunks
+}
+
+// ServeInternal serves ffmpeg's reads from the chunk cache; background
+// reads, and any before upstream has answered once, are proxied as they come.
+func (s *debridSource) ServeInternal(w http.ResponseWriter, r *http.Request) {
+	c := s.cache()
+	if r.URL.Query().Get("bg") != "" || c == nil {
+		s.ServeHTTP(w, r)
+		return
+	}
+	size := c.size
+	start, end, ok := parseRange(r.Header.Get("Range"), size)
+	if !ok {
+		w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(size, 10))
+		http.Error(w, "bad range", http.StatusRequestedRangeNotSatisfiable)
+		return
+	}
+	w.Header().Set("Content-Type", contentType(s.name))
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+	status := http.StatusOK
+	if r.Header.Get("Range") != "" {
+		status = http.StatusPartialContent
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
+	}
+	w.WriteHeader(status)
+	if r.Method == http.MethodHead {
+		return
+	}
+	if err := c.writeRange(r.Context(), w, start, end); err != nil && r.Context().Err() == nil {
+		slog.Warn("debrid stream failed", "stream", s.streamID, "offset", start, "err", redactURL(err))
+	}
 }
 
 func (s *debridSource) link() string {

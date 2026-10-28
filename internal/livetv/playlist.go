@@ -28,7 +28,8 @@ type Channel struct {
 	TvgName   string `json:"-"`
 	URL       string `json:"-"`
 	UserAgent string `json:"-"`
-	Source    string `json:"-"`
+	// Source is the id of the provider the channel comes from.
+	Source string `json:"source,omitempty"`
 	// numbered: the playlist gave the number (tvg-chno), rather than its place in the list.
 	numbered bool
 	// stremio: URL is a Stremio addon's stream request, asked when played.

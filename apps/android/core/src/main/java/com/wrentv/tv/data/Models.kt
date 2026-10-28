@@ -1022,7 +1022,13 @@ data class LiveChannel(
     val next: LiveProgram? = null,
     /** "sports", "news", "movies", "kids", "music" or "entertainment". */
     val genre: String? = null,
+    /** The id of the provider it comes from. */
+    val source: String? = null,
 )
+
+/** An IPTV provider the server's channels come from. */
+@Serializable
+data class LiveProvider(val id: String, val name: String = "")
 
 /** The guide's channel filters, in the order they're offered. */
 val LiveGenres = listOf("sports" to "Sports", "news" to "News", "movies" to "Movies", "kids" to "Kids", "music" to "Music", "entertainment" to "Entertainment")
@@ -1030,6 +1036,7 @@ val LiveGenres = listOf("sports" to "Sports", "news" to "News", "movies" to "Mov
 @Serializable
 data class LiveChannelsResponse(
     val channels: List<LiveChannel> = emptyList(),
+    val providers: List<LiveProvider> = emptyList(),
     /** The viewer's starred channels, and the ones they watched last (newest first). */
     val favorites: List<String> = emptyList(),
     val recents: List<String> = emptyList(),

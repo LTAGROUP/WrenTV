@@ -1,9 +1,12 @@
 import SwiftUI
 
-/// Live TV: the focused channel's muted live picture and what it's showing
-/// across the top, then a guide of the next three hours under filters
-/// (favorites, recent, kinds of channel, the provider's groups) and search.
-/// Select watches a channel; holding it adds the channel to favorites.
+/// Live TV, as an overview or a guide, with the focused card or channel's
+/// muted live picture and what it's showing across the top. The overview's
+/// shelves have live and upcoming games with the teams' logos, the viewer's
+/// followed shows and channels, and what's on by kind; the guide has the next
+/// three hours under filters (favorites, recent, kinds of channel, the
+/// provider's groups). Select watches; holding Select offers favoriting the
+/// channel and following the show.
 struct LiveTVView: View {
     @Environment(AppState.self) private var state
     @AppStorage("liveFilter") private var filter = "all"
@@ -15,27 +18,51 @@ struct LiveTVView: View {
     @State private var searching = false
     @State private var preview = LivePreview()
     @FocusState private var focus: String?
+    /// "overview" or "guide".
+    @AppStorage("liveView") private var view = "overview"
+    @State private var shelves: [LiveShelf]?
+    @State private var overviewError: String?
+    @State private var pickTile: LiveTile?
+    @State private var optionsTile: LiveTile?
 
     private var channels: [LiveChannel] { state.liveChannels }
 
+    @AppStorage("liveProvider") private var provider = ""
+    @State private var providers: [LiveProvider] = []
+    /// With more than one provider, the one the guide shows; nil for all of them.
+    private var chosenProvider: LiveProvider? { providers.count > 1 ? providers.first { $0.id == provider } : nil }
+    /// The chosen provider's channels, or every channel.
+    private var mine: [LiveChannel] {
+        guard let p = chosenProvider else { return channels }
+        return channels.filter { $0.source == p.id }
+    }
+
+    /// Shows one provider's channels ("" for all). A group belongs to one provider's playlist.
+    private func pickProvider(_ id: String) {
+        provider = id
+        if filter.hasPrefix("group:") { filter = "all" }
+    }
+
     private var groups: [String] {
         var seen = Set<String>(), out: [String] = []
-        for c in channels { if let g = c.group, !g.isEmpty, seen.insert(g).inserted { out.append(g) } }
+        for c in mine { if let g = c.group, !g.isEmpty, seen.insert(g).inserted { out.append(g) } }
         return out
     }
 
     private var genres: [LiveGenre] {
-        let have = Set(channels.compactMap(\.genre))
+        let have = Set(mine.compactMap(\.genre))
         return LiveGenre.allCases.filter { have.contains($0.rawValue) }
     }
 
     private var shown: [LiveChannel] {
         switch filter {
-        case "favorites": return channels.filter { state.liveFavorites.contains($0.id) }
-        case "recent": return state.liveRecents.compactMap { id in channels.first { $0.id == id } }
-        case let f where f.hasPrefix("genre:"): return channels.filter { $0.genre == f.dropFirst(6).description }
-        case let f where f.hasPrefix("group:"): return channels.filter { $0.group == f.dropFirst(6).description }
-        default: return channels
+        case "favorites": return mine.filter { state.liveFavorites.contains($0.id) }
+        case "recent":
+            let byId = Dictionary(mine.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            return state.liveRecents.compactMap { byId[$0] }
+        case let f where f.hasPrefix("genre:"): return mine.filter { $0.genre == f.dropFirst(6).description }
+        case let f where f.hasPrefix("group:"): return mine.filter { $0.group == f.dropFirst(6).description }
+        default: return mine
         }
     }
 
@@ -43,6 +70,22 @@ struct LiveTVView: View {
         pick.flatMap { id in channels.first { $0.id == id } }
             ?? state.liveRecents.lazy.compactMap { id in channels.first { $0.id == id } }.first
             ?? shown.first
+    }
+
+    private var overview: Bool { view == "overview" }
+
+    private func channel(_ t: LiveTile) -> LiveChannel? { channels.first { $0.id == t.channelId } }
+
+    /// The overview's focused card, or its first.
+    private var heroTile: LiveTile? {
+        pickTile ?? shelves?.lazy.flatMap(\.tiles).first { channel($0) != nil }
+    }
+
+    /// The channel playing muted at the top: one coming up has no picture yet.
+    private var previewing: LiveChannel? {
+        guard overview else { return picked }
+        guard let t = heroTile, (t.program?.startDate ?? .distantPast) <= now else { return nil }
+        return channel(t)
     }
 
     /// The guide starts at the half hour before now.
@@ -55,7 +98,13 @@ struct LiveTVView: View {
         Group {
             if !channels.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
-                    if let ch = picked {
+                    if overview {
+                        if let t = heroTile, let ch = channel(t) {
+                            TileHero(tile: t, channel: ch, now: now, preview: preview, favorite: state.liveFavorites.contains(ch.id))
+                                .padding(.horizontal, TV.gutter)
+                                .padding(.top, 20)
+                        }
+                    } else if let ch = picked {
                         LiveHero(channel: ch, programs: programs(ch), now: now, preview: preview,
                                  favorite: state.liveFavorites.contains(ch.id))
                             .padding(.horizontal, TV.gutter)
@@ -64,6 +113,9 @@ struct LiveTVView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {
                             filters
+                            if overview {
+                                overviewShelves
+                            } else {
                             GuideRuler(start: windowStart, now: now).padding(.horizontal, TV.gutter)
                             LazyVStack(spacing: 12) {
                                 ForEach(shown) { ch in
@@ -75,6 +127,9 @@ struct LiveTVView: View {
                                             let fav = state.liveFavorites.contains(ch.id)
                                             Button(fav ? "Remove from Favorites" : "Add to Favorites",
                                                    systemImage: fav ? "star.slash" : "star") { toggleFavorite(ch) }
+                                            if let p = programs(ch).first(where: { $0.startDate <= now && now < $0.endDate }) {
+                                                followButton(p.title)
+                                            }
                                         }
                                 }
                                 if shown.isEmpty {
@@ -85,6 +140,7 @@ struct LiveTVView: View {
                             }
                             .padding(.horizontal, TV.gutter)
                             .focusSection()
+                            }
                         }
                         .padding(.vertical, 24)
                     }
@@ -109,15 +165,35 @@ struct LiveTVView: View {
                 if ticks % 10 == 0 { await load() }
             }
         }
+        .task(id: "\(view)|\(state.liveShows.count)|\(state.liveFavorites.count)|\(state.liveRecents.first ?? "")") {
+            guard overview else { return }
+            while !Task.isCancelled {
+                await loadOverview()
+                try? await Task.sleep(for: .seconds(120))
+            }
+        }
         .onChange(of: focus) { _, id in
             guard let id else { return }
-            pick = id
+            if id.hasPrefix("t:") {
+                // "t:<shelf>/<tile>"
+                let parts = id.dropFirst(2).split(separator: "/", maxSplits: 1).map(String.init)
+                if parts.count == 2, let t = shelves?.first(where: { $0.id == parts[0] })?.tiles.first(where: { $0.id == parts[1] }) { pickTile = t }
+            } else if !id.hasPrefix("v:") {
+                pick = id
+            }
         }
-        .onChange(of: picked?.id) { _, _ in preview.show(picked, api: state.api) }
+        .onChange(of: previewing?.id) { _, _ in preview.show(previewing, api: state.api) }
         .onChange(of: state.playingLive == nil) { _, closed in
-            if closed && !searching { preview.show(picked, api: state.api, after: .milliseconds(600)) }
+            if closed && !searching { preview.show(previewing, api: state.api, after: .milliseconds(600)) }
         }
-        .onAppear { preview.show(picked, api: state.api) }
+        .onAppear { preview.show(previewing, api: state.api) }
+        .confirmationDialog(optionsTile.map { t in t.matchup?.title() ?? t.program?.title ?? channel(t)?.name ?? "" } ?? "",
+                            isPresented: Binding(get: { optionsTile != nil }, set: { if !$0 { optionsTile = nil } }),
+                            titleVisibility: .visible, presenting: optionsTile) { t in
+            if let ch = channel(t) { tileMenu(t, ch) }
+        } message: { t in
+            if let p = t.program, let ch = channel(t) { Text("\(ch.name) · \(tvTiming(p, now: now))") }
+        }
         .onDisappear { preview.stop() }
         .sheet(isPresented: $searching) {
             LiveSearch(channels: channels) { ch in
@@ -126,7 +202,7 @@ struct LiveTVView: View {
             }
         }
         .onChange(of: searching) { _, open in
-            if open { preview.stop() } else if state.playingLive == nil { preview.show(picked, api: state.api) }
+            if open { preview.stop() } else if state.playingLive == nil { preview.show(previewing, api: state.api) }
         }
     }
 
@@ -134,6 +210,21 @@ struct LiveTVView: View {
         ScrollView(.horizontal) {
             HStack(spacing: 20) {
                 Button { searching = true } label: { Label("Search", systemImage: "magnifyingglass") }
+                chip("Overview", icon: "square.grid.2x2", selected: overview) { view = "overview" }
+                    .focused($focus, equals: "v:overview")
+                chip("Guide", icon: "list.bullet", selected: !overview) { view = "guide" }
+                    .focused($focus, equals: "v:guide")
+                if !overview {
+                Divider().frame(height: 40)
+                if providers.count > 1 {
+                    Menu {
+                        Button("All providers") { pickProvider("") }
+                        ForEach(providers) { p in Button(p.name) { pickProvider(p.id) } }
+                    } label: {
+                        Label(chosenProvider?.name ?? "All providers", systemImage: "chevron.down")
+                            .foregroundStyle(chosenProvider != nil ? Color.wrenEmber : .primary)
+                    }
+                }
                 chip("All", selected: filter == "all") { filter = "all" }
                 chip("Favorites", icon: "star.fill", selected: filter == "favorites") { filter = "favorites" }
                 if !state.liveRecents.isEmpty {
@@ -148,6 +239,7 @@ struct LiveTVView: View {
                             .foregroundStyle(filter.hasPrefix("group:") ? Color.wrenEmber : .primary)
                     }
                 }
+                }
             }
             .padding(.horizontal, TV.gutter)
             .padding(.vertical, 12)
@@ -156,10 +248,89 @@ struct LiveTVView: View {
         .focusSection()
     }
 
+    // MARK: Overview
+
+    private var overviewShelves: some View {
+        Group {
+            if let shelves {
+                LazyVStack(alignment: .leading, spacing: 30) {
+                    ForEach(shelves) { sh in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(sh.title).font(.headline).padding(.horizontal, TV.gutter)
+                            ScrollView(.horizontal) {
+                                LazyHStack(alignment: .top, spacing: 40) {
+                                    ForEach(sh.tiles) { t in
+                                        if let ch = channel(t) {
+                                            TVTileCard(tile: t, channel: ch, now: now) { open(t, in: sh.tiles) }
+                                                .focused($focus, equals: "t:\(sh.id)/\(t.id)")
+                                                .contextMenu { tileMenu(t, ch) }
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, TV.gutter)
+                                .padding(.vertical, 20)
+                            }
+                            .scrollClipDisabled()
+                        }
+                        .focusSection()
+                    }
+                    if shelves.isEmpty {
+                        EmptyState(title: "Nothing to show yet", message: "Once the guide has loaded, games, your shows and what's on gather here.",
+                                   symbol: "sportscourt")
+                    }
+                }
+            } else if let overviewError {
+                EmptyState(title: "No overview", message: overviewError, symbol: "exclamationmark.triangle")
+            } else {
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 60)
+            }
+        }
+    }
+
+    @ViewBuilder private func tileMenu(_ t: LiveTile, _ ch: LiveChannel) -> some View {
+        let upcoming = t.program.map { $0.startDate > now } ?? false
+        Button(upcoming ? "Watch \(ch.name) Now" : "Watch Now", systemImage: "play.fill") { play(ch) }
+        let fav = state.liveFavorites.contains(ch.id)
+        Button(fav ? "Remove Channel from Favorites" : "Add Channel to Favorites", systemImage: fav ? "star.slash" : "star") { toggleFavorite(ch) }
+        if let p = t.program, t.matchup == nil { followButton(p.title) }
+    }
+
+    private func followButton(_ title: String) -> some View {
+        let following = state.followsShow(title)
+        return Button(following ? "Stop Following “\(title)”" : "Follow “\(title)”", systemImage: following ? "checkmark" : "plus") {
+            state.toggleLiveShow(title)
+        }
+    }
+
+    /// A card plays when it's on now; one coming up offers its options.
+    private func open(_ t: LiveTile, in shelf: [LiveTile]) {
+        guard let ch = channel(t) else { return }
+        if let p = t.program, p.startDate > now { optionsTile = t; return }
+        var ids: [String] = []
+        for x in shelf where !ids.contains(x.channelId) { ids.append(x.channelId) }
+        play(ch, channelIds: ids)
+    }
+
+    private func loadOverview() async {
+        guard let api = state.api else { return }
+        do {
+            let s = try await api.liveOverview()
+            shelves = s
+            overviewError = nil
+            // A refresh keeps the focused card when it's still there.
+            if let t = pickTile { pickTile = s.lazy.flatMap(\.tiles).first { $0.id == t.id } }
+        } catch is CancellationError {
+        } catch {
+            if shelves == nil {
+                overviewError = (error as? WrenTVError)?.status == 404 ? "Your WrenTV server needs an update for the Live TV overview." : error.localizedDescription
+            }
+        }
+    }
+
     private func chip(_ title: String, icon: String? = nil, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                if let icon { Image(systemName: icon).foregroundStyle(.yellow) }
+                if let icon { Image(systemName: icon).foregroundStyle(title == "Favorites" ? Color.yellow : selected ? Color.wrenEmber : Color.secondary) }
                 Text(title).fontWeight(selected ? .bold : .regular)
             }
             .foregroundStyle(selected ? Color.wrenEmber : .primary)
@@ -177,7 +348,9 @@ struct LiveTVView: View {
             async let g = api.liveGuide(from: nil, hours: 6)
             let l = try await lineup
             state.liveChannels = l.channels
+            providers = l.providers ?? []
             state.liveFavorites = Set(l.favorites ?? [])
+            state.liveShows = Set((l.shows ?? []).map(liveShowKey))
             state.liveRecents = l.recents ?? []
             if let g = try? await g {
                 guide = Dictionary(g.map { ($0.id, $0.programs) }, uniquingKeysWith: { a, _ in a })
@@ -190,23 +363,14 @@ struct LiveTVView: View {
         loaded = true
     }
 
-    private func toggleFavorite(_ ch: LiveChannel) {
-        let on = !state.liveFavorites.contains(ch.id)
-        if on { state.liveFavorites.insert(ch.id) } else { state.liveFavorites.remove(ch.id) }
-        Task {
-            do {
-                try await state.api?.setLiveFavorite(ch.id, on)
-            } catch {
-                if on { state.liveFavorites.remove(ch.id) } else { state.liveFavorites.insert(ch.id) }
-            }
-        }
-    }
+    private func toggleFavorite(_ ch: LiveChannel) { state.toggleLiveFavorite(ch.id) }
 
-    private func play(_ ch: LiveChannel) {
+    private func play(_ ch: LiveChannel, channelIds: [String]? = nil) {
         preview.stop()
-        pick = ch.id
+        optionsTile = nil
+        if !overview { pick = ch.id }
         state.liveRecents = [ch.id] + state.liveRecents.filter { $0 != ch.id }
-        let ids = shown.map(\.id)
+        let ids = channelIds ?? shown.map(\.id)
         state.playingLive = LiveTarget(channelId: ch.id, group: nil, channelIds: ids.contains(ch.id) ? ids : nil)
     }
 }
@@ -273,6 +437,202 @@ private struct LiveHero: View {
             .frame(maxWidth: .infinity, maxHeight: 360, alignment: .topLeading)
         }
         .frame(height: 360)
+    }
+}
+
+/// "7:00 PM", "Tomorrow 7:00 PM" or "Sat 7:00 PM".
+private func tvStartsAt(_ d: Date) -> String {
+    let t = d.formatted(date: .omitted, time: .shortened)
+    if Calendar.current.isDateInToday(d) { return t }
+    if Calendar.current.isDateInTomorrow(d) { return "Tomorrow \(t)" }
+    return "\(d.formatted(.dateTime.weekday(.abbreviated))) \(t)"
+}
+
+/// When a programme is on, said for where it is in time.
+private func tvTiming(_ p: LiveProgram, now: Date) -> String {
+    if p.startDate > now { return "\(tvStartsAt(p.startDate)) – \(p.endDate.formatted(date: .omitted, time: .shortened))" }
+    return "\(p.timeRange)  ·  \(max(0, Int(p.endDate.timeIntervalSince(now) / 60))) min left"
+}
+
+/// A tile's tags: its start time when it's coming up, else LIVE and NEW; and the league.
+private struct TileBadges: View {
+    let tile: LiveTile
+    let now: Date
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let p = tile.program {
+                if p.startDate > now {
+                    LiveBadge(text: tvStartsAt(p.startDate), color: .black.opacity(0.75))
+                } else {
+                    if p.isLive { LiveBadge(text: "LIVE", color: .red) }
+                    if p.isNew { LiveBadge(text: "NEW", color: .white.opacity(0.25)) }
+                }
+            }
+            if let l = tile.matchup?.league, !l.isEmpty { LiveBadge(text: l.uppercased(), color: .white.opacity(0.25)) }
+        }
+    }
+}
+
+/// The focused card: its picture (live, once it's on) beside what it is.
+private struct TileHero: View {
+    @Environment(AppState.self) private var state
+    let tile: LiveTile
+    let channel: LiveChannel
+    let now: Date
+    let preview: LivePreview
+    let favorite: Bool
+
+    var body: some View {
+        let p = tile.program
+        HStack(alignment: .top, spacing: 50) {
+            ZStack(alignment: .topLeading) {
+                TVTileArt(tile: tile, channel: channel, big: true)
+                if preview.channelId == channel.id {
+                    LivePreviewSurface(player: preview.player)
+                        .opacity(preview.showing ? 1 : 0)
+                        .animation(.easeOut(duration: 0.4), value: preview.showing)
+                }
+            }
+            .frame(width: 640, height: 360)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .shadow(color: .black.opacity(0.5), radius: 20, y: 10)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 18) {
+                    TileBadges(tile: tile, now: now)
+                    Text([channel.number, channel.name].compactMap { $0 }.joined(separator: "  "))
+                        .font(.callout.weight(.semibold)).foregroundStyle(.secondary)
+                    if favorite { Image(systemName: "star.fill").foregroundStyle(.yellow) }
+                }
+                Text(tile.matchup?.title() ?? p?.title ?? channel.name).font(.title2.bold()).lineLimit(2)
+                if let p {
+                    Text([p.episode, tvTiming(p, now: now)].compactMap { $0 }.joined(separator: "  ·  "))
+                        .font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                    if p.startDate <= now { ProgressView(value: p.progress(at: now)).tint(Color.wrenEmber).frame(maxWidth: 700) }
+                    if let d = p.description, !d.isEmpty {
+                        Text(d).font(.callout).foregroundStyle(.secondary).lineLimit(3).frame(maxWidth: 900, alignment: .leading)
+                    }
+                }
+                Spacer(minLength: 0)
+                Text(p.map { $0.startDate > now } ?? false ? "Select for options" : "Select to watch  ·  Hold Select for options")
+                    .font(.caption).foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: 360, alignment: .topLeading)
+        }
+        .frame(height: 360)
+    }
+}
+
+/// A card on an overview shelf.
+private struct TVTileCard: View {
+    let tile: LiveTile
+    let channel: LiveChannel
+    let now: Date
+    let action: () -> Void
+
+    var body: some View {
+        let p = tile.program
+        let airing = p.map { $0.startDate <= now && now < $0.endDate } ?? false
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: action) {
+                TVTileArt(tile: tile, channel: channel, big: false)
+                    .frame(width: 400, height: 225)
+                    .overlay(alignment: .topLeading) { TileBadges(tile: tile, now: now).padding(12) }
+                    .overlay(alignment: .bottom) {
+                        if airing, let p {
+                            ZStack(alignment: .leading) {
+                                Rectangle().fill(.white.opacity(0.2))
+                                Rectangle().fill(Color.wrenEmber).frame(width: 400 * p.progress(at: now))
+                            }
+                            .frame(height: 5)
+                        }
+                    }
+            }
+            .buttonStyle(.card)
+            Text(tile.matchup?.title(short: true) ?? p?.title ?? channel.name)
+                .font(.callout.weight(.semibold)).lineLimit(1).padding(.top, 8)
+            Text(airing ? "\(channel.name) · \(Int(p!.endDate.timeIntervalSince(now) / 60)) min left" : p != nil ? channel.name : channel.group ?? "")
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .frame(width: 400)
+    }
+}
+
+/// A tile's picture: the matchup, the programme's art over its channel's logo, or the logo alone.
+private struct TVTileArt: View {
+    @Environment(AppState.self) private var state
+    let tile: LiveTile
+    let channel: LiveChannel
+    let big: Bool
+
+    var body: some View {
+        let logo = state.api?.liveLogoURL(channel.logo)
+        let art = state.api?.liveLogoURL(tile.art ?? tile.program?.icon)
+        ZStack {
+            if let m = tile.matchup {
+                MatchupArt(matchup: m, big: big)
+            } else {
+                LiveArt(program: nil, channel: channel, logo: logo)
+                if let art { RemoteImage(url: art) }
+            }
+        }
+        .clipped()
+        .overlay(alignment: .bottomTrailing) {
+            if tile.matchup != nil || art != nil {
+                // Which channel it's on, like a network's bug.
+                RemoteImage(url: logo, contentMode: .fit)
+                    .frame(width: big ? 100 : 72, height: big ? 52 : 38)
+                    .padding(6)
+                    .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(12)
+            }
+        }
+    }
+}
+
+/// Two teams over their colours, like a scoreboard.
+private struct MatchupArt: View {
+    let matchup: LiveMatchup
+    let big: Bool
+
+    var body: some View {
+        ZStack {
+            LinearGradient(colors: [Color(hex: matchup.away.color) ?? Color(red: 0.17, green: 0.16, blue: 0.2),
+                                    Color(hex: matchup.home.color) ?? Color(red: 0.23, green: 0.21, blue: 0.26)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            // Darkened, so white logos and names read on any team's colour.
+            Color.black.opacity(0.32)
+            HStack {
+                Spacer(minLength: 0)
+                TeamMark(team: matchup.away, size: big ? 130 : 84)
+                Spacer(minLength: 0)
+                Text("@").font(big ? .title2 : .headline).foregroundStyle(.white.opacity(0.8))
+                Spacer(minLength: 0)
+                TeamMark(team: matchup.home, size: big ? 130 : 84)
+                Spacer(minLength: 0)
+            }
+        }
+    }
+}
+
+private struct TeamMark: View {
+    let team: LiveTeam
+    let size: CGFloat
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if let logo = team.logo, let url = URL(string: logo) {
+                RemoteImage(url: url, contentMode: .fit).frame(width: size, height: size)
+            } else {
+                Text(String(team.name.split(separator: " ").prefix(2).compactMap(\.first)).uppercased())
+                    .font(.title3.bold()).foregroundStyle(.white)
+                    .frame(width: size, height: size)
+                    .background(.white.opacity(0.16), in: Circle())
+            }
+            Text(team.short ?? team.name).font(.caption.bold()).foregroundStyle(.white).lineLimit(1)
+        }
+        .frame(width: size * 1.6)
     }
 }
 

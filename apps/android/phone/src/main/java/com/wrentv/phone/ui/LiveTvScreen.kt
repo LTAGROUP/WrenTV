@@ -16,15 +16,20 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -59,38 +64,66 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import coil3.compose.AsyncImage
 import com.wrentv.tv.data.LiveChannel
 import com.wrentv.tv.data.LiveGenres
+import com.wrentv.tv.data.LiveMatchup
 import com.wrentv.tv.data.LiveProgram
 import com.wrentv.tv.data.LiveSearchResult
+import com.wrentv.tv.data.LiveShelf
+import com.wrentv.tv.data.LiveTeam
+import com.wrentv.tv.data.LiveTile
 import com.wrentv.tv.player.LivePreview
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import java.text.DateFormat
+import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
+import java.util.Locale
 
 private fun nowSec() = System.currentTimeMillis() / 1000
 private fun clock(sec: Long): String = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(sec * 1000))
 private fun LiveProgram.timeRange() = "${clock(start)} – ${clock(end)}"
 private val LiveRed = Color(0xFFD7263D)
 private val StarGold = Color(0xFFF5C451)
+private val weekday = SimpleDateFormat("EEE", Locale.getDefault())
+
+/** "7:00 PM", "Tomorrow 7:00 PM" or "Sat 7:00 PM". */
+private fun startsAt(start: Long, now: Long): String {
+    val day = { s: Long -> Calendar.getInstance().apply { timeInMillis = s * 1000 }.let { it.get(Calendar.YEAR) * 400 + it.get(Calendar.DAY_OF_YEAR) } }
+    return when (day(start) - day(now)) {
+        0 -> clock(start)
+        1 -> "Tomorrow ${clock(start)}"
+        else -> "${weekday.format(Date(start * 1000))} ${clock(start)}"
+    }
+}
+
+private fun LiveMatchup.title(short: Boolean = false) =
+    if (short) "${away.short ?: away.name} at ${home.short ?: home.name}" else "${away.name} at ${home.name}"
 
 /**
- * Live TV: the channel last watched playing muted at the top, filters
- * (favorites, recent, kinds of channel, the provider's groups), a search over
- * channels and upcoming shows, and what's on now and next per channel.
- * Tapping a channel watches it; holding it or its info button opens its
- * schedule, where it can be starred.
+ * Live TV, as an overview or a guide. The overview leads with a game or show
+ * on now playing muted, then shelves: live and upcoming games with the teams'
+ * logos, the viewer's followed shows and channels, and what's on by kind.
+ * The guide has the channel last watched at the top, filters (favorites,
+ * recent, kinds of channel, the provider's groups) and what's on now and next
+ * per channel. Search covers channels and upcoming shows. Tapping watches;
+ * holding a card or a channel opens its options or schedule, where the
+ * channel can be starred and its shows followed.
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -107,7 +140,13 @@ fun LiveTvScreen() {
     LaunchedEffect(filter) { state.store.setString("liveFilter", filter) }
     var now by remember { mutableLongStateOf(nowSec()) }
     var schedule by remember { mutableStateOf<LiveChannel?>(null) }
+    var options by remember { mutableStateOf<LiveTile?>(null) }
     var results by remember { mutableStateOf<LiveSearchResult?>(null) }
+    // "overview" or "guide".
+    var view by rememberSaveable { mutableStateOf(state.store.string("liveView", "overview")) }
+    LaunchedEffect(view) { state.store.setString("liveView", view) }
+    var shelves by remember { mutableStateOf<List<LiveShelf>?>(null) }
+    var overviewError by remember { mutableStateOf<String?>(null) }
 
     suspend fun load() {
         try {
@@ -127,8 +166,28 @@ fun LiveTvScreen() {
             if (++ticks % 10 == 0) load()
         }
     }
+    // The overview, again every couple of minutes and when what it shows changes.
+    LaunchedEffect(view, state.refreshTick, state.liveShows, state.liveFavorites, state.liveRecents) {
+        if (view != "overview") return@LaunchedEffect
+        while (true) {
+            try {
+                shelves = state.api?.liveOverview()?.filter { it.tiles.isNotEmpty() }
+                overviewError = null
+            } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                overviewError = if (e.message?.contains("404") == true) "Your WrenTV server needs an update for the Live TV overview." else e.message
+            }
+            delay(120_000)
+        }
+    }
 
-    val channels = state.liveChannels
+    // With more than one provider, the guide shows one of them ("" for all).
+    var provider by rememberSaveable { mutableStateOf(state.store.string("liveProvider", "")) }
+    LaunchedEffect(provider) { state.store.setString("liveProvider", provider) }
+    val providers = state.liveProviders
+    val chosenProvider = providers.takeIf { it.size > 1 }?.firstOrNull { it.id == provider }
+    val everyChannel = state.liveChannels
+    val channels = remember(everyChannel, chosenProvider) { chosenProvider?.let { p -> everyChannel.filter { it.source == p.id } } ?: everyChannel }
+    val byId = remember(channels) { channels.associateBy { it.id } }
     fun programs(c: LiveChannel) = guide[c.id] ?: listOfNotNull(c.now, c.next)
     fun onNow(c: LiveChannel) = programs(c).firstOrNull { it.start <= now && now < it.end }
     val groups = channels.mapNotNull { it.group?.takeIf(String::isNotEmpty) }.distinct()
@@ -141,32 +200,49 @@ fun LiveTvScreen() {
         runCatching { state.api?.liveSearch(q) }.getOrNull()?.let { results = it }
     }
     val list = when {
-        searching -> channels.filter { c ->
+        searching -> everyChannel.filter { c ->
             c.name.contains(q, true) || c.number == q || (c.group ?: "").contains(q, true)
         }
         filter == "favorites" -> channels.filter { it.id in state.liveFavorites }
-        filter == "recent" -> state.liveRecents.mapNotNull { id -> channels.firstOrNull { it.id == id } }
+        filter == "recent" -> state.liveRecents.mapNotNull { byId[it] }
         filter.startsWith("genre:") -> channels.filter { it.genre == filter.removePrefix("genre:") }
         filter.startsWith("group:") -> channels.filter { it.group == filter.removePrefix("group:") }
         else -> channels
     }
     val shown = if (filter == "recent" && !searching) list else list.filter { onNow(it) != null } + list.filter { onNow(it) == null }
-    val spotlight = state.liveRecents.firstNotNullOfOrNull { id -> channels.firstOrNull { it.id == id } } ?: channels.firstOrNull()
+    val spotlight = state.liveRecents.firstNotNullOfOrNull { byId[it] } ?: channels.firstOrNull()
+    val overview = view == "overview" && !searching
+    fun channel(t: LiveTile) = channels.firstOrNull { it.id == t.channelId }
+    val heroTile = shelves?.firstNotNullOfOrNull { sh -> sh.tiles.firstOrNull { t -> channel(t) != null && t.program?.let { it.start <= now } != false } }
 
-    fun play(c: LiveChannel) {
+    // Channel up and down go through [ids]: the shelf, or the guide's list.
+    fun play(c: LiveChannel, ids: List<String>? = shown.map { it.id }.takeIf { !searching && c in shown }) {
         schedule = null
+        options = null
         state.watchedChannel(c.id)
-        nav.live = LiveTarget(c.id, null, shown.map { it.id }.takeIf { !searching && c in shown })
+        nav.live = LiveTarget(c.id, null, ids)
+    }
+    fun open(t: LiveTile, shelf: List<LiveTile>) {
+        val ch = channel(t) ?: return
+        if ((t.program?.start ?: 0) > now) options = t
+        else play(ch, shelf.map { it.channelId }.distinct())
     }
 
     // One muted picture: the schedule's channel while it's open, otherwise the spotlight's.
     val context = LocalContext.current
     val preview = remember { LivePreview(context, { state.api }, state.scope) }
     DisposableEffect(preview) { onDispose { preview.release() } }
-    val previewing = if (nav.live != null) null else schedule ?: spotlight.takeIf { !searching }
+    val previewing = when {
+        nav.live != null -> null
+        schedule != null -> schedule
+        options != null -> options?.let(::channel)?.takeIf { (options?.program?.start ?: 0) <= now }
+        searching -> null
+        overview -> heroTile?.let(::channel)
+        else -> spotlight
+    }
     LaunchedEffect(previewing?.id) { preview.show(previewing, after = if (schedule != null) 300 else 900) }
 
-    Page("Live TV", if (loaded && channels.isNotEmpty()) "${shown.size} channel${if (shown.size == 1) "" else "s"}" else null) {
+    Page("Live TV", if (loaded && channels.isNotEmpty() && !overview) "${shown.size} channel${if (shown.size == 1) "" else "s"}" else null) {
         when {
             !loaded -> Loading()
             error != null && channels.isEmpty() -> EmptyState(Icons.Rounded.Warning, "Couldn't load", error)
@@ -186,15 +262,69 @@ fun LiveTvScreen() {
                         ),
                     )
                 }
-                if (!searching && spotlight != null) item("spotlight") {
+                if (!searching) item("views") {
+                    Row(Modifier.padding(horizontal = m.gutter, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Chip("Overview", view == "overview") { view = "overview" }
+                        Chip("Guide", view == "guide") { view = "guide" }
+                    }
+                }
+                if (overview) {
+                    val all = shelves
+                    when {
+                        all == null && overviewError != null -> item("ov-error") {
+                            EmptyState(Icons.Rounded.Warning, "No overview", overviewError, Modifier.fillMaxWidth().padding(top = 60.dp))
+                        }
+                        all == null -> item("ov-loading") { Box(Modifier.fillMaxWidth().padding(top = 60.dp), contentAlignment = Alignment.Center) { Loading() } }
+                        all.isEmpty() -> item("ov-empty") {
+                            EmptyState(Icons.Rounded.LiveTv, "Nothing to show yet", "Once the guide has loaded, games, your shows and what's on gather here.",
+                                Modifier.fillMaxWidth().padding(top = 60.dp))
+                        }
+                        else -> {
+                            val hero = heroTile
+                            val heroCh = hero?.let(::channel)
+                            if (hero != null && heroCh != null) item("hero") {
+                                val shelf = all.first { hero in it.tiles }.tiles
+                                Hero(hero, heroCh, now, preview, Modifier.padding(horizontal = m.gutter, vertical = 6.dp),
+                                    watch = { open(hero, shelf) }, more = { options = hero })
+                            }
+                            items(all, { "shelf:${it.id}" }) { sh ->
+                                Header(sh.title, m.gutter)
+                                LazyRow(contentPadding = PaddingValues(horizontal = m.gutter, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    items(sh.tiles, { "${it.channelId}:${it.program?.start}" }) { t ->
+                                        val ch = channel(t) ?: return@items
+                                        TileCard(t, ch, now, Modifier.width(if (m.compact) 220.dp else 260.dp), onClick = { open(t, sh.tiles) }, onLongClick = { options = t })
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!searching && !overview && spotlight != null) item("spotlight") {
                     Spotlight(spotlight, onNow(spotlight), programs(spotlight).firstOrNull { it.start > now }, now, preview,
                         Modifier.padding(horizontal = m.gutter, vertical = 6.dp)) { play(spotlight) }
                 }
-                if (!searching) item("filters") {
+                if (!searching && !overview) item("filters") {
                     Row(
                         Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = m.gutter, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        if (providers.size > 1) {
+                            var open by remember { mutableStateOf(false) }
+                            Box {
+                                Chip("${chosenProvider?.name ?: "All providers"} ▾", chosenProvider != null) { open = true }
+                                DropdownMenu(open, { open = false }) {
+                                    DropdownMenuItem({ Text("All providers") }, { provider = ""; open = false })
+                                    providers.forEach { p ->
+                                        DropdownMenuItem({ Text(p.name) }, {
+                                            provider = p.id
+                                            // A group belongs to one provider's playlist.
+                                            if (filter.startsWith("group:")) filter = "all"
+                                            open = false
+                                        })
+                                    }
+                                }
+                            }
+                        }
                         Chip("All", filter == "all") { filter = "all" }
                         Chip("★ Favorites", filter == "favorites") { filter = "favorites" }
                         if (state.liveRecents.isNotEmpty()) Chip("Recent", filter == "recent") { filter = "recent" }
@@ -211,7 +341,7 @@ fun LiveTvScreen() {
                     }
                 }
                 if (searching && shown.isNotEmpty()) item("h-channels") { Header("Channels", m.gutter) }
-                if (shown.isEmpty() && !searching) item("none") {
+                if (shown.isEmpty() && !searching && !overview) item("none") {
                     EmptyState(
                         if (filter == "favorites") Icons.Rounded.StarBorder else Icons.Rounded.LiveTv,
                         if (filter == "favorites") "No favorites yet" else "No channels here",
@@ -219,7 +349,7 @@ fun LiveTvScreen() {
                         Modifier.fillMaxWidth().padding(top = 60.dp),
                     )
                 }
-                items(shown, { it.id }) { ch ->
+                items(if (overview) emptyList() else shown, { it.id }) { ch ->
                     val current = onNow(ch)
                     val next = programs(ch).firstOrNull { it.start > now }
                     Row(
@@ -261,7 +391,7 @@ fun LiveTvScreen() {
                     val p = a.program
                     val airing = p.start <= now && now < p.end
                     Row(
-                        Modifier.fillMaxWidth().combinedClickable(onClick = { if (airing) play(ch) else schedule = ch })
+                        Modifier.fillMaxWidth().combinedClickable(onClick = { if (airing) play(ch) else options = LiveTile(ch.id, p) }, onLongClick = { options = LiveTile(ch.id, p) })
                             .padding(horizontal = m.gutter, vertical = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -317,7 +447,10 @@ fun LiveTvScreen() {
                                 if (p.isLive) Badge("LIVE", LiveRed)
                                 if (p.isNew) Badge("NEW", Color.White.copy(alpha = 0.22f))
                             }
-                            Text(p.title, fontWeight = FontWeight.SemiBold)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(p.title, Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                                FollowButton(p.title)
+                            }
                             p.episode?.let { Text(it, color = Wren.secondary, fontSize = 12.sp) }
                             p.description?.takeIf { it.isNotEmpty() }?.let { Text(it, color = Wren.secondary, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis) }
                             if (airing) LinearProgressIndicator({ p.progress(now) }, Modifier.fillMaxWidth().clip(CircleShape), color = Wren.ember,
@@ -328,7 +461,192 @@ fun LiveTvScreen() {
             }
         }
     }
+
+    options?.let { t ->
+        val ch = channel(t) ?: return@let
+        val p = t.program
+        val upcoming = p != null && p.start > now
+        val fav = ch.id in state.liveFavorites
+        ModalBottomSheet({ options = null }, containerColor = Wren.surface) {
+            Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp))) {
+                    if (upcoming) TileArt(t, ch, true, Modifier.fillMaxSize()) else Picture(ch, p, preview, Modifier.fillMaxSize(), t)
+                }
+                Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TileBadges(t, now)
+                    Text(listOfNotNull(ch.number, ch.name).joinToString(" · "), color = Wren.secondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(t.matchup?.title() ?: p?.title ?: ch.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                if (p != null) Text(timing(p, now), color = Wren.secondary, fontSize = 13.sp)
+                p?.description?.takeIf { it.isNotEmpty() }?.let {
+                    Text(it, color = Wren.secondary, style = MaterialTheme.typography.bodySmall, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                }
+                Spacer(8.dp)
+                OptionRow(Icons.Rounded.PlayArrow, if (upcoming) "Watch ${ch.name} now" else "Watch now") { play(ch) }
+                OptionRow(if (fav) Icons.Rounded.Star else Icons.Rounded.StarBorder, if (fav) "Remove channel from favorites" else "Add channel to favorites",
+                    tint = if (fav) StarGold else Color.White) { state.toggleLiveFavorite(ch.id) }
+                if (p != null && t.matchup == null) {
+                    val following = state.followsShow(p.title)
+                    OptionRow(if (following) Icons.Rounded.Check else Icons.Rounded.Add, if (following) "Stop following “${p.title}”" else "Follow “${p.title}”",
+                        detail = "Its airings, on any channel, gather under Your shows on the overview") { state.toggleLiveShow(p.title) }
+                }
+            }
+        }
+    }
 }
+
+@Composable
+private fun Spacer(h: Dp) = Box(Modifier.height(h))
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun OptionRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, detail: String? = null, tint: Color = Color.White, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).combinedClickable(onClick = onClick).padding(vertical = 12.dp, horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = tint)
+        Column(Modifier.weight(1f)) {
+            Text(label, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            detail?.let { Text(it, color = Wren.secondary, fontSize = 12.sp) }
+        }
+    }
+}
+
+/** Follows a show, or stops; its airings then gather under Your shows. */
+@Composable
+private fun FollowButton(title: String) {
+    val state = LocalAppState.current
+    val following = state.followsShow(title)
+    IconButton({ state.toggleLiveShow(title) }, Modifier.size(36.dp)) {
+        Icon(if (following) Icons.Rounded.Check else Icons.Rounded.Add, if (following) "Stop following" else "Follow show",
+            tint = if (following) Wren.ember else Wren.secondary)
+    }
+}
+
+/** When a programme is on, said for where it is in time. */
+private fun timing(p: LiveProgram, now: Long): String = when {
+    p.start > now -> "${startsAt(p.start, now)} – ${clock(p.end)}"
+    else -> "${p.timeRange()} · ${(p.end - now) / 60} min left"
+}
+
+@Composable
+private fun TileBadges(t: LiveTile, now: Long) {
+    val p = t.program ?: return
+    when {
+        p.start > now -> Badge(startsAt(p.start, now), Color.Black.copy(alpha = 0.75f))
+        else -> {
+            if (p.isLive) Badge("LIVE", LiveRed)
+            if (p.isNew) Badge("NEW", Color.White.copy(alpha = 0.22f))
+        }
+    }
+    t.matchup?.league?.takeIf { it.isNotEmpty() }?.let { Badge(it.uppercase(), Color.White.copy(alpha = 0.22f)) }
+}
+
+/** The overview's lead: a game or show on now, playing muted. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Hero(t: LiveTile, ch: LiveChannel, now: Long, preview: LivePreview, modifier: Modifier, watch: () -> Unit, more: () -> Unit) {
+    val p = t.program
+    Box(modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp)).combinedClickable(onClick = watch, onLongClick = more)) {
+        Picture(ch, p, preview, Modifier.fillMaxSize(), t)
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.85f))))
+        IconButton(more, Modifier.align(Alignment.TopEnd)) { Icon(Icons.Outlined.Info, "Options", tint = Color.White) }
+        Column(Modifier.align(Alignment.BottomStart).padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                TileBadges(t, now)
+                Text(listOfNotNull(ch.number, ch.name).joinToString(" · "), color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Text(t.matchup?.title() ?: p?.title ?: ch.name, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (p != null) {
+                LinearProgressIndicator({ p.progress(now) }, Modifier.fillMaxWidth().clip(CircleShape), color = Wren.ember,
+                    trackColor = Color.White.copy(alpha = 0.2f), drawStopIndicator = {})
+                Text(timing(p, now), color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp, maxLines = 1)
+            }
+        }
+    }
+}
+
+/** A card on an overview shelf. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TileCard(t: LiveTile, ch: LiveChannel, now: Long, modifier: Modifier, onClick: () -> Unit, onLongClick: () -> Unit) {
+    val p = t.program
+    val airing = p != null && p.start <= now && now < p.end
+    Column(modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp))) {
+            TileArt(t, ch, false, Modifier.fillMaxSize())
+            Row(Modifier.align(Alignment.TopStart).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) { TileBadges(t, now) }
+            if (airing) LinearProgressIndicator({ p!!.progress(now) }, Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp),
+                color = Wren.ember, trackColor = Color.White.copy(alpha = 0.2f), drawStopIndicator = {}, gapSize = 0.dp)
+        }
+        Text(t.matchup?.title(short = true) ?: p?.title ?: ch.name, Modifier.padding(top = 6.dp), fontWeight = FontWeight.SemiBold,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            when {
+                airing -> "${ch.name} · ${(p!!.end - now) / 60} min left"
+                p != null -> ch.name
+                else -> ch.group.orEmpty()
+            },
+            color = Wren.secondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** A tile's picture: the matchup, the programme's art over its channel's logo, or the logo alone. */
+@Composable
+private fun TileArt(t: LiveTile, ch: LiveChannel, big: Boolean, modifier: Modifier) {
+    val api = LocalAppState.current.api
+    val m = t.matchup
+    val art = (t.art ?: t.program?.icon)?.takeIf { it.isNotEmpty() }?.let { if (it.startsWith("http")) it else api?.absolute(it) }
+    Box(modifier.background(Brush.radialGradient(listOf(Color(0xFF333333), Color(0xFF101010)))), contentAlignment = Alignment.Center) {
+        if (m != null) MatchupArt(m, big, Modifier.fillMaxSize())
+        else {
+            // Under the art, so a picture that doesn't load leaves the channel.
+            ChannelLogo(ch.logo, ch.name, Modifier.fillMaxSize(0.42f))
+            if (art != null) AsyncImage(art, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        }
+        if (m != null || art != null) {
+            // Which channel it's on, like a network's bug.
+            Box(Modifier.align(Alignment.BottomEnd).padding(8.dp).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(6.dp))) {
+                ChannelLogo(ch.logo, ch.name, Modifier.size(if (big) 60.dp else 46.dp, if (big) 34.dp else 26.dp))
+            }
+        }
+    }
+}
+
+/** Two teams over their colours, like a scoreboard. */
+@Composable
+private fun MatchupArt(m: LiveMatchup, big: Boolean, modifier: Modifier) {
+    val away = teamColor(m.away) ?: Color(0xFF2B2833)
+    val home = teamColor(m.home) ?: Color(0xFF3A3542)
+    Box(modifier.background(Brush.linearGradient(listOf(away, home), start = Offset.Zero, end = Offset.Infinite))) {
+        // Darkened, so white logos and names read on any team's colour.
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.32f)))
+        Row(Modifier.fillMaxSize().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceEvenly) {
+            TeamMark(m.away, if (big) 64.dp else 44.dp)
+            Text("@", style = if (big) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.8f))
+            TeamMark(m.home, if (big) 64.dp else 44.dp)
+        }
+    }
+}
+
+@Composable
+private fun TeamMark(t: LiveTeam, size: Dp) {
+    Column(Modifier.width(size * 1.6f), horizontalAlignment = Alignment.CenterHorizontally) {
+        val logo = t.logo?.takeIf { it.isNotEmpty() }
+        if (logo != null) AsyncImage(logo, t.name, Modifier.size(size), contentScale = ContentScale.Fit)
+        else Box(Modifier.size(size).background(Color.White.copy(alpha = 0.16f), CircleShape), contentAlignment = Alignment.Center) {
+            Text(t.name.split(' ').filter { it.isNotEmpty() }.take(2).joinToString("") { it.take(1) }.uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
+        }
+        Text(t.short ?: t.name, Modifier.padding(top = 4.dp), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+private fun teamColor(t: LiveTeam): Color? =
+    t.color?.takeIf { it.length == 6 }?.toLongOrNull(16)?.let { Color(0xFF000000 or it) }
 
 /** The top of the page: a channel's muted live picture and what's on. */
 @OptIn(ExperimentalFoundationApi::class)
@@ -354,11 +672,11 @@ private fun Spotlight(ch: LiveChannel, p: LiveProgram?, next: LiveProgram?, now:
     }
 }
 
-/** A channel's muted live picture over the programme's art until it starts. */
+/** A channel's muted live picture over the programme's (or tile's) art until it starts. */
 @Composable
-private fun Picture(ch: LiveChannel, p: LiveProgram?, preview: LivePreview, modifier: Modifier) {
+private fun Picture(ch: LiveChannel, p: LiveProgram?, preview: LivePreview, modifier: Modifier, tile: LiveTile? = null) {
     Box(modifier) {
-        Art(ch, p, Modifier.fillMaxSize())
+        if (tile != null) TileArt(tile, ch, true, Modifier.fillMaxSize()) else Art(ch, p, Modifier.fillMaxSize())
         if (preview.channelId == ch.id) {
             val alpha by animateFloatAsState(if (preview.showing) 1f else 0f, label = "preview")
             AndroidView(

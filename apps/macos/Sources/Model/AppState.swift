@@ -20,6 +20,32 @@ final class AppState {
     /// The viewer's starred channels, and the ones they watched last.
     var liveFavorites: Set<String> = []
     var liveRecents: [String] = []
+    /// The shows the viewer follows, as `liveShowKey`s.
+    var liveShows: Set<String> = []
+
+    func followsShow(_ title: String) -> Bool { liveShows.contains(liveShowKey(title)) }
+
+    /// Follows a show, or stops: its airings gather under Your shows on Live TV's overview.
+    func toggleLiveShow(_ title: String) {
+        let key = liveShowKey(title)
+        let on = !liveShows.contains(key)
+        if on { liveShows.insert(key) } else { liveShows.remove(key) }
+        Task {
+            do { try await api?.setLiveShow(title, on) } catch {
+                if on { liveShows.remove(key) } else { liveShows.insert(key) }
+            }
+        }
+    }
+
+    func toggleLiveFavorite(_ id: String) {
+        let on = !liveFavorites.contains(id)
+        if on { liveFavorites.insert(id) } else { liveFavorites.remove(id) }
+        Task {
+            do { try await api?.setLiveFavorite(id, on) } catch {
+                if on { liveFavorites.remove(id) } else { liveFavorites.insert(id) }
+            }
+        }
+    }
     var restoring = true
     /// What this user may do: stream, download to this Mac, how many at once.
     var limits: UserLimitsInfo?

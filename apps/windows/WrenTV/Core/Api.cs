@@ -228,6 +228,10 @@ public sealed class WrenTVApi
     }
     public Task<LiveSearchResult> LiveSearch(string q) => Get<LiveSearchResult>("/api/livetv/search", [("q", q)]);
     public Task SetLiveFavorite(string id, bool on) => Send(on ? HttpMethod.Put : HttpMethod.Delete, $"/api/livetv/favorites/{Uri.EscapeDataString(id)}");
+    /// Follows a show, by title, so its airings gather under Your shows; or stops.
+    public Task SetLiveShow(string title, bool on) => Send(HttpMethod.Post, "/api/livetv/shows", body: new { title, on });
+    public async Task<List<LiveShelf>> LiveOverview() =>
+        (await Get<LiveOverviewResponse>("/api/livetv/overview")).Shelves.Where(s => s.Tiles.Count > 0).ToList();
     public Task<LivePlayResponse> PlayChannel(string id) => Post<LivePlayResponse>($"/api/livetv/channels/{id}/play", new { hls = false });
     /// The guide's muted picture: HLS for Windows' own player, not counted as watching.
     public Task<LivePlayResponse> PreviewChannel(string id) => Post<LivePlayResponse>($"/api/livetv/channels/{id}/play", new { hls = true, preview = true });

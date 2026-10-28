@@ -779,6 +779,46 @@ a.person:focus-visible .face { border-color: var(--accent); transform: scale(1.0
 .lv-fill { position: absolute; left: 0; top: 0; bottom: 0; background: #ffffff0c; border-right: 1px solid #ffffff14; }
 .lv-cont { font-style: normal; color: var(--muted); margin-right: 4px; }
 
+.lv-tabs { display: flex; gap: 6px; flex: none; }
+.lv-tabs + .lv-chips { padding-left: 12px; border-left: 1px solid var(--line); }
+.lv-tools .lv-search { margin-left: auto; }
+.lv-badge.time { background: #000c; }
+
+.lv-overview { padding-top: 10px; }
+.lv-card { width: 264px; flex: none; display: block; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; scroll-snap-align: start; }
+.lv-card-art { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden;
+  background: radial-gradient(circle at 30% 20%, #3a3640, #1c1a21); transition: transform .2s var(--ease), box-shadow .2s var(--ease); }
+.lv-card:hover .lv-card-art, .lv-card:focus-visible .lv-card-art { transform: translateY(-3px); box-shadow: 0 12px 30px #000a, 0 0 0 2px var(--accent); }
+.lv-card.picked .lv-card-art { box-shadow: 0 0 0 2px var(--accent); }
+.lv-card .ch-logo.huge { width: 46%; }
+.lv-card .ch-logo.huge b { font-size: 28px; }
+.lv-card-pic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 2; }
+.lv-card-tags { position: absolute; left: 8px; top: 8px; z-index: 3; }
+.lv-card .ch-logo.bug { position: absolute; right: 8px; bottom: 9px; width: 46px; height: 30px; border-radius: 6px; background: #000b; z-index: 3; }
+.lv-card .ch-logo.bug b { font-size: 10px; }
+.lv-card-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #ffffff26; z-index: 3; }
+.lv-card-bar i { display: block; height: 100%; background: var(--accent); }
+.lv-card-more { position: absolute; right: 8px; top: 8px; z-index: 3; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: #121016d9; opacity: 0; transition: opacity .15s; }
+.lv-card:hover .lv-card-more, .lv-card:focus-visible .lv-card-more { opacity: 1; }
+.lv-card-more:hover { background: var(--accent); }
+.lv-card .t, .lv-card .s { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lv-card .t { margin-top: 8px; font-weight: 600; }
+.lv-card .s { font-size: 12px; color: var(--muted); }
+
+/* A game: both teams over their colours. */
+.lv-match { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; gap: 4%;
+  background: linear-gradient(135deg, var(--a) 15%, var(--h) 85%); }
+.lv-match::before { content: ''; position: absolute; inset: 0; background: #00000052; }
+.lv-team { position: relative; width: 34%; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.lv-team img { width: 54%; aspect-ratio: 1; object-fit: contain; filter: drop-shadow(0 2px 4px #0009); }
+.lv-team i { display: grid; place-items: center; width: 50%; aspect-ratio: 1; border-radius: 50%; background: #ffffff26; font-style: normal; font-weight: 800; font-size: 15px; }
+.lv-team small { max-width: 100%; font-size: 12px; font-weight: 800; letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 3px #000a; }
+.lv-match em { position: relative; font-style: normal; font-weight: 700; font-size: 18px; color: #fffb; }
+.lv-match.big .lv-team { gap: 10px; }
+.lv-match.big .lv-team i { font-size: 32px; }
+.lv-match.big .lv-team small { font-size: clamp(14px, 1.6vw, 20px); }
+.lv-match.big em { font-size: clamp(22px, 2.4vw, 34px); }
+
 .lv-results h3 { font-size: 15px; margin: 18px 0 10px; color: #d8d1c7; }
 .lv-res-chans { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
 .lv-res-chan, .lv-res { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-2); cursor: pointer; text-align: left; min-width: 0; }
@@ -817,6 +857,9 @@ a.person:focus-visible .face { border-color: var(--accent); transform: scale(1.0
   .lv-hero { grid-template-columns: 1fr; gap: 16px; }
   .lv-tools { flex-wrap: wrap; }
   .lv-search { width: 100%; order: -1; }
+  .lv-card { width: 216px; }
+  .lv-card-more { opacity: 1; }
+  .lv-tabs + .lv-chips { padding-left: 0; border-left: 0; flex-basis: 100%; }
   .lv-ch .ch-logo { width: 44px; height: 30px; }
   .lv-ch-text small, .lv-star { display: none; }
   .lv-day .btn { display: none; }

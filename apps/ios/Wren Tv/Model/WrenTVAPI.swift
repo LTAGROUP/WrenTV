@@ -305,6 +305,16 @@ struct WrenTVAPI: Sendable {
     func setLiveFavorite(_ id: String, _ on: Bool) async throws {
         _ = try await send(on ? "PUT" : "DELETE", "/api/livetv/favorites/\(id)")
     }
+    /// Live TV at a glance: games on now and coming up, the viewer's shows and channels, what's on by kind.
+    func liveOverview() async throws -> [LiveShelf] {
+        let r: LiveOverview = try await get("/api/livetv/overview")
+        return (r.shelves ?? []).filter { !$0.tiles.isEmpty }
+    }
+    /// Follows a show, or stops: its airings gather on the overview.
+    func setLiveShow(_ title: String, _ on: Bool) async throws {
+        struct Body: Encodable { var title: String; var on: Bool }
+        _ = try await send("POST", "/api/livetv/shows", body: Body(title: title, on: on))
+    }
     func liveLogoURL(_ logo: String?) -> URL? {
         guard let logo, !logo.isEmpty else { return nil }
         if logo.hasPrefix("http://") || logo.hasPrefix("https://") { return URL(string: logo) }

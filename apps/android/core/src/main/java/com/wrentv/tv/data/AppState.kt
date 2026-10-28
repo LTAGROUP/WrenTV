@@ -86,6 +86,10 @@ class AppState(context: Context) {
     var liveShows by mutableStateOf<Set<String>>(emptySet())
         private set
 
+    /** The providers the channels come from; the guide offers a choice when there's more than one. */
+    var liveProviders by mutableStateOf<List<LiveProvider>>(emptyList())
+        private set
+
     /** Fetches the channels and what's on them now. */
     suspend fun loadLiveChannels(): List<LiveChannel> {
         val api = api ?: return liveChannels
@@ -93,7 +97,9 @@ class AppState(context: Context) {
         liveFavorites = l.favorites.toSet()
         liveRecents = l.recents
         liveShows = l.shows.map(::showKey).toSet()
-        return l.channels.also { liveChannels = it }
+        liveProviders = l.providers
+        // Lists are keyed by channel: a provider listing one twice mustn't break them.
+        return l.channels.distinctBy { it.id }.also { liveChannels = it }
     }
 
     fun toggleLiveFavorite(id: String) {

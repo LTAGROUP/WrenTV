@@ -1,6 +1,7 @@
-// Live TV: what's on, as a guide. The picked programme fills the top with
-// its details and a muted live preview of its channel; below, filters,
-// search and a grid of every channel's programmes with a now line.
+// Live TV: what's on, as an overview or a guide. The picked programme fills
+// the top with its details and a muted live preview of its channel; below,
+// either shelves of games, the viewer's shows and channels and what's on by
+// kind, or filters and a grid of every channel's programmes with a now line.
 import { api } from './api.js';
 import { esc, $, $$, el, toast, icons } from './ui.js';
 import { setTitle } from './app.js';
@@ -29,6 +30,23 @@ function logo(ch, cls = 'ch-logo') {
 function badges(p) {
   return `${p.live ? '<span class="lv-badge live">LIVE</span>' : ''}${p.new ? '<span class="lv-badge">NEW</span>' : ''}`;
 }
+
+// A show's title as the server keys followed shows: lower case, words only.
+const showKey = (t) => (t || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean).join(' ');
+
+// "7:00 PM", "Tomorrow 7:00 PM" or "Sat 7:00 PM".
+function startsAt(t) {
+  const d = Math.round((new Date(t * 1000).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000);
+  return d === 0 ? clock(t) : d === 1 ? `Tomorrow ${clock(t)}` : `${new Date(t * 1000).toLocaleDateString([], { weekday: 'short' })} ${clock(t)}`;
+}
+
+// Two teams over their colours, like a scoreboard.
+function matchup(m, big = false) {
+  const col = (t, d) => (/^[0-9a-f]{6}$/i.test(t.color || '') ? `#${t.color}` : d);
+  const team = (t) => `<span class="lv-team">${t.logo ? `<img src="${esc(t.logo)}" alt="" loading="lazy">` : `<i>${esc(initials(t.name))}</i>`}<small>${esc(t.short || t.name)}</small></span>`;
+  return `<span class="lv-match${big ? ' big' : ''}" style="--a:${col(m.away, '#2b2833')};--h:${col(m.home, '#3a3542')}">${team(m.away)}<em>@</em>${team(m.home)}</span>`;
+}
+const gameTitle = (m, short = false) => `${short ? m.away.short || m.away.name : m.away.name} at ${short ? m.home.short || m.home.name : m.home.name}`;
 
 function prefs() {
   try { return JSON.parse(localStorage.getItem('wren.live') || '{}'); } catch { return {}; }
@@ -96,11 +114,16 @@ export async function viewLive() {
     channels: data.channels || [],
     favorites: new Set(data.favorites || []),
     recents: data.recents || [],
+    shows: new Set((data.shows || []).map(showKey)),
+    view: prefs().view === 'guide' ? 'guide' : 'overview',
+    shelves: null, // the overview's, once loaded
     guide: new Map(),
     loaded: [0, 0], // the guide's window, Unix seconds
     filter: prefs().filter || 'all',
+    providers: data.providers || [],
+    provider: prefs().provider || '', // with more than one provider, the guide shows one ('' for all)
     start: halfHour(now()),
-    pick: null, // {ch, p}
+    pick: null, // {ch, p, tile}
     query: '',
   };
   if (!s.channels.length) {
@@ -115,10 +138,12 @@ export async function viewLive() {
       <div class="lv-info"></div>
     </section>
     <div class="lv-tools">
+      <div class="lv-tabs"><button class="chip" data-view="overview">Overview</button><button class="chip" data-view="guide">Guide</button></div>
       <div class="lv-chips"></div>
       <label class="lv-search">${searchIcon}<input type="search" placeholder="Search channels and shows" autocomplete="off"></label>
     </div>
     <div class="lv-results" hidden></div>
+    <div class="lv-overview"></div>
     <div class="lv-guide">
       <div class="lv-ruler"><div class="lv-day"><button class="lv-icon" data-a="prev" title="Earlier">${chevron(-1)}</button>
         <button class="btn small ghost" data-a="now">Now</button><button class="lv-icon" data-a="next" title="Later">${chevron(1)}</button></div>
@@ -131,6 +156,7 @@ export async function viewLive() {
   const preview = new Stream(video);
   const body = $('.lv-body', node);
   const times = $('.lv-times', node);
+  const overview = $('.lv-overview', node);
   let shown = [];
   let previewTimer = null;
 
@@ -151,21 +177,30 @@ export async function viewLive() {
 
   // ----- filters
 
+  // The chosen provider's channels, or all of them.
+  function mine() {
+    const p = s.providers.length > 1 && s.providers.find((x) => x.id === s.provider);
+    return p ? s.channels.filter((c) => c.source === p.id) : s.channels;
+  }
+
   function list() {
     const f = s.filter;
-    let out = s.channels;
+    let out = mine();
     if (f === 'favorites') out = out.filter((c) => s.favorites.has(c.id));
-    else if (f === 'recent') out = s.recents.map((id) => s.channels.find((c) => c.id === id)).filter(Boolean);
+    else if (f === 'recent') { const by = new Map(out.map((c) => [c.id, c])); out = s.recents.map((id) => by.get(id)).filter(Boolean); }
     else if (f.startsWith('genre:')) out = out.filter((c) => c.genre === f.slice(6));
     else if (f.startsWith('group:')) out = out.filter((c) => c.group === f.slice(6));
     return out;
   }
 
   function chips() {
-    const genres = GENRES.filter(([g]) => s.channels.some((c) => c.genre === g));
-    const groups = [...new Set(s.channels.map((c) => c.group).filter(Boolean))];
+    const chans = mine();
+    const genres = GENRES.filter(([g]) => chans.some((c) => c.genre === g));
+    const groups = [...new Set(chans.map((c) => c.group).filter(Boolean))];
     const chip = (id, label, extra = '') => `<button class="chip${s.filter === id ? ' on' : ''}" data-f="${esc(id)}">${extra}${esc(label)}</button>`;
-    $('.lv-chips', node).innerHTML = chip('all', 'All channels')
+    $('.lv-chips', node).innerHTML = (s.providers.length > 1 ? `<select class="lv-groups lv-providers" aria-label="Provider"><option value="">All providers</option>${s.providers.map((p) =>
+        `<option value="${esc(p.id)}"${s.provider === p.id ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select>` : '')
+      + chip('all', 'All channels')
       + chip('favorites', 'Favorites', star(true))
       + (s.recents.length ? chip('recent', 'Recent') : '')
       + genres.map(([g, l]) => chip(`genre:${g}`, l)).join('')
@@ -216,6 +251,7 @@ export async function viewLive() {
 
   // Only the rows on screen are drawn: a playlist can have thousands.
   function draw() {
+    if (s.view !== 'guide') return;
     const top = body.getBoundingClientRect().top;
     const first = Math.max(0, Math.floor(-top / ROW) - 6);
     const last = Math.min(shown.length, Math.ceil((innerHeight - top) / ROW) + 6);
@@ -247,35 +283,134 @@ export async function viewLive() {
     draw();
   }
 
+  // ----- the overview
+
+  // Which of the overview, the guide and search results are on show.
+  function parts() {
+    const searching = !!s.query;
+    $('.lv-results', node).hidden = !searching;
+    overview.hidden = searching || s.view !== 'overview';
+    $('.lv-guide', node).hidden = searching || s.view !== 'guide';
+    $('.lv-chips', node).hidden = s.view !== 'guide';
+    for (const b of $$('.lv-tabs .chip', node)) b.classList.toggle('on', b.dataset.view === s.view);
+  }
+
+  function setView(v) {
+    s.view = v;
+    savePrefs({ view: v });
+    parts();
+    window.scrollTo({ top: 0 });
+    if (v === 'overview') loadOverview(); else relist();
+  }
+
+  let overviewSeq = 0;
+  async function loadOverview() {
+    const seq = ++overviewSeq;
+    try {
+      const r = await api('/api/livetv/overview');
+      if (seq !== overviewSeq) return;
+      s.shelves = (r.shelves || []).filter((sh) => sh.tiles?.length);
+    } catch (e) {
+      if (seq !== overviewSeq) return;
+      s.shelves = null;
+      overview.innerHTML = `<div class="empty"><h2>No overview</h2><p class="muted">${e.status === 404
+        ? 'Your WrenTV server needs an update for the Live TV overview. The guide works as before.' : esc(e.message)}</p></div>`;
+      return;
+    }
+    drawOverview();
+  }
+
+  function card(tile, i, j) {
+    const ch = s.channels.find((c) => c.id === tile.channelId);
+    if (!ch) return '';
+    const p = tile.program, m = tile.matchup;
+    const later = p && p.start > now();
+    const art = m ? matchup(m) : tile.art ? `<img class="lv-card-pic" src="${esc(tile.art)}" alt="" loading="lazy" onerror="this.remove()">${logo(ch, 'ch-logo huge')}` : logo(ch, 'ch-logo huge');
+    const title = m ? gameTitle(m, true) : p?.title || ch.name;
+    const sub = p && airing(p) ? `${ch.name} · ${left(p)} min left` : p ? ch.name : ch.group || '';
+    const picked = s.pick?.tile === tile;
+    return `<button class="lv-card${picked ? ' picked' : ''}" data-tile="${i}:${j}" title="${esc(title)}">
+      <span class="lv-card-art">${art}
+        <span class="lv-card-tags">${later ? `<span class="lv-badge time">${esc(startsAt(p.start))}</span>` : p ? badges(p) : ''}</span>
+        ${m || tile.art ? logo(ch, 'ch-logo bug') : ''}
+        ${p && airing(p) ? `<span class="lv-card-bar"><i style="width:${progress(p) * 100}%"></i></span>` : ''}
+        <span class="lv-card-more" data-more="${i}:${j}" title="Details and options">${moreIcon}</span></span>
+      <b class="t">${esc(title)}</b><small class="s">${esc(sub)}</small></button>`;
+  }
+
+  function drawOverview() {
+    if (!s.shelves) return;
+    overview.innerHTML = s.shelves.length ? s.shelves.map((sh, i) => `<section class="shelf"><div class="shelf-head"><h2>${esc(sh.title)}</h2></div>
+      <div class="row">${sh.tiles.map((t, j) => card(t, i, j)).join('')}</div></section>`).join('')
+      : '<div class="empty"><h2>Nothing to show yet</h2><p class="muted">Once the guide has loaded, games, your shows and what\'s on gather here.</p></div>';
+  }
+
+  const tileAt = (ref) => {
+    const [i, j] = ref.split(':').map(Number);
+    return s.shelves?.[i] && { tile: s.shelves[i].tiles[j], shelf: s.shelves[i] };
+  };
+
+  // A card shows its details up top, or plays when it's on now.
+  function openCard(ref, details) {
+    const at = tileAt(ref);
+    const ch = at && s.channels.find((c) => c.id === at.tile.channelId);
+    if (!ch) return;
+    const p = at.tile.program || null;
+    if (!details && (!p || airing(p))) {
+      const ids = at.shelf.tiles.map((t) => t.channelId);
+      const by = new Map(s.channels.map((c) => [c.id, c]));
+      const chans = [...new Set(ids)].map((id) => by.get(id)).filter(Boolean);
+      return watch(ch, () => chans);
+    }
+    pick(ch, p, { tile: at.tile });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function toggleFollow(title) {
+    const on = !s.shows.has(showKey(title));
+    try {
+      await api('/api/livetv/shows', { method: 'POST', body: { title, on } });
+      if (on) s.shows.add(showKey(title)); else s.shows.delete(showKey(title));
+      toast(on ? `Following “${title}”: it gathers under Your shows` : `Stopped following “${title}”`, 2200);
+      info();
+      if (s.view === 'overview') loadOverview();
+    } catch (e) { toast(e.status === 404 ? 'Your WrenTV server needs an update to follow shows.' : e.message); }
+  }
+
   // ----- the picked programme
 
   function info() {
     const box = $('.lv-info', node);
     if (!s.pick) { box.innerHTML = ''; return; }
-    const { ch, p } = s.pick;
+    const { ch, p, tile } = s.pick;
+    const m = tile?.matchup;
     const on = airing(p);
     const nextUp = p && programs(ch).find((q) => q.start >= p.end);
     const fav = s.favorites.has(ch.id);
     const cats = (p?.categories || []).slice(0, 3);
     box.innerHTML = `<div class="lv-chan">${logo(ch, 'ch-logo big')}<span><b>${esc(ch.name)}</b>${ch.number ? `<small>Channel ${esc(ch.number)}</small>` : ''}</span></div>
-      <h1>${esc(p?.title || ch.name)}</h1>
+      <h1>${esc(m ? gameTitle(m) : p?.title || ch.name)}</h1>
       <div class="lv-meta">${p ? `${badges(p)}<span>${on ? `${clock(p.start)} – ${clock(p.end)} · ${left(p)} min left` : `${day(p.start) === day(now()) ? '' : day(p.start) + ' · '}${clock(p.start)} – ${clock(p.end)}`}</span>` : ''}
         ${p?.episode ? `<span>${esc(p.episode)}</span>` : ''}${cats.map((c) => `<span class="lv-cat">${esc(c)}</span>`).join('')}</div>
       ${on ? `<div class="lv-progress"><span style="width:${progress(p) * 100}%"></span></div>` : ''}
       ${p?.description ? `<p class="lv-desc">${esc(p.description)}</p>` : ''}
       <div class="lv-actions"><button class="btn primary" data-a="watch">${icons.play}<span>${on || !p ? 'Watch live' : 'Watch channel'}</span></button>
-        <button class="btn ghost" data-fav="${esc(ch.id)}">${star(fav)}<span>${fav ? 'Favorite' : 'Add to favorites'}</span></button></div>
+        <button class="btn ghost" data-fav="${esc(ch.id)}">${star(fav)}<span>${fav ? 'Favorite' : 'Add to favorites'}</span></button>
+        ${p && !m ? `<button class="btn ghost${s.shows.has(showKey(p.title)) ? ' on' : ''}" data-follow="${esc(p.title)}"
+          title="Its airings, on any channel, gather under Your shows on the overview">${s.shows.has(showKey(p.title)) ? `${checkIcon}<span>Following</span>` : `${plusIcon}<span>Follow show</span>`}</button>` : ''}</div>
       ${nextUp ? `<div class="lv-next"><small>Up next · ${clock(nextUp.start)}</small><b>${esc(nextUp.title)}</b></div>` : ''}`;
     const art = $('.lv-art', node);
-    const pic = p?.icon || '';
+    const pic = m ? '' : tile?.art || p?.icon || '';
     art.style.backgroundImage = pic ? `url("${pic.replace(/"/g, '%22')}")` : '';
-    art.innerHTML = pic ? '' : logo(ch, 'ch-logo huge');
+    art.innerHTML = m ? matchup(m, true) : pic ? '' : logo(ch, 'ch-logo huge');
   }
 
-  function pick(ch, p, { previewNow = false } = {}) {
+  function pick(ch, p, { previewNow = false, tile = null } = {}) {
     const changed = s.pick?.ch.id !== ch.id;
-    s.pick = { ch, p: p ?? onNow(ch) };
+    s.pick = { ch, p: p ?? onNow(ch), tile };
     info();
+    for (const c of $$('.lv-card.picked', overview)) c.classList.remove('picked');
+    if (tile) for (const c of $$('.lv-card', overview)) if (tileAt(c.dataset.tile)?.tile === tile) c.classList.add('picked');
     for (const r of $$('.lv-row.picked, .lv-prog.picked', body)) r.classList.remove('picked');
     $(`.lv-row[data-row="${CSS.escape(ch.id)}"]`, body)?.classList.add('picked');
     if (s.pick.p) $(`.lv-prog[data-ch="${CSS.escape(ch.id)}"][data-start="${s.pick.p.start}"]`, body)?.classList.add('picked');
@@ -308,15 +443,13 @@ export async function viewLive() {
   function search(q) {
     s.query = q.trim();
     const box = $('.lv-results', node);
-    const guide = $('.lv-guide', node);
     clearTimeout(searchTimer);
-    if (!s.query) { box.hidden = true; guide.hidden = false; return; }
+    if (!s.query) { parts(); if (s.view === 'guide') relist(); return; }
     searchTimer = setTimeout(async () => {
       const seq = ++searchSeq;
       const r = await api(`/api/livetv/search?q=${encodeURIComponent(s.query)}&limit=40`).catch(() => null);
       if (seq !== searchSeq || !r) return;
-      guide.hidden = true;
-      box.hidden = false;
+      parts();
       const byId = new Map(s.channels.map((c) => [c.id, c]));
       box.innerHTML = (!r.channels.length && !r.airings.length) ? `<div class="empty"><h2>Nothing found</h2><p class="muted">No channel or upcoming show matches “${esc(s.query)}”.</p></div>`
         : `${r.channels.length ? `<h3>Channels</h3><div class="lv-res-chans">${r.channels.map((c) => `<button class="lv-res-chan" data-ch="${esc(c.id)}">${logo(c)}
@@ -333,13 +466,18 @@ export async function viewLive() {
 
   // ----- full screen
 
-  function watch(ch) {
+  // Channel up and down go through [chans]: the shelf or the filtered guide.
+  function watch(ch, chans = () => (list().length ? list() : s.channels)) {
     clearTimeout(previewTimer);
     preview.stop();
     node.classList.remove('previewing');
-    openLive(ch, () => list().length ? list() : s.channels, {
+    openLive(ch, chans, {
       programs, onNow,
-      onClose: (last) => { s.recents = [last.id, ...s.recents.filter((id) => id !== last.id)].slice(0, 20); pick(last, null); relist(); },
+      onClose: (last) => {
+        s.recents = [last.id, ...s.recents.filter((id) => id !== last.id)].slice(0, 20);
+        pick(last, null);
+        if (s.view === 'overview') loadOverview(); else relist();
+      },
     });
   }
 
@@ -349,7 +487,7 @@ export async function viewLive() {
       await api(`/api/livetv/favorites/${encodeURIComponent(id)}`, { method: on ? 'PUT' : 'DELETE' });
       if (on) s.favorites.add(id); else s.favorites.delete(id);
       toast(on ? 'Added to favorites' : 'Removed from favorites', 1600);
-      relist();
+      if (s.view === 'overview') loadOverview(); else relist();
       info();
     } catch (e) { toast(e.message); }
   }
@@ -360,6 +498,14 @@ export async function viewLive() {
     const t = e.target;
     const fav = t.closest('[data-fav]');
     if (fav) { e.stopPropagation(); return toggleFav(fav.dataset.fav); }
+    const follow = t.closest('[data-follow]');
+    if (follow) return toggleFollow(follow.dataset.follow);
+    const view = t.closest('[data-view]');
+    if (view) return view.dataset.view !== s.view && setView(view.dataset.view);
+    const more = t.closest('[data-more]');
+    if (more) return openCard(more.dataset.more, true);
+    const tileCard = t.closest('.lv-card');
+    if (tileCard) return openCard(tileCard.dataset.tile, false);
     const chip = t.closest('[data-f]');
     if (chip) { s.filter = chip.dataset.f; savePrefs({ filter: s.filter }); window.scrollTo({ top: 0 }); return relist(); }
     const a = t.closest('[data-a]')?.dataset.a;
@@ -395,7 +541,13 @@ export async function viewLive() {
     }
   });
   node.addEventListener('change', (e) => {
-    if (e.target.matches('.lv-groups')) {
+    if (e.target.matches('.lv-providers')) {
+      s.provider = e.target.value;
+      // A group belongs to one provider's playlist.
+      if (s.filter.startsWith('group:')) s.filter = 'all';
+      savePrefs({ provider: s.provider, filter: s.filter });
+      relist();
+    } else if (e.target.matches('.lv-groups')) {
       s.filter = e.target.value ? `group:${e.target.value}` : 'all';
       savePrefs({ filter: s.filter });
       relist();
@@ -406,7 +558,7 @@ export async function viewLive() {
   // Arrow keys move through the guide; Enter watches.
   const onKey = (e) => {
     if (!document.body.contains(node)) return;
-    if (e.target.closest('input, select, textarea') || $('.lv-player')) return;
+    if (e.target.closest('input, select, textarea') || $('.lv-player') || s.view !== 'guide' || s.query) return;
     if (!s.pick || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(e.key)) return;
     e.preventDefault();
     const i = shown.findIndex((c) => c.id === s.pick.ch.id);
@@ -436,7 +588,9 @@ export async function viewLive() {
   addEventListener('resize', onScroll);
   addEventListener('resize', stick);
 
-  // Keep the now line, progress and the guide current while the page is open.
+  // Keep the now line, progress, the guide and the overview current while
+  // the page is open.
+  let ticks = 0;
   const ticker = setInterval(async () => {
     if (!document.body.contains(node)) {
       clearInterval(ticker);
@@ -452,15 +606,25 @@ export async function viewLive() {
     if (now() + 4 * 3600 > s.loaded[1]) await loadGuide(s.loaded[1], 6);
     draw();
     info();
+    if (s.view === 'overview' && !s.query && ++ticks % 4 === 0) loadOverview();
+    else if (s.view === 'overview') drawOverview();
   }, 30000);
 
   await loadGuide(halfHour(now()), 12);
   // Start on the last channel watched, or the first one.
   const first = s.channels.find((c) => c.id === s.recents[0]) || list()[0] || s.channels[0];
   // The grid is measured, so it's first drawn once the page is on screen.
-  const attached = () => {
+  const attached = async () => {
     if (!node.isConnected) return requestAnimationFrame(attached);
+    parts();
     relist();
+    if (s.view === 'overview') {
+      await loadOverview();
+      // The overview opens on its first card, often a game on now.
+      const t = s.shelves?.[0]?.tiles[0];
+      const ch = t && s.channels.find((c) => c.id === t.channelId);
+      if (ch) return pick(ch, t.program || null, { tile: t });
+    }
     if (first) pick(first, null);
   };
   requestAnimationFrame(attached);
@@ -589,4 +753,7 @@ const chevron = (d, vertical = false) => `<svg viewBox="0 0 24 24" width="18" he
   vertical ? (d < 0 ? 'M6 15l6-6 6 6' : 'M6 9l6 6 6-6') : (d < 0 ? 'M15 18l-6-6 6-6' : 'M9 6l6 6-6 6')}"/></svg>`;
 const speaker = (muted) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9h4l5-4v14l-5-4H4z"/>${
   muted ? '<path d="M17 9l4 6M21 9l-4 6"/>' : '<path d="M17 8.5a5 5 0 010 7M19.5 6a8.5 8.5 0 010 12"/>'}</svg>`;
+const moreIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
+const plusIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>';
+const checkIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 const star = (on) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>`;
