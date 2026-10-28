@@ -226,6 +226,7 @@ type SearchResult struct {
 	FirstAirDate  string  `json:"first_air_date"`
 	Popularity    float64 `json:"popularity"`
 	VoteCount     int     `json:"vote_count"`
+	BackdropPath  string  `json:"backdrop_path"`
 }
 
 func (r SearchResult) DisplayTitle() string {

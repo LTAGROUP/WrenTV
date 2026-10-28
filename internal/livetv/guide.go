@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Program is one programme in the guide. Times are Unix seconds.
@@ -145,8 +146,9 @@ func ParseXMLTV(r io.Reader, channels []*Channel, from, to time.Time, into Guide
 				continue
 			}
 			prog := Program{Start: s, End: e}
+			var live, isNew bool
 			if len(p.Titles) > 0 {
-				prog.Title = strings.TrimSpace(p.Titles[0])
+				prog.Title, live, isNew = cleanTitle(p.Titles[0])
 			}
 			if len(p.Desc) > 0 {
 				prog.Description = strings.TrimSpace(p.Desc[0])
@@ -168,8 +170,8 @@ func ParseXMLTV(r io.Reader, channels []*Channel, from, to time.Time, into Guide
 					prog.Categories = append(prog.Categories, c)
 				}
 			}
-			prog.New = p.New != nil || p.Premiere != nil
-			prog.Live = p.Live != nil
+			prog.New = isNew || p.New != nil || p.Premiere != nil
+			prog.Live = live || p.Live != nil
 			for _, id := range ids {
 				into[id] = append(into[id], prog)
 				if icon := icons[gid]; icon != "" && logos != nil && logos[id] == "" {
@@ -241,4 +243,36 @@ func normName(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// superscripts reads the small raised letters some guides tag titles with.
+var superscripts = strings.NewReplacer(
+	"ᴬ", "a", "ᴮ", "b", "ᴰ", "d", "ᴱ", "e", "ᴳ", "g", "ᴴ", "h", "ᴵ", "i", "ᴶ", "j", "ᴷ", "k", "ᴸ", "l", "ᴹ", "m", "ᴺ", "n", "ᴼ", "o", "ᴾ", "p", "ᴿ", "r", "ᵀ", "t", "ᵁ", "u", "ᵂ", "w",
+	"ᵃ", "a", "ᵇ", "b", "ᶜ", "c", "ᵈ", "d", "ᵉ", "e", "ᶠ", "f", "ᵍ", "g", "ʰ", "h", "ᶦ", "i", "ⁱ", "i", "ʲ", "j", "ᵏ", "k", "ˡ", "l", "ᵐ", "m", "ⁿ", "n", "ᵒ", "o", "ᵖ", "p", "ʳ", "r", "ˢ", "s", "ᵗ", "t", "ᵘ", "u", "ᵛ", "v", "ʷ", "w", "ˣ", "x", "ʸ", "y", "ᶻ", "z",
+)
+
+// cleanTitle drops the "ᴸᶦᵛᵉ" and "ᴺᵉʷ" some guides put after a title
+// (players show them as stray raised text), saying instead whether it's
+// live or new.
+func cleanTitle(t string) (title string, live, isNew bool) {
+	t = strings.TrimSpace(t)
+	for {
+		end := len(t)
+		for end > 0 {
+			r, size := utf8.DecodeLastRuneInString(t[:end])
+			if !unicode.Is(unicode.Lm, r) && r != 'ⁱ' && r != 'ⁿ' {
+				break
+			}
+			end -= size
+		}
+		switch strings.ToLower(superscripts.Replace(t[end:])) {
+		case "live":
+			live = true
+		case "new":
+			isNew = true
+		default:
+			return t, live, isNew
+		}
+		t = strings.TrimSpace(t[:end])
+	}
 }

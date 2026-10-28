@@ -193,6 +193,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/livetv/channels", s.handleLiveChannels)
 		r.Get("/api/livetv/guide", s.handleLiveGuide)
 		r.Get("/api/livetv/search", s.handleLiveSearch)
+		r.Get("/api/livetv/overview", s.handleLiveOverview)
+		r.Post("/api/livetv/shows", s.handleLiveShow)
 		r.Put("/api/livetv/favorites/{id}", s.handleLiveFavorite)
 		r.Delete("/api/livetv/favorites/{id}", s.handleLiveFavorite)
 		r.Post("/api/livetv/channels/{id}/play", s.handleLivePlay)

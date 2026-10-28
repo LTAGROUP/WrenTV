@@ -25,6 +25,23 @@ func (d *DB) SetLiveFavorite(ctx context.Context, userID, channelID string, on b
 	return err
 }
 
+// LiveShows lists the show titles a user follows, oldest first.
+func (d *DB) LiveShows(ctx context.Context, userID string) ([]string, error) {
+	return d.channelIDs(ctx, `SELECT title FROM live_shows WHERE user_id=? ORDER BY added_at`, userID)
+}
+
+// SetLiveShow follows or unfollows a show by its title.
+func (d *DB) SetLiveShow(ctx context.Context, userID, title string, on bool) error {
+	var err error
+	if on {
+		_, err = d.ExecContext(ctx, `INSERT INTO live_shows (user_id, title, added_at) VALUES (?, ?, ?)
+			ON CONFLICT DO NOTHING`, userID, title, time.Now().Unix())
+	} else {
+		_, err = d.ExecContext(ctx, `DELETE FROM live_shows WHERE user_id=? AND title=?`, userID, title)
+	}
+	return err
+}
+
 // LiveRecents lists the channels a user watched lately, latest first.
 func (d *DB) LiveRecents(ctx context.Context, userID string) ([]string, error) {
 	return d.channelIDs(ctx, `SELECT channel_id FROM live_recents WHERE user_id=? ORDER BY watched_at DESC LIMIT ?`, userID, recentChannels)

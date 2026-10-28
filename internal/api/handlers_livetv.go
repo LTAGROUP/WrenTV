@@ -1,18 +1,24 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/LTAGROUP/wrentv/internal/config"
 	"github.com/LTAGROUP/wrentv/internal/db"
 	"github.com/LTAGROUP/wrentv/internal/livetv"
+	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 )
 
 // ---------- viewers ----------
@@ -21,11 +27,12 @@ func (s *Server) handleLiveChannels(w http.ResponseWriter, r *http.Request) {
 	uid := principal(r).User.ID
 	favs, _ := s.DB.LiveFavorites(r.Context(), uid)
 	recents, _ := s.DB.LiveRecents(r.Context(), uid)
+	shows, _ := s.DB.LiveShows(r.Context(), uid)
 	chs := []livetv.ChannelView{}
 	if s.LiveTV.Active() {
 		chs = s.LiveTV.Channels()
 	}
-	writeJSON(w, 200, map[string]any{"channels": chs, "favorites": nonNil(favs), "recents": nonNil(recents)})
+	writeJSON(w, 200, map[string]any{"channels": chs, "favorites": nonNil(favs), "recents": nonNil(recents), "shows": nonNil(shows)})
 }
 
 // handleLiveGuide is every channel's programmes for a few hours, from now
@@ -39,6 +46,129 @@ func (s *Server) handleLiveGuide(w http.ResponseWriter, r *http.Request) {
 // handleLiveSearch finds channels and the programmes coming up on them.
 func (s *Server) handleLiveSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.LiveTV.Search(r.URL.Query().Get("q"), min(max(queryInt(r, "limit", 40), 1), 200)))
+}
+
+// handleLiveOverview is Live TV's home: games on now and coming up, the
+// viewer's channels, and what's on by kind, with pictures for programmes.
+func (s *Server) handleLiveOverview(w http.ResponseWriter, r *http.Request) {
+	shelves := []livetv.Shelf{}
+	if s.LiveTV.Active() {
+		uid := principal(r).User.ID
+		favs, _ := s.DB.LiveFavorites(r.Context(), uid)
+		recents, _ := s.DB.LiveRecents(r.Context(), uid)
+		shows, _ := s.DB.LiveShows(r.Context(), uid)
+		shelves = s.LiveTV.Overview(favs, recents, shows)
+		s.liveArt(r.Context(), shelves)
+	}
+	writeJSON(w, 200, map[string]any{"shelves": shelves})
+}
+
+// liveArt gives programmes the guide has no picture for a backdrop from
+// TMDB, when one has exactly their title. It waits a moment for TMDB, no
+// longer: lookups still running finish into TMDB's cache for next time.
+func (s *Server) liveArt(ctx context.Context, shelves []livetv.Shelf) {
+	if s.TMDB == nil || !s.TMDB.Enabled() {
+		return
+	}
+	type want struct {
+		title string
+		movie bool
+	}
+	need := map[want][]*livetv.Tile{}
+	for i := range shelves {
+		// News and sport titles name a broadcast, not a show TMDB has.
+		if id := shelves[i].ID; id == "news" || id == "live-sports" || id == "upcoming-sports" {
+			continue
+		}
+		for j := range shelves[i].Tiles {
+			t := &shelves[i].Tiles[j]
+			if t.Art == "" && t.Matchup == nil && t.Program != nil {
+				k := want{t.Program.Title, shelves[i].ID == "movies"}
+				need[k] = append(need[k], t)
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
+	defer cancel()
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	gate := make(chan struct{}, 6)
+	for k, tiles := range need {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case gate <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-gate }()
+			if art := s.programArt(ctx, k.title, k.movie); art != "" {
+				mu.Lock()
+				for _, t := range tiles {
+					t.Art = art
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+var titleYear = regexp.MustCompile(`\s*\((\d{4})\)$`)
+
+// programArt is the TMDB backdrop of the show or movie titled [title].
+func (s *Server) programArt(ctx context.Context, title string, movie bool) string {
+	title = strings.TrimSpace(strings.TrimSuffix(title, "24/7"))
+	year := 0
+	if m := titleYear.FindStringSubmatch(title); m != nil {
+		year, _ = strconv.Atoi(m[1])
+		title = strings.TrimSpace(title[:len(title)-len(m[0])])
+	}
+	key := func(s string) string {
+		return strings.Join(strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }), " ")
+	}
+	wanted := key(title)
+	if wanted == "" {
+		return ""
+	}
+	searches := []func(context.Context, string, int) ([]tmdb.SearchResult, error){s.TMDB.SearchTV, s.TMDB.SearchMovie}
+	if movie {
+		searches[0], searches[1] = searches[1], searches[0]
+	}
+	for _, search := range searches {
+		results, err := search(ctx, title, year)
+		if err != nil {
+			return ""
+		}
+		best := tmdb.SearchResult{}
+		for _, r := range results {
+			if r.BackdropPath != "" && key(r.DisplayTitle()) == wanted && r.Popularity > best.Popularity {
+				best = r
+			}
+		}
+		if best.BackdropPath != "" {
+			return "/api/images/w780" + best.BackdropPath
+		}
+	}
+	return ""
+}
+
+// handleLiveShow follows ({"title": ..., "on": true}) or unfollows a show.
+func (s *Server) handleLiveShow(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Title string `json:"title"`
+		On    bool   `json:"on"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil || strings.TrimSpace(req.Title) == "" {
+		writeErr(w, 400, "title required")
+		return
+	}
+	if err := s.DB.SetLiveShow(r.Context(), principal(r).User.ID, strings.TrimSpace(req.Title), req.On); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleLiveFavorite stars (PUT) or unstars (DELETE) a channel.

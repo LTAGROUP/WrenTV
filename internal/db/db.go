@@ -489,6 +489,13 @@ var migrations = []string{
 		watched_at INTEGER NOT NULL,
 		PRIMARY KEY (user_id, channel_id)
 	);`,
+	// Live TV shows each user follows, by title: the overview gathers their airings.
+	`CREATE TABLE live_shows (
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		title TEXT NOT NULL,
+		added_at INTEGER NOT NULL,
+		PRIMARY KEY (user_id, title)
+	);`,
 }
 
 // fkOff lists migrations (1-based) that rebuild tables. They run with

@@ -64,6 +64,7 @@ type Service struct {
 	kick chan bool // true: refetch even if fresh
 
 	sessions sessions
+	teams    teams
 }
 
 func New(cfg *config.Config, dataDir string) *Service {
@@ -74,6 +75,7 @@ func New(cfg *config.Config, dataDir string) *Service {
 		byID:   map[string]*Channel{},
 		guide:  Guide{},
 		kick:   make(chan bool, 1),
+		teams:  teams{client: &http.Client{Timeout: 30 * time.Second}},
 	}
 }
 

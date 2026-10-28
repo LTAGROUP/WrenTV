@@ -82,6 +82,9 @@ class AppState(context: Context) {
         private set
     var liveRecents by mutableStateOf<List<String>>(emptyList())
         private set
+    /** The show titles the viewer follows, by [showKey]. */
+    var liveShows by mutableStateOf<Set<String>>(emptySet())
+        private set
 
     /** Fetches the channels and what's on them now. */
     suspend fun loadLiveChannels(): List<LiveChannel> {
@@ -89,6 +92,7 @@ class AppState(context: Context) {
         val l = api.liveLineup()
         liveFavorites = l.favorites.toSet()
         liveRecents = l.recents
+        liveShows = l.shows.map(::showKey).toSet()
         return l.channels.also { liveChannels = it }
     }
 
@@ -99,6 +103,20 @@ class AppState(context: Context) {
         scope.launch {
             runCatching { api.setLiveFavorite(id, on) }
                 .onFailure { liveFavorites = if (on) liveFavorites - id else liveFavorites + id }
+        }
+    }
+
+    fun followsShow(title: String): Boolean = showKey(title) in liveShows
+
+    /** Follows a show, or stops: its airings gather on Live TV's overview. */
+    fun toggleLiveShow(title: String) {
+        val key = showKey(title)
+        val on = key !in liveShows
+        liveShows = if (on) liveShows + key else liveShows - key
+        val api = api ?: return
+        scope.launch {
+            runCatching { api.setLiveShow(title, on) }
+                .onFailure { liveShows = if (on) liveShows - key else liveShows + key }
         }
     }
 
@@ -585,3 +603,6 @@ fun normalizeTvCode(s: String): String {
     val raw = Regex("""[?&]code=([^&#]+)""").find(s)?.groupValues?.get(1) ?: s
     return raw.uppercase().filter { it in "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" }
 }
+
+/** A show's title as the server matches it: case and punctuation don't count. */
+fun showKey(title: String): String = title.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotEmpty() }.joinToString(" ")

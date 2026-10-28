@@ -1033,7 +1033,33 @@ data class LiveChannelsResponse(
     /** The viewer's starred channels, and the ones they watched last (newest first). */
     val favorites: List<String> = emptyList(),
     val recents: List<String> = emptyList(),
+    /** The show titles the viewer follows. */
+    val shows: List<String> = emptyList(),
 )
+
+/** One side of a game. Logo and color (hex, no '#') are missing for teams ESPN doesn't list. */
+@Serializable
+data class LiveTeam(val name: String = "", val short: String? = null, val logo: String? = null, val color: String? = null)
+
+/** The game a programme shows. */
+@Serializable
+data class LiveMatchup(val league: String? = null, val away: LiveTeam = LiveTeam(), val home: LiveTeam = LiveTeam())
+
+/** A programme on a channel, on the overview's shelves. */
+@Serializable
+data class LiveTile(
+    val channelId: String,
+    val program: LiveProgram? = null,
+    val matchup: LiveMatchup? = null,
+    /** A picture for the programme: absolute, or a path on the server. */
+    val art: String? = null,
+)
+
+@Serializable
+data class LiveShelf(val id: String, val title: String, val tiles: List<LiveTile> = emptyList())
+
+@Serializable
+data class LiveOverview(val shelves: List<LiveShelf> = emptyList())
 
 /** A programme coming up on a channel, from a guide search. */
 @Serializable

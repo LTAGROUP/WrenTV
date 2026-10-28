@@ -30,7 +30,7 @@ class LivePreview(
     private val appScope: CoroutineScope,
 ) {
     val player: ExoPlayer = ExoPlayer.Builder(context).build().apply { volume = 0f }
-    /** The picture is moving (until then the guide shows the channel's art). */
+    /** The picture is moving (until then the guide shows the channel's art; a radio station's stays). */
     var showing by mutableStateOf(false); private set
     var channelId by mutableStateOf<String?>(null); private set
 
@@ -41,7 +41,7 @@ class LivePreview(
 
     init {
         player.addListener(object : Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) { if (isPlaying) showing = true }
+            override fun onRenderedFirstFrame() { showing = true }
             // A preview that fails just stays as art.
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) { showing = false }
         })

@@ -325,6 +325,11 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
         get<LiveGuideResponse>("/api/livetv/guide", buildMap { put("hours", hours.toString()); from?.let { put("from", it.toString()) } }).channels
     suspend fun liveSearch(q: String): LiveSearchResult = get("/api/livetv/search", mapOf("q" to q))
     suspend fun setLiveFavorite(id: String, on: Boolean) { send(if (on) "PUT" else "DELETE", "/api/livetv/favorites/$id") }
+    /** Live TV's home: games, the viewer's channels and shows, what's on by kind. */
+    suspend fun liveOverview(): List<LiveShelf> = get<LiveOverview>("/api/livetv/overview").shelves
+    suspend fun setLiveShow(title: String, on: Boolean) {
+        send("POST", "/api/livetv/shows", body = buildJsonObject { put("title", title); put("on", on) })
+    }
 
     suspend fun playChannel(id: String, caps: ClientCaps, preview: Boolean = false): LivePlayResponse =
         post("/api/livetv/channels/$id/play", enc(LivePlayRequest(caps, preview = preview)))
