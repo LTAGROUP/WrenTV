@@ -48,7 +48,7 @@ func (s *Session) serveSubtitle(w http.ResponseWriter, r *http.Request, typeIdx 
 	complete := true
 	if _, err := os.Stat(cache); err != nil {
 		complete = false
-		x := s.m.extractSubtitle(s, cache, typeIdx)
+		x := s.m.extractSubtitle(s, cache, typeIdx, false)
 		// Short tracks and cached-on-disk files finish quickly; wait a moment
 		// so most requests get the whole track in one go.
 		select {
@@ -178,7 +178,7 @@ func (s *Session) SubtitleText(typeIdx int) (text string, complete bool, done <-
 		close(closed)
 		return string(b), true, closed, nil
 	}
-	x := s.m.extractSubtitle(s, cache, typeIdx)
+	x := s.m.extractSubtitle(s, cache, typeIdx, true)
 	if isDone(x) {
 		if x.err != "" {
 			return "", false, x.done, errors.New(x.err)
@@ -192,8 +192,11 @@ func (s *Session) SubtitleText(typeIdx int) (text string, complete bool, done <-
 
 // extractSubtitle starts (or joins) converting one subtitle track to WebVTT.
 // It runs for as long as the session that started it, reading the whole
-// file at low priority: at full speed it starved the player beside it.
-func (m *Manager) extractSubtitle(s *Session, cache string, typeIdx int) *subExtraction {
+// file. A run nobody is watching (bg: one for lining up a downloaded
+// subtitle) reads at low priority, since at full speed it starved the player
+// beside it; one a viewer turned on reads at full speed, so its lines keep up
+// with a play resumed partway. A later caller joins the run as it is.
+func (m *Manager) extractSubtitle(s *Session, cache string, typeIdx int, bg bool) *subExtraction {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if x, ok := m.subs[cache]; ok {
@@ -213,7 +216,11 @@ func (m *Manager) extractSubtitle(s *Session, cache string, typeIdx int) *subExt
 		defer close(x.done)
 		_ = os.MkdirAll(filepath.Dir(cache), 0o755)
 		part := cache + ".part"
-		cmd := exec.CommandContext(ctx, m.cfg.FFmpeg, "-nostdin", "-v", "error", "-y", "-i", BackgroundInput(s.Src),
+		input := s.Src.Input()
+		if bg {
+			input = BackgroundInput(s.Src)
+		}
+		cmd := exec.CommandContext(ctx, m.cfg.FFmpeg, "-nostdin", "-v", "error", "-y", "-i", input,
 			"-map", fmt.Sprintf("0:s:%d", typeIdx), "-f", "webvtt", "-flush_packets", "1", part)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			x.err = strings.TrimSpace(string(out))
@@ -352,7 +359,7 @@ func (s *Session) convertedCues(ctx context.Context, typeIdx int, end float64, d
 		complete := true
 		if _, err := os.Stat(cache); err != nil {
 			complete = false
-			if x := s.m.extractSubtitle(s, cache, typeIdx); isDone(x) && x.err == "" {
+			if x := s.m.extractSubtitle(s, cache, typeIdx, false); isDone(x) && x.err == "" {
 				complete = true
 			}
 		}

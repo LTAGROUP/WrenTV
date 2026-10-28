@@ -26,6 +26,10 @@ import (
 // any file's own.
 const onlineSubIndex = 10000
 
+// syncedSuffix ends a subtitle's copy lined up with a file. It changes with
+// how lines are matched, so copies a worse matcher made are made again.
+const syncedSuffix = ".a2.vtt"
+
 var onlineSubKey = regexp.MustCompile(`^[0-9a-f]{20}$`)
 
 // imdbTarget is the IMDb id a movie is known by, or an episode's show's, with
@@ -264,7 +268,7 @@ func (s *Server) serveOnlineSubtitle(w http.ResponseWriter, r *http.Request, ses
 		}
 		raw := filepath.Join(s.onlineSubsDir(), key+".vtt")
 		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-		synced := filepath.Join(s.onlineSubsDir(), "synced", key+"-"+sess.FileID+".vtt")
+		synced := filepath.Join(s.onlineSubsDir(), "synced", key+"-"+sess.FileID+syncedSuffix)
 		if _, err := os.Stat(synced); err == nil {
 			w.Header().Set("Cache-Control", "private, max-age=86400")
 			http.ServeFile(w, r, synced)
@@ -427,7 +431,8 @@ func (s *Server) sweepOnlineSubtitles(ctx context.Context) {
 	if entries, err := os.ReadDir(synced); err == nil {
 		for _, e := range entries {
 			key, _, _ := strings.Cut(e.Name(), "-")
-			if info, err := e.Info(); err != nil || keep[key] || time.Since(info.ModTime()) < time.Hour {
+			old := !strings.HasSuffix(e.Name(), syncedSuffix) // lined up by an older matcher
+			if info, err := e.Info(); err != nil || !old && (keep[key] || time.Since(info.ModTime()) < time.Hour) {
 				continue
 			}
 			if os.Remove(filepath.Join(synced, e.Name())) == nil {

@@ -68,9 +68,12 @@ class TrailerWebView(context: Context, key: String, server: HttpUrl?) : WebView(
                 function onYouTubeIframeAPIReady(){
                   p=new YT.Player('p',{videoId:'$safe',host:'https://www.youtube.com',
                     playerVars:{autoplay:1,playsinline:1,rel:0,modestbranding:1,cc_load_policy:0,iv_load_policy:3,origin:'$origin'},
-                    events:{onReady:function(e){e.target.unloadModule('captions');e.target.playVideo()}}});
+                    events:{onReady:function(e){e.target.unloadModule('captions');e.target.playVideo()},
+                      onStateChange:function(e){if(e.data==1&&!ccSet){ccSet=true;if(!ccOn)p.unloadModule('captions')}}}});
                 }
-                var ccOn=false;
+                // Captions load with the video, after onReady, so they're
+                // turned off again once it plays.
+                var ccOn=false,ccSet=false;
                 function cc(){if(!p)return;ccOn=!ccOn;ccOn?p.loadModule('captions'):p.unloadModule('captions')}
                 function toggle(){if(!p)return;p.getPlayerState()==1?p.pauseVideo():p.playVideo()}
                 function skip(s){if(p)p.seekTo(Math.max(0,p.getCurrentTime()+s),true)}

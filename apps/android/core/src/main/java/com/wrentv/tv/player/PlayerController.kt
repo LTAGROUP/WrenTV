@@ -18,11 +18,13 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.util.EventLogger
 import com.wrentv.tv.data.Chapter
 import com.wrentv.tv.data.DownloadManager
@@ -158,7 +160,8 @@ class PlayerController(
     /** When the audio output last ran dry (0 when it hasn't since the last resync), and when it was resynced. */
     private var underrunAt = 0L
     private var resyncedAt = 0L
-    private var audioMime: String? = null
+    /** The audio goes out undecoded (Dolby, DTS) for the receiver to decode. */
+    private var passthrough = false
 
     val isOffline: Boolean get() = localFile != null
     val currentChapter: Chapter? get() = chapters.lastOrNull { it.start <= position + 0.01 }
@@ -177,7 +180,9 @@ class PlayerController(
             }
             override fun onAudioInputFormatChanged(t: AnalyticsListener.EventTime, f: Format, r: DecoderReuseEvaluation?) {
                 android.util.Log.i("WrenAudio", "format ${f.sampleMimeType} ${f.channelCount}ch")
-                audioMime = f.sampleMimeType
+            }
+            override fun onAudioTrackInitialized(t: AnalyticsListener.EventTime, config: AudioSink.AudioTrackConfig) {
+                passthrough = !Util.isEncodingLinearPcm(config.encoding)
             }
             override fun onPositionDiscontinuity(t: AnalyticsListener.EventTime, old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
                 android.util.Log.i("WrenAudio", "jump ${old.positionMs} -> ${new.positionMs} ms (reason $reason)")
@@ -542,7 +547,7 @@ class PlayerController(
      * steady for a moment, seeking to where it is makes the track anew.
      */
     private fun resyncAudio() {
-        if (underrunAt == 0L || audioMime?.let { MimeTypes.isAudio(it) && it != MimeTypes.AUDIO_RAW && it != MimeTypes.AUDIO_AAC && it != MimeTypes.AUDIO_OPUS } != true) return
+        if (underrunAt == 0L || !passthrough) return
         val now = android.os.SystemClock.elapsedRealtime()
         if (!player.isPlaying || player.playbackState != Player.STATE_READY || now - underrunAt < 2_000 || now - resyncedAt < 20_000) return
         android.util.Log.i("WrenAudio", "resync at ${player.currentPosition} ms")
