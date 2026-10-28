@@ -2,11 +2,16 @@ package api
 
 import (
 	"net/http"
+	"strings"
+
+	"github.com/LTAGROUP/wrentv/internal/db"
 )
 
-// ---------- Simkl ----------
+// ---------- Simkl and Trakt ----------
+//
+// Both trackers share these handlers: /api/me/simkl/… and /api/me/trakt/….
 
-func (s *Server) simklReady(w http.ResponseWriter) bool {
+func (s *Server) trackerReady(w http.ResponseWriter) bool {
 	if s.Tracking == nil {
 		writeErr(w, http.StatusServiceUnavailable, "tracking isn't running")
 		return false
@@ -14,11 +19,19 @@ func (s *Server) simklReady(w http.ResponseWriter) bool {
 	return true
 }
 
-func (s *Server) handleSimklStatus(w http.ResponseWriter, r *http.Request) {
-	if !s.simklReady(w) {
+// trackerOf is the tracker a /api/me/{simkl,trakt} route is for.
+func trackerOf(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, "/api/me/trakt") {
+		return db.Trakt
+	}
+	return db.Simkl
+}
+
+func (s *Server) handleTrackerStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.trackerReady(w) {
 		return
 	}
-	st, err := s.Tracking.SimklStatus(r.Context(), principal(r).User.ID)
+	st, err := s.Tracking.Status(r.Context(), trackerOf(r), principal(r).User.ID)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -26,14 +39,14 @@ func (s *Server) handleSimklStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, st)
 }
 
-// handleSimklLink starts the sign-in: the user opens the returned URL (or
-// enters the code at simkl.com/pin) and approves; GET /api/me/simkl shows
-// when it's linked.
-func (s *Server) handleSimklLink(w http.ResponseWriter, r *http.Request) {
-	if !s.simklReady(w) {
+// handleTrackerLink starts the sign-in: the user opens the returned URL (or
+// enters the code at simkl.com/pin or trakt.tv/activate) and approves;
+// GET /api/me/{simkl,trakt} shows when it's linked.
+func (s *Server) handleTrackerLink(w http.ResponseWriter, r *http.Request) {
+	if !s.trackerReady(w) {
 		return
 	}
-	p, err := s.Tracking.LinkSimkl(r.Context(), principal(r).User.ID)
+	p, err := s.Tracking.Link(r.Context(), trackerOf(r), principal(r).User.ID)
 	if err != nil {
 		writeErr(w, 502, err.Error())
 		return
@@ -41,27 +54,27 @@ func (s *Server) handleSimklLink(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, p)
 }
 
-func (s *Server) handleSimklCancelLink(w http.ResponseWriter, r *http.Request) {
-	if !s.simklReady(w) {
+func (s *Server) handleTrackerCancelLink(w http.ResponseWriter, r *http.Request) {
+	if !s.trackerReady(w) {
 		return
 	}
-	s.Tracking.CancelLink(principal(r).User.ID)
+	s.Tracking.CancelLinkFor(trackerOf(r), principal(r).User.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleSimklUnlink(w http.ResponseWriter, r *http.Request) {
-	if !s.simklReady(w) {
+func (s *Server) handleTrackerUnlink(w http.ResponseWriter, r *http.Request) {
+	if !s.trackerReady(w) {
 		return
 	}
-	if err := s.Tracking.UnlinkSimkl(r.Context(), principal(r).User.ID); err != nil {
+	if err := s.Tracking.Unlink(r.Context(), trackerOf(r), principal(r).User.ID); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleSimklPatch(w http.ResponseWriter, r *http.Request) {
-	if !s.simklReady(w) {
+func (s *Server) handleTrackerPatch(w http.ResponseWriter, r *http.Request) {
+	if !s.trackerReady(w) {
 		return
 	}
 	var req struct {
@@ -73,23 +86,23 @@ func (s *Server) handleSimklPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	uid := principal(r).User.ID
 	if req.Scrobble != nil {
-		if err := s.DB.SetSimklScrobble(r.Context(), uid, *req.Scrobble); err != nil {
+		if err := s.DB.SetTrackerScrobble(r.Context(), trackerOf(r), uid, *req.Scrobble); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}
 	}
-	s.handleSimklStatus(w, r)
+	s.handleTrackerStatus(w, r)
 }
 
-func (s *Server) handleSimklImport(w http.ResponseWriter, r *http.Request) {
-	if !s.simklReady(w) {
+func (s *Server) handleTrackerImport(w http.ResponseWriter, r *http.Request) {
+	if !s.trackerReady(w) {
 		return
 	}
 	uid := principal(r).User.ID
-	if a, err := s.DB.GetSimkl(r.Context(), uid); err != nil || a == nil {
-		writeErr(w, 409, "link Simkl first")
+	if a, err := s.DB.GetTracker(r.Context(), trackerOf(r), uid); err != nil || a == nil {
+		writeErr(w, 409, "link the account first")
 		return
 	}
-	s.Tracking.Import(uid)
+	s.Tracking.ImportFrom(trackerOf(r), uid)
 	w.WriteHeader(http.StatusAccepted)
 }

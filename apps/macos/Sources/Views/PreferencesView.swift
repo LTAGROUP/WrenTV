@@ -76,7 +76,7 @@ struct PreferencesView: View {
             } footer: {
                 Text("How big posters and tiles are. Saved to your account, so every app you sign in to uses it.").foregroundStyle(.secondary)
             }
-            SimklSection()
+            ForEach(Tracker.allCases) { TrackerSection(tracker: $0) }
             LinkTVSection()
         }
         .formStyle(.grouped)
@@ -134,12 +134,13 @@ struct PreferencesView: View {
     }
 }
 
-/// Linking Simkl: what's watched here is sent there, and its history
-/// imported. Hidden when the server has no Simkl app.
-struct SimklSection: View {
+/// Linking Simkl or Trakt: what's watched here is sent there, and its history
+/// imported. Hidden when the server has no app for the tracker.
+struct TrackerSection: View {
+    let tracker: Tracker
     @Environment(AppState.self) private var state
     @Environment(\.openURL) private var openURL
-    @State private var st: SimklStatus?
+    @State private var st: TrackerStatus?
     @State private var error: String?
     @State private var tick = 0
 
@@ -149,14 +150,14 @@ struct SimklSection: View {
                 Section {
                     rows(s)
                 } header: {
-                    Text("Simkl")
+                    Text(tracker.name)
                 } footer: {
                     Text(error ?? footer(s)).foregroundStyle(error == nil ? Color.secondary : Color.red)
                 }
             }
         }
         .task(id: tick) {
-            st = try? await state.api?.simkl()
+            st = try? await state.api?.tracker(tracker)
             // Waiting on approval or an import: check again shortly.
             if st?.busy == true {
                 try? await Task.sleep(for: .seconds(3))
@@ -165,13 +166,13 @@ struct SimklSection: View {
         }
     }
 
-    @ViewBuilder private func rows(_ s: SimklStatus) -> some View {
+    @ViewBuilder private func rows(_ s: TrackerStatus) -> some View {
         if s.linked, let a = s.account {
-            LabeledContent("Linked to", value: a.username ?? "Simkl")
-            Toggle("Send what I watch to Simkl", isOn: Binding(get: { a.scrobble }, set: { on in act { try await $0.simklScrobble(on) } }))
-            Button("Import history again") { act { try await $0.simklImport() } }
+            LabeledContent("Linked to", value: a.username ?? tracker.name)
+            Toggle("Send what I watch to \(tracker.name)", isOn: Binding(get: { a.scrobble }, set: { on in act { try await $0.trackerScrobble(tracker, on) } }))
+            Button("Import history again") { act { try await $0.trackerImport(tracker) } }
                 .disabled(s.importing == true || a.importStatus == "running")
-            Button("Disconnect", role: .destructive) { act { try await $0.simklUnlink() } }
+            Button("Disconnect", role: .destructive) { act { try await $0.trackerUnlink(tracker) } }
         } else if let p = s.pending, (p.error ?? "").isEmpty {
             LabeledContent("Code", value: p.userCode)
                 .font(.title3.monospaced())
@@ -179,31 +180,31 @@ struct SimklSection: View {
             Button("Open \(p.url.replacingOccurrences(of: "https://", with: ""))") {
                 if let u = URL(string: p.urlComplete ?? p.url) { openURL(u) }
             }
-            Button("Cancel") { act { try await $0.simklCancelLink() } }
+            Button("Cancel") { act { try await $0.trackerCancelLink(tracker) } }
         } else {
-            Button("Connect Simkl") {
+            Button("Connect \(tracker.name)") {
                 act { api in
-                    try await api.simklLink()
-                    if let p = try? await api.simkl().pending, let u = URL(string: p.urlComplete ?? p.url) { openURL(u) }
+                    try await api.trackerLink(tracker)
+                    if let p = try? await api.tracker(tracker).pending, let u = URL(string: p.urlComplete ?? p.url) { openURL(u) }
                 }
             }
         }
     }
 
-    private func footer(_ s: SimklStatus) -> String {
+    private func footer(_ s: TrackerStatus) -> String {
         if s.linked, let a = s.account {
             if s.importing == true || a.importStatus == "running" { return "Importing your history…" }
             if a.importStatus == "done" {
                 return "Last import: \(a.importMovies ?? 0) movies and \(a.importEpisodes ?? 0) episodes marked watched."
             }
             if let e = a.importStatus, !e.isEmpty { return "Import failed: \(e)" }
-            return "What you watch here is marked watched on Simkl."
+            return "What you watch here is marked watched on \(tracker.name)."
         }
         if let p = s.pending {
             if let e = p.error, !e.isEmpty { return e }
-            return "Open the link and enter the code. Waiting for you to approve it on Simkl…"
+            return "Open the link and enter the code. Waiting for you to approve it on \(tracker.name)…"
         }
-        return "Link your Simkl account to import what you've already watched and keep Simkl up to date as you watch here."
+        return "Link your \(tracker.name) account to import what you've already watched and keep \(tracker.name) up to date as you watch here."
     }
 
     private func act(_ f: @escaping (WrenTVAPI) async throws -> Void) {

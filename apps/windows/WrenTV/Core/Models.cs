@@ -286,20 +286,29 @@ public sealed class UserPrefs
         [(10, "10 seconds"), (30, "30 seconds"), (60, "1 minute"), (120, "2 minutes"), (300, "5 minutes"), (600, "10 minutes")];
 }
 
-/// The caller's Simkl link, from /api/me/simkl.
-public sealed class SimklStatus
+/// A watch tracker accounts can be linked to.
+public enum Tracker { Simkl, Trakt }
+
+public static class TrackerNames
+{
+    public static string Id(this Tracker t) => t == Tracker.Trakt ? "trakt" : "simkl";
+    public static string Name(this Tracker t) => t == Tracker.Trakt ? "Trakt" : "Simkl";
+}
+
+/// The caller's Simkl or Trakt link, from /api/me/simkl or /api/me/trakt.
+public sealed class TrackerStatus
 {
     public bool Available { get; set; }
     public bool Linked { get; set; }
-    public SimklAccount? Account { get; set; }
-    public SimklPending? Pending { get; set; }
+    public TrackerAccount? Account { get; set; }
+    public TrackerPending? Pending { get; set; }
     public bool Importing { get; set; }
 
     /// Worth checking again soon: waiting on approval or an import.
     public bool Busy => (Pending != null && string.IsNullOrEmpty(Pending.Error)) || Importing || Account?.ImportStatus == "running";
 }
 
-public sealed class SimklAccount
+public sealed class TrackerAccount
 {
     public string? Username { get; set; }
     public bool Scrobble { get; set; }
@@ -309,7 +318,7 @@ public sealed class SimklAccount
     public int ImportEpisodes { get; set; }
 }
 
-public sealed class SimklPending
+public sealed class TrackerPending
 {
     public string UserCode { get; set; } = "";
     public string Url { get; set; } = "";
@@ -808,7 +817,15 @@ public sealed class LiveProgram
     public long End { get; set; }
     public string? Description { get; set; }
     public string? Episode { get; set; }
+    public string? Icon { get; set; }
+    public List<string>? Categories { get; set; }
+    /// A first airing, and a broadcast happening as it airs.
+    public bool? New { get; set; }
+    public bool? Live { get; set; }
 
+    public bool IsNew => New == true;
+    public bool IsLive => Live == true;
+    public bool AiringAt(DateTimeOffset now) => now.ToUnixTimeSeconds() >= Start && now.ToUnixTimeSeconds() < End;
     public DateTimeOffset StartDate => DateTimeOffset.FromUnixTimeSeconds(Start).ToLocalTime();
     public DateTimeOffset EndDate => DateTimeOffset.FromUnixTimeSeconds(End).ToLocalTime();
     public double ProgressAt(DateTimeOffset now) =>
@@ -826,11 +843,40 @@ public sealed class LiveChannel
     public string? Group { get; set; }
     public LiveProgram? Now { get; set; }
     public LiveProgram? Next { get; set; }
+    /// "sports", "news", "movies", "kids", "music" or "entertainment".
+    public string? Genre { get; set; }
 }
 
 public sealed class LiveChannelsResponse
 {
     public List<LiveChannel> Channels { get; set; } = [];
+    /// The viewer's starred channels, and the ones they watched last (newest first).
+    public List<string> Favorites { get; set; } = [];
+    public List<string> Recents { get; set; } = [];
+}
+
+public sealed class LiveGuideChannel
+{
+    public string Id { get; set; } = "";
+    public List<LiveProgram> Programs { get; set; } = [];
+}
+
+public sealed class LiveGuideResponse
+{
+    public List<LiveGuideChannel> Channels { get; set; } = [];
+}
+
+/// A programme coming up on a channel, from a guide search.
+public sealed class LiveAiring
+{
+    public string ChannelId { get; set; } = "";
+    public LiveProgram Program { get; set; } = new();
+}
+
+public sealed class LiveSearchResult
+{
+    public List<LiveChannel> Channels { get; set; } = [];
+    public List<LiveAiring> Airings { get; set; } = [];
 }
 
 public sealed class LivePlayResponse

@@ -43,7 +43,8 @@ struct LivePlayerScreen: View {
         .onAppear {
             guard model == nil, let api = state.api,
                   let ch = state.liveChannels.first(where: { $0.id == target.channelId }) else { return }
-            let list = target.group.map { g in state.liveChannels.filter { $0.group == g } } ?? state.liveChannels
+            let list = target.channelIds.map { ids in ids.compactMap { id in state.liveChannels.first { $0.id == id } } }
+                ?? target.group.map { g in state.liveChannels.filter { $0.group == g } } ?? state.liveChannels
             let m = LivePlayerModel(api: api, channel: ch, channels: list)
             model = m
             m.tune(ch)

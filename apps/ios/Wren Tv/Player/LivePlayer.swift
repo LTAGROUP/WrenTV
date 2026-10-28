@@ -32,7 +32,8 @@ struct LivePlayerView: View {
             if channels.isEmpty { channels = (try? await api.liveChannels()) ?? [] }
             state.liveChannels = channels
             guard let ch = channels.first(where: { $0.id == target.channelId }) else { dismiss(); return }
-            let list = target.group.map { g in channels.filter { $0.group == g } } ?? channels
+            let list = target.channelIds.map { ids in ids.compactMap { id in channels.first { $0.id == id } } }
+                ?? target.group.map { g in channels.filter { $0.group == g } } ?? channels
             let m = LivePlayerModel(api: api, channel: ch, channels: list)
             model = m
             m.tune(ch)

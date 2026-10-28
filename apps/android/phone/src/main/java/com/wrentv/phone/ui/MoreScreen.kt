@@ -50,7 +50,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import com.wrentv.tv.data.AppState
 import com.wrentv.tv.data.ContinueAfters
-import com.wrentv.tv.data.SimklStatus
+import com.wrentv.tv.data.Tracker
+import com.wrentv.tv.data.TrackerStatus
 import com.wrentv.tv.data.UserPrefs
 import com.wrentv.tv.data.WatchedPercents
 import com.wrentv.tv.data.continueAfterLabel
@@ -130,7 +131,7 @@ fun PreferencesScreen() {
                 Modifier.fillMaxWidth().padding(horizontal = metrics().gutter, vertical = 8.dp), color = Wren.secondary, style = MaterialTheme.typography.bodySmall)
             SectionHeader("Browsing")
             PosterSizePicker()
-            SimklSection()
+            Tracker.entries.forEach { TrackerSection(it) }
         }
     }
 }
@@ -149,17 +150,17 @@ private fun <T> ChoicePicker(title: String, choices: List<Pair<T, String>>, valu
     }
 }
 
-/** Linking Simkl: what's watched here is sent there, and its history imported. Hidden when the server has no Simkl app. */
+/** Linking Simkl or Trakt: what's watched here is sent there, and its history imported. Hidden when the server has no app for it. */
 @Composable
-private fun SimklSection() {
+private fun TrackerSection(tracker: Tracker) {
     val state = LocalAppState.current
     val scope = rememberCoroutineScope()
     val uri = LocalUriHandler.current
-    var st by remember { mutableStateOf<SimklStatus?>(null) }
+    var st by remember { mutableStateOf<TrackerStatus?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(tick) {
-        st = runCatching { state.api?.simkl() }.getOrNull()
+        st = runCatching { state.api?.tracker(tracker) }.getOrNull()
         // Waiting on approval or an import: check again shortly.
         if (st?.busy == true) { delay(3000); tick++ }
     }
@@ -168,34 +169,34 @@ private fun SimklSection() {
     fun act(f: suspend () -> Unit) {
         scope.launch { runCatching { f() }.onFailure { error = it.message }; tick++ }
     }
-    SectionHeader("Simkl")
+    SectionHeader(tracker.label)
     val a = s.account
     val pending = s.pending
     when {
         s.linked && a != null -> {
-            NavRow(null, "Linked to ${a.username.ifEmpty { "your Simkl account" }}", onClick = null)
-            NavRow(null, "Send what I watch to Simkl", if (a.scrobble) "On" else "Off") { act { state.api?.simklScrobble(!a.scrobble) } }
+            NavRow(null, "Linked to ${a.username.ifEmpty { "your ${tracker.label} account" }}", onClick = null)
+            NavRow(null, "Send what I watch to ${tracker.label}", if (a.scrobble) "On" else "Off") { act { state.api?.trackerScrobble(tracker, !a.scrobble) } }
             NavRow(null, "Import history again", when {
                 s.importing || a.importStatus == "running" -> "Importing…"
                 a.importStatus == "done" -> "${a.importMovies} movies, ${a.importEpisodes} episodes"
                 a.importStatus.isNotEmpty() -> "Failed"
                 else -> null
-            }) { if (!s.importing) act { state.api?.simklImport() } }
-            NavRow(null, "Disconnect Simkl", tint = Wren.ember) { act { state.api?.simklUnlink() } }
+            }) { if (!s.importing) act { state.api?.trackerImport(tracker) } }
+            NavRow(null, "Disconnect ${tracker.label}", tint = Wren.ember) { act { state.api?.trackerUnlink(tracker) } }
         }
         pending != null && pending.error.isNullOrEmpty() -> {
             NavRow(null, "Open ${pending.url.removePrefix("https://").removePrefix("http://")}", pending.userCode) {
                 runCatching { uri.openUri(pending.urlComplete ?: pending.url) }
             }
-            Text("Enter the code on Simkl to approve it. Waiting…", Modifier.padding(horizontal = metrics().gutter, vertical = 4.dp),
+            Text("Enter the code on ${tracker.label} to approve it. Waiting…", Modifier.padding(horizontal = metrics().gutter, vertical = 4.dp),
                 color = Wren.secondary, style = MaterialTheme.typography.bodySmall)
-            NavRow(null, "Cancel") { act { state.api?.simklCancelLink() } }
+            NavRow(null, "Cancel") { act { state.api?.trackerCancelLink(tracker) } }
         }
         else -> {
-            NavRow(null, "Connect Simkl") {
-                act { state.api?.simklLink()?.let { p -> runCatching { uri.openUri(p.urlComplete ?: p.url) } } }
+            NavRow(null, "Connect ${tracker.label}") {
+                act { state.api?.trackerLink(tracker)?.let { p -> runCatching { uri.openUri(p.urlComplete ?: p.url) } } }
             }
-            Text(pending?.error ?: "Import what you've already watched, and keep Simkl up to date as you watch here.",
+            Text(pending?.error ?: "Import what you've already watched, and keep ${tracker.label} up to date as you watch here.",
                 Modifier.padding(horizontal = metrics().gutter, vertical = 4.dp), color = if (pending?.error != null) Wren.ember else Wren.secondary,
                 style = MaterialTheme.typography.bodySmall)
         }

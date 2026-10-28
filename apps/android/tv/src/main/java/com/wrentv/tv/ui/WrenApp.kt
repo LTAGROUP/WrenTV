@@ -292,7 +292,7 @@ private fun Page(route: Route) {
         is Route.StreamTitle -> StreamTitleScreen(route)
         is Route.Trailer -> TrailerScreen(route.youtubeKey, route.title)
         is Route.Player -> PlayerScreen(route.target)
-        is Route.LivePlayer -> LivePlayerScreen(route.channelId, route.group)
+        is Route.LivePlayer -> LivePlayerScreen(route.channelId, route.group, route.ids)
     }
 }
 

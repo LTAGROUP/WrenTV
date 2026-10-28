@@ -1,4 +1,6 @@
+import AVFoundation
 import AppKit
+import Combine
 import Observation
 import SwiftUI
 
@@ -150,7 +152,9 @@ struct LivePlayerWindow: View {
             if channels.isEmpty { channels = (try? await api.liveChannels()) ?? [] }
             state.liveChannels = channels
             guard let ch = channels.first(where: { $0.id == target.channelId }) else { return }
-            let list = target.group.map { g in channels.filter { $0.group == g } } ?? channels
+            // Up and down follow the guide as it was filtered.
+            let list = target.channelIds.map { ids in ids.compactMap { id in channels.first { $0.id == id } } }
+                ?? target.group.map { g in channels.filter { $0.group == g } } ?? channels
             let m = LivePlayerModel(api: api, channel: ch, channels: list)
             model = m
             m.tune(ch)
@@ -345,5 +349,81 @@ private struct ChannelList: View {
         }
         .padding(.top, 28)
         .background(.ultraThinMaterial)
+    }
+}
+
+/// The guide's muted picture of the picked channel. It starts a moment after
+/// the pick settles, so clicking down the guide doesn't open a stream per
+/// channel, and stops the last one before the next. AVPlayer reads the HLS
+/// the server repackages channels into.
+@MainActor
+@Observable
+final class LivePreview {
+    let player = AVPlayer()
+    /// The picture is moving (until then the guide shows the programme's art).
+    private(set) var showing = false
+    private(set) var channelId: String?
+
+    @ObservationIgnored private var api: WrenTVAPI?
+    @ObservationIgnored private var sessionId: String?
+    @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var subs: Set<AnyCancellable> = []
+
+    init() {
+        player.isMuted = true
+        player.publisher(for: \.timeControlStatus).receive(on: DispatchQueue.main).sink { [weak self] s in
+            guard let self, self.player.currentItem != nil else { return }
+            if s == .playing { self.showing = true }
+        }.store(in: &subs)
+    }
+
+    func show(_ ch: LiveChannel?, api: WrenTVAPI?, after delay: Duration = .milliseconds(900)) {
+        guard ch?.id != channelId else { return }
+        stop()
+        channelId = ch?.id
+        guard let ch, let api else { return }
+        self.api = api
+        task = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            guard let r = try? await api.playChannel(ch.id, hls: true, preview: true) else { return }
+            guard let self, !Task.isCancelled, self.channelId == ch.id, r.type == "hls" else {
+                await api.stopSession(r.sessionId)
+                return
+            }
+            self.sessionId = r.sessionId
+            self.player.replaceCurrentItem(with: AVPlayerItem(url: api.absolute(r.url)))
+            self.player.play()
+        }
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+        channelId = nil
+        showing = false
+        player.replaceCurrentItem(with: nil)
+        if let sid = sessionId, let api {
+            Task.detached { await api.stopSession(sid) }
+        }
+        sessionId = nil
+    }
+}
+
+/// A player's picture with no controls, filling its frame.
+struct LivePreviewSurface: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        v.wantsLayer = true
+        let layer = AVPlayerLayer(player: player)
+        layer.videoGravity = .resizeAspectFill
+        v.layer = layer
+        return v
+    }
+
+    func updateNSView(_ v: NSView, context: Context) {
+        if let layer = v.layer as? AVPlayerLayer, layer.player !== player { layer.player = player }
     }
 }

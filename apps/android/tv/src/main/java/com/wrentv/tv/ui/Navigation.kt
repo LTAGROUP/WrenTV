@@ -48,7 +48,8 @@ sealed interface Route {
     data class Trailer(val youtubeKey: String, val title: String) : Route { override val key = "trailer:$youtubeKey" }
     data class Player(val target: PlayTarget) : Route { override val key = "player:${target.itemId}" }
     /** Live TV, full screen, starting on a channel; up and down change it, within [group] when set. */
-    data class LivePlayer(val channelId: String, val group: String? = null) : Route { override val key = "live-player" }
+    /** [ids]: the guide's channels as filtered, which channel up and down step through. */
+    data class LivePlayer(val channelId: String, val group: String? = null, val ids: List<String>? = null) : Route { override val key = "live-player" }
 }
 
 class Navigator {

@@ -142,7 +142,8 @@ func (c *Client) Discover(ctx context.Context, mediaType, sort string, genreID, 
 }
 
 // DiscoverQuery narrows the catalog. Genres and Providers match any of
-// theirs; Providers are watch providers in the client's region.
+// theirs; Providers are watch providers in the client's region, each
+// standing for its whole service (every plan and channel of it).
 type DiscoverQuery struct {
 	Sort      string
 	Genres    []int
@@ -190,7 +191,7 @@ func (c *Client) DiscoverWith(ctx context.Context, mediaType string, q DiscoverQ
 		params.Set("with_companies", joinInts(q.Companies, "|"))
 	}
 	if len(q.Providers) > 0 {
-		params.Set("with_watch_providers", joinInts(q.Providers, "|"))
+		params.Set("with_watch_providers", joinInts(c.serviceIDs(ctx, q.Providers), "|"))
 		params.Set("watch_region", c.Region())
 		params.Set("with_watch_monetization_types", "flatrate")
 	}

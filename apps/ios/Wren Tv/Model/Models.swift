@@ -469,8 +469,15 @@ struct UserPrefs: Codable, Hashable {
                                                   (300, "5 minutes"), (600, "10 minutes")]
 }
 
-/// The caller's Simkl link, from /api/me/simkl.
-struct SimklStatus: Decodable {
+/// A watch tracker accounts can be linked to.
+enum Tracker: String, CaseIterable, Identifiable {
+    case simkl, trakt
+    var id: String { rawValue }
+    var name: String { self == .trakt ? "Trakt" : "Simkl" }
+}
+
+/// The caller's Simkl or Trakt link, from /api/me/simkl or /api/me/trakt.
+struct TrackerStatus: Decodable {
     var available: Bool
     var linked: Bool
     var account: Account?
@@ -1354,6 +1361,15 @@ struct LiveProgram: Codable, Hashable {
     var end: Int64
     var description: String?
     var episode: String?
+    /// The programme's artwork, when the guide has it.
+    var icon: String?
+    var categories: [String]?
+    /// A first airing, and a broadcast happening as it airs.
+    var new: Bool?
+    var live: Bool?
+
+    var isNew: Bool { new ?? false }
+    var isLive: Bool { live ?? false }
 
     var startDate: Date { Date(timeIntervalSince1970: TimeInterval(start)) }
     var endDate: Date { Date(timeIntervalSince1970: TimeInterval(end)) }
@@ -1379,10 +1395,33 @@ struct LiveChannel: Codable, Hashable, Identifiable {
     var group: String?
     var now: LiveProgram?
     var next: LiveProgram?
+    /// "sports", "news", "movies", "kids", "music" or "entertainment".
+    var genre: String?
+}
+
+/// The guide's channel filters, in the order they're offered.
+enum LiveGenre: String, CaseIterable, Identifiable {
+    case sports, news, movies, kids, music, entertainment
+    var id: String { rawValue }
+    var name: String { rawValue == "kids" ? "Kids" : rawValue.capitalized }
 }
 
 struct LiveChannelsResponse: Codable {
     var channels: [LiveChannel]
+    /// The viewer's starred channels, and the ones they watched last (newest first).
+    var favorites: [String]?
+    var recents: [String]?
+}
+
+/// A programme coming up on a channel, from a guide search.
+struct LiveAiring: Codable, Hashable {
+    var channelId: String
+    var program: LiveProgram
+}
+
+struct LiveSearchResult: Codable {
+    var channels: [LiveChannel]
+    var airings: [LiveAiring]
 }
 
 /// One channel's programmes over the next few hours.
@@ -1424,6 +1463,9 @@ struct PlayTarget: Codable, Hashable, Identifiable {
 struct LiveTarget: Hashable, Identifiable {
     var channelId: String
     var group: String?
+    /// The guide's channels in order, as filtered when it was opened:
+    /// channel up and down step through these.
+    var channelIds: [String]? = nil
     var id: String { channelId }
 }
 

@@ -251,13 +251,16 @@ val ContinueAfters = listOf(10 to "10 seconds", 30 to "30 seconds", 60 to "1 min
 
 fun continueAfterLabel(s: Int): String = ContinueAfters.firstOrNull { it.first == s }?.second ?: if (s % 60 == 0) "${s / 60} minutes" else "$s seconds"
 
-/** The caller's Simkl link, from /api/me/simkl. */
+/** A watch tracker accounts can be linked to. */
+enum class Tracker(val id: String, val label: String) { Simkl("simkl", "Simkl"), Trakt("trakt", "Trakt") }
+
+/** The caller's Simkl or Trakt link, from /api/me/simkl or /api/me/trakt. */
 @Serializable
-data class SimklStatus(
+data class TrackerStatus(
     val available: Boolean = false,
     val linked: Boolean = false,
-    val account: SimklAccount? = null,
-    val pending: SimklPending? = null,
+    val account: TrackerAccount? = null,
+    val pending: TrackerPending? = null,
     val importing: Boolean = false,
 ) {
     /** Worth checking again soon: waiting on approval or an import. */
@@ -265,7 +268,7 @@ data class SimklStatus(
 }
 
 @Serializable
-data class SimklAccount(
+data class TrackerAccount(
     val username: String = "",
     val scrobble: Boolean = false,
     val importStatus: String = "",
@@ -275,7 +278,7 @@ data class SimklAccount(
 )
 
 @Serializable
-data class SimklPending(val userCode: String = "", val url: String = "", val urlComplete: String? = null, val error: String? = null)
+data class TrackerPending(val userCode: String = "", val url: String = "", val urlComplete: String? = null, val error: String? = null)
 
 @Serializable
 data class PairInfo(val device: String = "TV", val approved: Boolean = false)
@@ -995,7 +998,15 @@ data class LiveProgram(
     val end: Long = 0,
     val description: String? = null,
     val episode: String? = null,
+    val icon: String? = null,
+    val categories: List<String>? = null,
+    /** A first airing, and a broadcast happening as it airs. */
+    val new: Boolean? = null,
+    val live: Boolean? = null,
 ) {
+    val isNew: Boolean get() = new == true
+    val isLive: Boolean get() = live == true
+
     fun progress(now: Long): Float = if (end > start) ((now - start).toFloat() / (end - start)).coerceIn(0f, 1f) else 0f
 }
 
@@ -1009,10 +1020,27 @@ data class LiveChannel(
     val group: String? = null,
     val now: LiveProgram? = null,
     val next: LiveProgram? = null,
+    /** "sports", "news", "movies", "kids", "music" or "entertainment". */
+    val genre: String? = null,
 )
 
+/** The guide's channel filters, in the order they're offered. */
+val LiveGenres = listOf("sports" to "Sports", "news" to "News", "movies" to "Movies", "kids" to "Kids", "music" to "Music", "entertainment" to "Entertainment")
+
 @Serializable
-data class LiveChannelsResponse(val channels: List<LiveChannel> = emptyList())
+data class LiveChannelsResponse(
+    val channels: List<LiveChannel> = emptyList(),
+    /** The viewer's starred channels, and the ones they watched last (newest first). */
+    val favorites: List<String> = emptyList(),
+    val recents: List<String> = emptyList(),
+)
+
+/** A programme coming up on a channel, from a guide search. */
+@Serializable
+data class LiveAiring(val channelId: String, val program: LiveProgram)
+
+@Serializable
+data class LiveSearchResult(val channels: List<LiveChannel> = emptyList(), val airings: List<LiveAiring> = emptyList())
 
 /** One channel's programmes over the next few hours. */
 @Serializable
@@ -1022,7 +1050,12 @@ data class LiveGuideChannel(val id: String, val programs: List<LiveProgram> = em
 data class LiveGuideResponse(val channels: List<LiveGuideChannel> = emptyList())
 
 @Serializable
-data class LivePlayRequest(val caps: ClientCaps)
+data class LivePlayRequest(
+    val caps: ClientCaps,
+    val hls: Boolean = false,
+    /** The guide's muted picture of the focused channel: not counted as watching it. */
+    val preview: Boolean = false,
+)
 
 /**
  * How to play a channel. The server proxies (or remuxes) the provider's

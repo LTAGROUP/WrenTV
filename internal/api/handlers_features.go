@@ -816,12 +816,12 @@ func (s *Server) handleSearchFranchises(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, 200, nonNil(res))
 }
 
-// ownWatchlist ties a Simkl watchlist collection to the account of the
-// admin who picked it; it stays with them until the source changes.
+// ownWatchlist ties a Simkl or Trakt watchlist collection to the account
+// of the admin who picked it; it stays with them until the source changes.
 func ownWatchlist(r *http.Request, c *db.Collection, before db.CollectionRules) {
 	ru := &c.Rules
 	switch {
-	case ru.Source != "simkl" || !strings.HasPrefix(ru.SourceRef, "watchlist/"):
+	case !ru.IsWatchlist():
 		ru.SimklUser = ""
 	case before.Source == ru.Source && before.SourceRef == ru.SourceRef && before.SimklUser != "":
 		ru.SimklUser = before.SimklUser
@@ -844,13 +844,16 @@ func (s *Server) syncCollection(ctx context.Context, c *db.Collection) error {
 	}
 	var titles []tmdb.Title
 	switch ru.Source {
-	case "mdblist", "simkl":
+	case "mdblist", "simkl", "trakt":
 		var name string
 		var ts []db.CollectionTitle
 		var err error
-		if ru.Source == "mdblist" {
+		switch ru.Source {
+		case "mdblist":
 			name, ts, err = mdblistTitles(ctx, ru.SourceRef)
-		} else {
+		case "trakt":
+			name, ts, err = s.traktTitles(ctx, ru.SourceRef, ru.SimklUser)
+		default:
 			name, ts, err = s.simklTitles(ctx, ru.SourceRef, ru.SimklUser)
 		}
 		if err != nil {

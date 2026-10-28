@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// SimklAccount is a user's linked Simkl account.
-type SimklAccount struct {
+// TrackerAccount is a user's linked tracker account (Simkl or Trakt).
+type TrackerAccount struct {
 	UserID         string `json:"-"`
 	AccessToken    string `json:"-"`
 	RefreshToken   string `json:"-"`
@@ -22,11 +22,27 @@ type SimklAccount struct {
 	ImportEpisodes int    `json:"importEpisodes"`
 }
 
-// GetSimkl returns the user's linked account, or nil.
-func (d *DB) GetSimkl(ctx context.Context, userID string) (*SimklAccount, error) {
-	a := &SimklAccount{UserID: userID}
+// SimklAccount is a user's linked Simkl account.
+type SimklAccount = TrackerAccount
+
+// Trackers with an accounts table each ("simkl_accounts", "trakt_accounts").
+const (
+	Simkl = "simkl"
+	Trakt = "trakt"
+)
+
+func trackerTable(tracker string) string {
+	if tracker == Trakt {
+		return "trakt_accounts"
+	}
+	return "simkl_accounts"
+}
+
+// GetTracker returns the user's linked account on a tracker, or nil.
+func (d *DB) GetTracker(ctx context.Context, tracker, userID string) (*TrackerAccount, error) {
+	a := &TrackerAccount{UserID: userID}
 	err := d.QueryRowContext(ctx, `SELECT access_token, refresh_token, expires_at, username, scrobble, linked_at,
-		import_status, import_at, import_movies, import_episodes FROM simkl_accounts WHERE user_id=?`, userID).
+		import_status, import_at, import_movies, import_episodes FROM `+trackerTable(tracker)+` WHERE user_id=?`, userID).
 		Scan(&a.AccessToken, &a.RefreshToken, &a.ExpiresAt, &a.Username, &a.Scrobble, &a.LinkedAt,
 			&a.ImportStatus, &a.ImportAt, &a.ImportMovies, &a.ImportEpisodes)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -38,35 +54,60 @@ func (d *DB) GetSimkl(ctx context.Context, userID string) (*SimklAccount, error)
 	return a, nil
 }
 
-// LinkSimkl stores a newly approved account, replacing any earlier one.
-func (d *DB) LinkSimkl(ctx context.Context, a *SimklAccount) error {
-	_, err := d.ExecContext(ctx, `INSERT INTO simkl_accounts (user_id, access_token, refresh_token, expires_at, username, scrobble, linked_at)
+// LinkTracker stores a newly approved account, replacing any earlier one.
+func (d *DB) LinkTracker(ctx context.Context, tracker string, a *TrackerAccount) error {
+	_, err := d.ExecContext(ctx, `INSERT INTO `+trackerTable(tracker)+` (user_id, access_token, refresh_token, expires_at, username, scrobble, linked_at)
 		VALUES (?,?,?,?,?,1,?) ON CONFLICT(user_id) DO UPDATE SET access_token=excluded.access_token, refresh_token=excluded.refresh_token,
 		expires_at=excluded.expires_at, username=excluded.username, linked_at=excluded.linked_at`,
 		a.UserID, a.AccessToken, a.RefreshToken, a.ExpiresAt, a.Username, Now())
 	return err
 }
 
-func (d *DB) SetSimklTokens(ctx context.Context, userID, access, refresh string, expires int64) error {
-	_, err := d.ExecContext(ctx, `UPDATE simkl_accounts SET access_token=?, refresh_token=?, expires_at=? WHERE user_id=?`,
+func (d *DB) SetTrackerTokens(ctx context.Context, tracker, userID, access, refresh string, expires int64) error {
+	_, err := d.ExecContext(ctx, `UPDATE `+trackerTable(tracker)+` SET access_token=?, refresh_token=?, expires_at=? WHERE user_id=?`,
 		access, refresh, expires, userID)
 	return err
 }
 
-func (d *DB) SetSimklScrobble(ctx context.Context, userID string, on bool) error {
-	_, err := d.ExecContext(ctx, `UPDATE simkl_accounts SET scrobble=? WHERE user_id=?`, on, userID)
+func (d *DB) SetTrackerScrobble(ctx context.Context, tracker, userID string, on bool) error {
+	_, err := d.ExecContext(ctx, `UPDATE `+trackerTable(tracker)+` SET scrobble=? WHERE user_id=?`, on, userID)
 	return err
 }
 
-func (d *DB) SetSimklImport(ctx context.Context, userID, status string, movies, episodes int) error {
-	_, err := d.ExecContext(ctx, `UPDATE simkl_accounts SET import_status=?, import_at=?, import_movies=?, import_episodes=? WHERE user_id=?`,
+func (d *DB) SetTrackerImport(ctx context.Context, tracker, userID, status string, movies, episodes int) error {
+	_, err := d.ExecContext(ctx, `UPDATE `+trackerTable(tracker)+` SET import_status=?, import_at=?, import_movies=?, import_episodes=? WHERE user_id=?`,
 		status, Now(), movies, episodes, userID)
 	return err
 }
 
-func (d *DB) UnlinkSimkl(ctx context.Context, userID string) error {
-	_, err := d.ExecContext(ctx, `DELETE FROM simkl_accounts WHERE user_id=?`, userID)
+func (d *DB) UnlinkTracker(ctx context.Context, tracker, userID string) error {
+	_, err := d.ExecContext(ctx, `DELETE FROM `+trackerTable(tracker)+` WHERE user_id=?`, userID)
 	return err
+}
+
+// GetSimkl returns the user's linked Simkl account, or nil.
+func (d *DB) GetSimkl(ctx context.Context, userID string) (*SimklAccount, error) {
+	return d.GetTracker(ctx, Simkl, userID)
+}
+
+func (d *DB) LinkSimkl(ctx context.Context, a *SimklAccount) error {
+	return d.LinkTracker(ctx, Simkl, a)
+}
+
+func (d *DB) SetSimklTokens(ctx context.Context, userID, access, refresh string, expires int64) error {
+	return d.SetTrackerTokens(ctx, Simkl, userID, access, refresh, expires)
+}
+
+func (d *DB) SetSimklScrobble(ctx context.Context, userID string, on bool) error {
+	return d.SetTrackerScrobble(ctx, Simkl, userID, on)
+}
+
+func (d *DB) SetSimklImport(ctx context.Context, userID, status string, movies, episodes int) error {
+	return d.SetTrackerImport(ctx, Simkl, userID, status, movies, episodes)
+}
+
+func (d *DB) UnlinkSimkl(ctx context.Context, userID string) error {
+	return d.UnlinkTracker(ctx, Simkl, userID)
 }
 
 // ExternalItem is a movie or show with the ids trackers know it by.

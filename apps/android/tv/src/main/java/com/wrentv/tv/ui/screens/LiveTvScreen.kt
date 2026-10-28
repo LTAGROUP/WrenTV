@@ -1,6 +1,9 @@
+@file:OptIn(UnstableApi::class)
+
 package com.wrentv.tv.ui.screens
 
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,7 +11,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,10 +27,13 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Star
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -37,6 +43,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -49,9 +56,14 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Icon
 import androidx.tv.material3.LocalContentColor
@@ -59,8 +71,10 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.wrentv.tv.data.LiveChannel
+import com.wrentv.tv.data.LiveGenres
 import com.wrentv.tv.data.LiveProgram
 import com.wrentv.tv.data.WrenTVApi
+import com.wrentv.tv.player.LivePreview
 import com.wrentv.tv.ui.Bar
 import com.wrentv.tv.ui.Chip
 import com.wrentv.tv.ui.EmptyState
@@ -89,6 +103,7 @@ private const val STEP = 1800L
 private const val GUIDE_HOURS = 6
 
 private val ChannelColumn = 260.dp
+private val StarGold = Color(0xFFF5C451)
 private val RowHeight = 66.dp
 
 /**
@@ -120,22 +135,48 @@ fun LiveTvScreen() {
     val lastStart = base + GUIDE_HOURS * 3600L - SPAN
 
     var query by rememberSaveable { mutableStateOf("") }
-    var group by rememberSaveable { mutableStateOf<String?>(null) }
+    // "all", "favorites", "recent", "genre:<kind>" or "group:<name>".
+    var filter by rememberSaveable { mutableStateOf(state.store.string("liveFilter", "all")) }
+    LaunchedEffect(filter) { state.store.setString("liveFilter", filter) }
     var focused by remember { mutableStateOf<Pair<LiveChannel, LiveProgram?>?>(null) }
     val last = state.lastChannel?.let { id -> channels?.firstOrNull { it.id == id } }
     val groups = remember(channels) { channels?.map { it.groupName }?.distinct().orEmpty() }
-    val programs = { ch: LiveChannel -> guide[ch.id]?.takeIf { it.isNotEmpty() } ?: listOfNotNull(ch.now, ch.next) }
-    val shown = remember(channels, guide, query, group, now) {
-        val q = query.trim().lowercase()
-        channels.orEmpty()
-            // A search looks across every channel, whatever group is picked.
-            .filter { q.isNotEmpty() || group == null || it.groupName == group }
-            .filter { ch ->
-                q.isEmpty() || ch.name.lowercase().contains(q) || ch.number == q || ch.groupName.lowercase().contains(q) ||
-                    programs(ch).any { it.title.lowercase().contains(q) }
-            }
-            .sortedBy { !it.onAir(now) }
+    val genres = remember(channels) { channels?.mapNotNull { it.genre }?.toSet().orEmpty().let { have -> LiveGenres.filter { it.first in have } } }
+    val chips = buildList {
+        add(Triple("all", "All", null))
+        add(Triple("favorites", "Favorites", Icons.Rounded.Star))
+        if (state.liveRecents.isNotEmpty()) add(Triple("recent", "Recent", Icons.Rounded.History))
+        genres.forEach { (k, name) -> add(Triple("genre:$k", name, null)) }
+        if (groups.size > 1) groups.forEach { add(Triple("group:$it", it, null)) }
     }
+    val programs = { ch: LiveChannel -> guide[ch.id]?.takeIf { it.isNotEmpty() } ?: listOfNotNull(ch.now, ch.next) }
+    val shown = remember(channels, guide, query, filter, now, state.liveFavorites, state.liveRecents) {
+        val q = query.trim().lowercase()
+        val all = channels.orEmpty()
+        when {
+            // A search looks across every channel, whatever filter is picked.
+            q.isNotEmpty() -> all.filter { ch ->
+                ch.name.lowercase().contains(q) || ch.number == q || ch.groupName.lowercase().contains(q) ||
+                    programs(ch).any { it.title.lowercase().contains(q) }
+            }.sortedBy { !it.onAir(now) }
+            filter == "favorites" -> all.filter { it.id in state.liveFavorites }
+            filter == "recent" -> state.liveRecents.mapNotNull { id -> all.firstOrNull { it.id == id } }
+            filter.startsWith("genre:") -> all.filter { it.genre == filter.removePrefix("genre:") }.sortedBy { !it.onAir(now) }
+            filter.startsWith("group:") -> all.filter { it.groupName == filter.removePrefix("group:") }.sortedBy { !it.onAir(now) }
+            else -> all.sortedBy { !it.onAir(now) }
+        }
+    }
+    val watch = { ch: LiveChannel ->
+        state.watchedChannel(ch.id)
+        nav.push(Route.LivePlayer(ch.id, ids = shown.map { it.id }.takeIf { ch in shown }))
+    }
+
+    // The focused channel plays muted up top once focus rests on it.
+    val context = LocalContext.current
+    val preview = remember { LivePreview(context, { state.api }, state.scope) }
+    DisposableEffect(preview) { onDispose { preview.release() } }
+    val previewing = (focused?.first ?: last ?: shown.firstOrNull())
+    LaunchedEffect(previewing?.id) { preview.show(previewing) }
 
     val top by animateDpAsState(if (bar.atTop || bar.focused) TopBarSpace else 28.dp, label = "guide-top")
     Column(Modifier.fillMaxSize().padding(top = top)) {
@@ -144,45 +185,50 @@ fun LiveTvScreen() {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // The tab above already says Live TV: the header is just search and resume.
+            // The tab above already says Live TV: the header is search, filters and resume.
             Icon(Icons.Rounded.Search, null, Modifier.size(26.dp), tint = Wren.secondary)
-            TvTextField(query, { query = it }, "", Modifier.rememberFocus("search"), placeholder = "Search all channels and shows", width = 460.dp)
-            Spacer(Modifier.weight(1f))
+            TvTextField(query, { query = it }, "", Modifier.rememberFocus("search"), placeholder = "Search channels and shows", width = 340.dp)
+            // Coming into the row lands on the chosen filter, kept in view, not whichever chip is nearest.
+            val chipList = rememberLazyListState()
+            val chosen = remember { FocusRequester() }
+            val chosenIndex = chips.indexOfFirst { it.first == filter }.coerceAtLeast(0)
+            LaunchedEffect(chips.size, chosenIndex) {
+                if (chipList.layoutInfo.visibleItemsInfo.none { it.index == chosenIndex }) chipList.scrollToItem(chosenIndex)
+            }
+            LazyRow(
+                state = chipList,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f).focusProperties { onEnter = { runCatching { chosen.requestFocus() } } },
+            ) {
+                items(chips, key = { "chip:${it.first}" }) { (key, label, icon) ->
+                    val selected = filter == key && query.isBlank()
+                    Chip(
+                        label, selected, { filter = key; query = "" },
+                        (if (key == chips[chosenIndex].first) Modifier.focusRequester(chosen) else Modifier).rememberFocus("chip:$key"),
+                        icon = icon,
+                    )
+                }
+            }
             if (last != null) {
                 PillButton(
-                    "Watch ${last.name}", { nav.push(Route.LivePlayer(last.id)) },
+                    "Watch ${last.name}", { watch(last) },
                     Modifier.rememberFocus("resume", default = true), icon = Icons.Rounded.PlayArrow, primary = true,
                 )
             }
         }
 
-        Details(focused ?: shown.firstOrNull()?.let { it to it.current(programs(it), now) }, state.api, now)
-
-        if (groups.size > 1) {
-            // Coming into the row lands on the chosen group, kept in view, not whichever chip is nearest.
-            val chips = rememberLazyListState()
-            val chosen = remember { FocusRequester() }
-            val chosenIndex = group?.let { groups.indexOf(it) + 1 } ?: 0
-            LaunchedEffect(groups.size, chosenIndex) {
-                if (chips.layoutInfo.visibleItemsInfo.none { it.index == chosenIndex }) chips.scrollToItem(chosenIndex)
-            }
-            LazyRow(
-                state = chips,
-                contentPadding = PaddingValues(horizontal = PageGutter),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.padding(bottom = 10.dp).focusProperties { onEnter = { runCatching { chosen.requestFocus() } } },
-            ) {
-                fun Modifier.mark(selected: Boolean) = if (selected) focusRequester(chosen) else this
-                item("all") { Chip("All", group == null, { group = null }, Modifier.mark(group == null).rememberFocus("chip:all")) }
-                items(groups, key = { "chip:$it" }) { g -> Chip(g, group == g, { group = g }, Modifier.mark(group == g).rememberFocus("chip:$g")) }
-            }
-        }
+        Details(
+            focused ?: previewing?.let { it to it.current(programs(it), now) }, state.api, now, preview,
+            state.liveFavorites,
+        )
 
         when {
             channels == null && loaded.error != null -> EmptyState("Couldn't load channels", loaded.error, icon = Icons.Rounded.LiveTv)
             channels == null -> Loading()
             channels.isEmpty() -> EmptyState("No channels yet", "Your server's admin can add an IPTV playlist in the web dashboard.", icon = Icons.Rounded.LiveTv)
-            shown.isEmpty() -> EmptyState("Nothing matches “${query.trim()}”", "Try a channel name, number or show.", icon = Icons.Rounded.Search)
+            shown.isEmpty() && query.isNotBlank() -> EmptyState("Nothing matches “${query.trim()}”", "Try a channel name, number or show.", icon = Icons.Rounded.Search)
+            shown.isEmpty() && filter == "favorites" -> EmptyState("No favorites yet", "Hold Select on a channel to add it.", icon = Icons.Rounded.Star)
+            shown.isEmpty() -> EmptyState("No channels here", null, icon = Icons.Rounded.LiveTv)
             else -> BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = PageGutter)) {
                 val timeline = maxWidth - ChannelColumn - 8.dp
                 Column {
@@ -196,12 +242,14 @@ fun LiveTvScreen() {
                             GuideRow(
                                 ch, programs(ch), state.api, now, windowStart, timeline,
                                 first = ch === shown.first() && last == null,
+                                favorite = ch.id in state.liveFavorites,
                                 onFocus = { p -> focused = ch to p },
                                 onPage = { delta ->
                                     val next = (windowStart + delta).coerceIn(base, maxOf(base, lastStart))
                                     if (next != windowStart) { paged = next; true } else false
                                 },
-                                onClick = { nav.push(Route.LivePlayer(ch.id, group.takeIf { query.isBlank() })) },
+                                onClick = { watch(ch) },
+                                onLongClick = { state.toggleLiveFavorite(ch.id) },
                             )
                         }
                     }
@@ -211,19 +259,47 @@ fun LiveTvScreen() {
     }
 }
 
-/** The focused programme: the guide's preview, like YouTube TV's top panel. */
+/** The focused programme and its channel's muted live picture, like YouTube TV's top panel. */
 @Composable
-private fun Details(sel: Pair<LiveChannel, LiveProgram?>?, api: WrenTVApi?, now: Long) {
+private fun Details(
+    sel: Pair<LiveChannel, LiveProgram?>?,
+    api: WrenTVApi?,
+    now: Long,
+    preview: LivePreview,
+    favorites: Set<String>,
+) {
     Row(
-        Modifier.fillMaxWidth().height(124.dp).padding(horizontal = PageGutter, vertical = 12.dp),
+        Modifier.fillMaxWidth().height(164.dp).padding(horizontal = PageGutter, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         if (sel == null) return@Row
         val (ch, p) = sel
-        ChannelLogo(ch, api, Modifier.width(150.dp).fillMaxHeight().background(Wren.surface, RoundedCornerShape(12.dp)))
+        Box(Modifier.fillMaxHeight().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)).background(Wren.surface)) {
+            val art = p?.icon?.takeIf { it.isNotEmpty() }
+            if (art != null) RemoteImage(art, Modifier.fillMaxSize())
+            else ChannelLogo(ch, api, Modifier.fillMaxSize().padding(horizontal = 50.dp, vertical = 30.dp))
+            if (preview.channelId == ch.id) {
+                val alpha by animateFloatAsState(if (preview.showing) 1f else 0f, label = "preview")
+                AndroidView(
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            useController = false
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                            setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                            isFocusable = false
+                            player = preview.player
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize().alpha(alpha),
+                )
+            }
+            LiveBadge(Modifier.align(Alignment.TopStart).padding(8.dp))
+        }
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (p != null && p.airing(now)) LiveBadge()
+                if (p != null && p.isLive) LiveBadge()
+                if (p != null && p.isNew) LiveBadge("NEW", Color.White.copy(alpha = 0.22f))
+                if (ch.id in favorites) Icon(Icons.Rounded.Star, null, Modifier.size(16.dp), tint = StarGold)
                 Text(
                     // With no programme the channel's name is the title below: say where it lives instead.
                     listOfNotNull(ch.number?.takeIf { it.isNotEmpty() }, if (p == null) ch.groupName else ch.name).joinToString("  "),
@@ -245,8 +321,9 @@ private fun Details(sel: Pair<LiveChannel, LiveProgram?>?, api: WrenTVApi?, now:
                     listOfNotNull(timing, p.episode?.takeIf { it.isNotEmpty() }).joinToString(" · "),
                     style = MaterialTheme.typography.bodyMedium, color = Wren.secondary, maxLines = 1, modifier = Modifier.padding(top = 2.dp),
                 )
+                if (p.airing(now)) Bar(p.progress(now), Modifier.padding(top = 6.dp).width(320.dp).height(3.dp))
                 p.description?.takeIf { it.isNotEmpty() }?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, color = Wren.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                    Text(it, style = MaterialTheme.typography.bodyMedium, color = Wren.tertiary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
                 }
             } else {
                 Text("No guide information", style = MaterialTheme.typography.bodyMedium, color = Wren.secondary, modifier = Modifier.padding(top = 2.dp))
@@ -256,10 +333,13 @@ private fun Details(sel: Pair<LiveChannel, LiveProgram?>?, api: WrenTVApi?, now:
 }
 
 @Composable
-private fun LiveBadge() {
+private fun LiveBadge(modifier: Modifier = Modifier) = LiveBadge("LIVE", Color(0xFFD7263D), modifier)
+
+@Composable
+private fun LiveBadge(text: String, color: Color, modifier: Modifier = Modifier) {
     Text(
-        "LIVE", style = MaterialTheme.typography.labelSmall, color = Color.White,
-        modifier = Modifier.background(Wren.ember, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
+        text, style = MaterialTheme.typography.labelSmall, color = Color.White, maxLines = 1,
+        modifier = modifier.background(color, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }
 
@@ -303,10 +383,13 @@ private fun GuideRow(
     start: Long,
     width: Dp,
     first: Boolean,
+    favorite: Boolean,
     onFocus: (LiveProgram?) -> Unit,
     /** Moves the window by the given seconds; false when it can't go further. */
     onPage: (Long) -> Boolean,
     onClick: () -> Unit,
+    /** Holding Select on a channel stars it. */
+    onLongClick: () -> Unit,
 ) {
     val end = start + SPAN
     val visible = programs.filter { it.end > start && it.start < end }
@@ -314,12 +397,16 @@ private fun GuideRow(
         GuideCell(
             onClick, Modifier.width(ChannelColumn).onFocusChanged { if (it.isFocused) onFocus(ch.current(programs, now)) }
                 .rememberFocus("ch:${ch.id}"),
+            onLongClick = onLongClick,
         ) {
             Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     ChannelLogo(ch, api, Modifier.width(60.dp).height(34.dp))
-                    ch.number?.takeIf { it.isNotEmpty() }?.let {
-                        Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 1, color = LocalContentColor.current.copy(alpha = 0.6f))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (favorite) Icon(Icons.Rounded.Star, null, Modifier.size(11.dp), tint = StarGold)
+                        ch.number?.takeIf { it.isNotEmpty() }?.let {
+                            Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 1, color = LocalContentColor.current.copy(alpha = 0.6f))
+                        }
                     }
                 }
                 // Two lines: provider names are long ("F1 TV 01: Racing …") and the end is what tells them apart.
@@ -331,6 +418,7 @@ private fun GuideRow(
                 GuideCell(
                     onClick, Modifier.fillMaxSize().onFocusChanged { if (it.isFocused) onFocus(null) }
                         .rememberFocus("p:${ch.id}:none", default = first),
+                    onLongClick = onLongClick,
                 ) {
                     Text(
                         "No guide information", style = MaterialTheme.typography.bodyMedium, maxLines = 1,
@@ -358,9 +446,14 @@ private fun GuideRow(
                         }
                         .rememberFocus("p:${ch.id}:${p.start}", default = first && i == 0),
                     airing = airing,
+                    onLongClick = onLongClick,
                 ) {
                     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalArrangement = Arrangement.Center) {
-                        Text(p.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (p.isLive) LiveBadge()
+                            if (p.isNew) LiveBadge("NEW", Wren.ember)
+                            Text(p.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                         Text(
                             if (airing) "${timeOf(p.start)} – ${timeOf(p.end)}" else timeOf(p.start),
                             style = MaterialTheme.typography.bodySmall, maxLines = 1, color = LocalContentColor.current.copy(alpha = 0.6f),
@@ -378,10 +471,12 @@ private fun GuideCell(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     airing: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit,
 ) {
     Surface(
         onClick = onClick,
+        onLongClick = onLongClick,
         modifier = modifier,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
         colors = ClickableSurfaceDefaults.colors(

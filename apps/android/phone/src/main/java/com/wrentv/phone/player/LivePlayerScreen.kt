@@ -65,7 +65,13 @@ import kotlinx.coroutines.delay
 fun LivePlayerScreen(target: LiveTarget) {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
-    val pick = { all: List<LiveChannel> -> if (target.group == null) all else all.filter { it.group == target.group } }
+    val pick = { all: List<LiveChannel> ->
+        when {
+            target.ids != null -> target.ids.mapNotNull { id -> all.firstOrNull { it.id == id } }
+            target.group != null -> all.filter { it.group == target.group }
+            else -> all
+        }
+    }
     var channels by remember(target) { mutableStateOf(pick(state.liveChannels)) }
     var error by remember(target) { mutableStateOf<String?>(null) }
     LaunchedEffect(target) {

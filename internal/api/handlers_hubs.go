@@ -412,7 +412,7 @@ func (s *Server) handleWatchProviders(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, []any{})
 		return
 	}
-	ps, err := s.TMDB.WatchProviders(r.Context())
+	ps, err := s.TMDB.RegionProviders(r.Context())
 	if err != nil {
 		writeErr(w, 502, err.Error())
 		return

@@ -13,9 +13,10 @@ import (
 
 	"github.com/LTAGROUP/wrentv/internal/db"
 	"github.com/LTAGROUP/wrentv/internal/simkl"
+	"github.com/LTAGROUP/wrentv/internal/trakt"
 )
 
-// Lists from outside TMDB (MDBList, Simkl) name their titles by TMDB ID;
+// Lists from outside TMDB (MDBList, Simkl, Trakt) name their titles by TMDB ID;
 // posters come from TMDB. A list keeps up to the collection's "show at most"
 // count of titles, or all of them when that's unset.
 
@@ -149,6 +150,51 @@ func (s *Server) simklTitles(ctx context.Context, ref, userID string) (name stri
 	return "", nil, errors.New(`a Simkl source is "trending/<movies|tv|anime>/<today|week|month>" or "watchlist/<status>"`)
 }
 
+// traktTitles reads a Trakt chart ("trending/movies", "popular/shows",
+// "anticipated/movies") or the linked account's watchlist ("watchlist").
+func (s *Server) traktTitles(ctx context.Context, ref, userID string) (name string, out []db.CollectionTitle, err error) {
+	if s.Tracking == nil || !s.Tracking.Trakt.Public() {
+		return "", nil, errors.New("Trakt needs a client ID (Settings)")
+	}
+	add := func(li trakt.ListItem) {
+		switch {
+		case li.Movie != nil && li.Movie.IDs.TMDB > 0:
+			out = append(out, db.CollectionTitle{TMDBID: li.Movie.IDs.TMDB, MediaType: "movie", Title: li.Movie.Title, Year: li.Movie.Year})
+		case li.Show != nil && li.Show.IDs.TMDB > 0:
+			out = append(out, db.CollectionTitle{TMDBID: li.Show.IDs.TMDB, MediaType: "show", Title: li.Show.Title, Year: li.Show.Year})
+		}
+	}
+	parts := strings.Split(strings.Trim(ref, "/"), "/")
+	switch {
+	case len(parts) == 2 && (parts[0] == "trending" || parts[0] == "popular" || parts[0] == "anticipated"):
+		if parts[1] != "movies" && parts[1] != "shows" {
+			return "", nil, errors.New("unknown Trakt chart")
+		}
+		ls, err := s.Tracking.Trakt.Chart(ctx, parts[1], parts[0], chartDefault)
+		if err != nil {
+			return "", nil, err
+		}
+		for _, li := range ls {
+			add(li)
+		}
+		chart := map[string]string{"trending": "Trending", "popular": "Popular", "anticipated": "Most Anticipated"}[parts[0]]
+		return chart + " " + map[string]string{"movies": "Movies", "shows": "Shows"}[parts[1]] + " on Trakt", out, nil
+	case len(parts) == 1 && parts[0] == "watchlist":
+		if userID == "" {
+			return "", nil, errors.New("link a Trakt account first (Account settings)")
+		}
+		ls, err := s.Tracking.TraktWatchlist(ctx, userID)
+		if err != nil {
+			return "", nil, err
+		}
+		for _, li := range ls {
+			add(li)
+		}
+		return "Trakt Watchlist", out, nil
+	}
+	return "", nil, errors.New(`a Trakt source is "<trending|popular|anticipated>/<movies|shows>" or "watchlist"`)
+}
+
 func (s *Server) simkl() *simkl.Client {
 	if s.Tracking != nil && s.Tracking.Simkl != nil {
 		return s.Tracking.Simkl
@@ -190,6 +236,10 @@ func externalRef(ru db.CollectionRules) error {
 	case "simkl":
 		if ru.SourceRef == "" {
 			return errors.New("pick a Simkl chart or watchlist")
+		}
+	case "trakt":
+		if ru.SourceRef == "" {
+			return errors.New("pick a Trakt chart or the watchlist")
 		}
 	}
 	return nil

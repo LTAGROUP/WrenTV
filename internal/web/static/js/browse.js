@@ -63,7 +63,7 @@ const kindLabel = (c) => c.kind === 'manual' ? 'Hand-picked' : c.kind === 'smart
 function sourceLabel(r) {
   const mt = r.mediaType === 'show' ? 'shows' : 'movies';
   return { collection: 'TMDB franchise', list: 'TMDB list', trending: `Trending ${mt}`, popular: `Popular ${mt}`, top_rated: `Top rated ${mt}`,
-    now_playing: 'In theaters', upcoming: 'Coming soon', airing: 'On the air', mdblist: 'MDBList', simkl: 'Simkl' }[r.source] || 'TMDB';
+    now_playing: 'In theaters', upcoming: 'Coming soon', airing: 'On the air', mdblist: 'MDBList', simkl: 'Simkl', trakt: 'Trakt' }[r.source] || 'TMDB';
 }
 
 // Simkl charts and watchlists a collection can follow.
@@ -71,6 +71,11 @@ const simklRefs = [['trending/movies/today', 'Trending movies today'], ['trendin
   ['trending/movies/month', 'Trending movies this month'], ['trending/tv/today', 'Trending shows today'], ['trending/tv/week', 'Trending shows this week'],
   ['trending/tv/month', 'Trending shows this month'], ['trending/anime/week', 'Trending anime this week'], ['trending/anime/month', 'Trending anime this month'],
   ['watchlist/plantowatch', 'My Simkl: Plan to watch'], ['watchlist/watching', 'My Simkl: Watching'], ['watchlist/completed', 'My Simkl: Completed']];
+
+// Trakt charts and the watchlist a collection can follow.
+const traktRefs = [['trending/movies', 'Trending movies'], ['trending/shows', 'Trending shows'], ['popular/movies', 'Popular movies'],
+  ['popular/shows', 'Popular shows'], ['anticipated/movies', 'Most anticipated movies'], ['anticipated/shows', 'Most anticipated shows'],
+  ['watchlist', 'My Trakt watchlist']];
 
 const fmtMD = (md) => {
   if (!md) return '';
@@ -510,7 +515,7 @@ export async function editCollection(c, defaults = {}) {
     <div class="field"><label>Name</label><input type="text" name="name" value="${esc(c.name || '')}" placeholder="${c.kind === 'tmdb' ? 'Leave empty to use the source\'s name' : 'e.g. Date Night'}"></div>
     <div class="field"><label>Description</label><input type="text" name="description" value="${esc(c.description || '')}"></div>
     <div class="rules">
-      <div class="field"><label>Type</label><select name="kind" ${isNew ? '' : 'disabled'}>${opt('manual', 'Hand-picked', c.kind)}${opt('smart', 'Smart (rules)', c.kind)}${opt('tmdb', 'From TMDB, MDBList or Simkl', c.kind)}</select></div>
+      <div class="field"><label>Type</label><select name="kind" ${isNew ? '' : 'disabled'}>${opt('manual', 'Hand-picked', c.kind)}${opt('smart', 'Smart (rules)', c.kind)}${opt('tmdb', 'From TMDB, MDBList, Simkl or Trakt', c.kind)}</select></div>
       <div class="field"><label>Library</label><select name="libraryId">${opt('', 'All libraries', c.libraryId)}${libs.map((l) => opt(l.id, esc(l.name), c.libraryId)).join('')}</select></div>
     </div>
     <fieldset data-for="smart"><legend>Rules</legend>
@@ -533,10 +538,11 @@ export async function editCollection(c, defaults = {}) {
       <div class="rules">
         <div class="field"><label>From</label><select name="r.source">${[['collection', 'Franchise (movie series)'], ['list', 'TMDB list'], ['trending', 'Trending this week'], ['popular', 'Popular'],
           ['top_rated', 'Top rated'], ['now_playing', 'In theaters (movies)'], ['upcoming', 'Coming soon (movies)'], ['airing', 'On the air (shows)'],
-          ['mdblist', 'MDBList list'], ['simkl', 'Simkl chart or watchlist']].map(([k, v]) => opt(k, v, r.source || 'collection')).join('')}</select></div>
+          ['mdblist', 'MDBList list'], ['simkl', 'Simkl chart or watchlist'], ['trakt', 'Trakt chart or watchlist']].map(([k, v]) => opt(k, v, r.source || 'collection')).join('')}</select></div>
         <div class="field" data-src="chart"><label>Of</label><select name="r.mediaType">${opt('movie', 'Movies', r.mediaType || 'movie')}${opt('show', 'Shows', r.mediaType)}</select></div>
         <div class="field" data-src="mdblist"><label>MDBList link or user/list</label><input type="text" name="mdblist" value="${r.source === 'mdblist' ? esc(r.sourceRef || '') : ''}" placeholder="mdblist.com/lists/…"></div>
         <div class="field" data-src="simkl"><label>Simkl</label><select name="simkl">${simklRefs.map(([k, v]) => opt(k, v, r.source === 'simkl' ? r.sourceRef : 'trending/movies/week')).join('')}</select></div>
+        <div class="field" data-src="trakt"><label>Trakt</label><select name="trakt">${traktRefs.map(([k, v]) => opt(k, v, r.source === 'trakt' ? r.sourceRef : 'trending/movies')).join('')}</select></div>
         <div class="field" data-src="list"><label>List ID or link</label><input type="text" name="listId" value="${r.source === 'list' ? r.sourceId : ''}" placeholder="themoviedb.org/list/…"></div>
       </div>
       <div data-src="collection"><div class="field"><label>Franchise</label><input type="search" id="fq" placeholder="Search, e.g. Harry Potter" autocomplete="off"></div>
@@ -584,6 +590,8 @@ export async function editCollection(c, defaults = {}) {
           if (!rules.sourceRef) throw new Error('Enter an MDBList list link.');
         } else if (rules.source === 'simkl') {
           rules.sourceRef = v('simkl');
+        } else if (rules.source === 'trakt') {
+          rules.sourceRef = v('trakt');
         }
       }
       let [from, until] = [v('visibleFrom'), v('visibleUntil')];
@@ -715,6 +723,7 @@ export async function viewAccount() {
       <p class="small muted" style="margin:0">How big posters and tiles are in rows and grids. It's saved to your account, so every app you sign in to uses it.</p>
     </div>
     <div class="panel" style="max-width:640px;margin-top:18px" id="simkl"></div>
+    <div class="panel" style="max-width:640px;margin-top:18px" id="trakt"></div>
     <div class="panel" style="max-width:640px;margin-top:18px"><h2>Sign in a TV</h2>
       <p class="small muted">On the TV, choose “Sign in with your phone”. Scan its QR code, or enter the code it shows here.</p>
       <a class="btn" href="/link">Enter a TV code</a>
@@ -754,15 +763,18 @@ export async function viewAccount() {
       toast('Saved.');
     } catch (err) { toast(err.message); }
   };
-  simklPanel($('#simkl', node));
+  trackerPanel($('#simkl', node), 'simkl');
+  trackerPanel($('#trakt', node), 'trakt');
   return node;
 }
 
-// simklPanel links a Simkl account: scrobbling while you watch, and an
-// import of the history you already have there.
-async function simklPanel(box) {
+// trackerPanel links a Simkl or Trakt account: scrobbling while you watch,
+// and an import of the history you already have there.
+async function trackerPanel(box, tracker) {
+  const name = tracker === 'trakt' ? 'Trakt' : 'Simkl';
+  const base = `/api/me/${tracker}`;
   let st;
-  try { st = await api('/api/me/simkl'); } catch { box.remove(); return; }
+  try { st = await api(base); } catch { box.remove(); return; }
   if (!st.available && !st.linked) { box.remove(); return; }
   const a = st.account;
   const ago = (t) => t ? new Date(t * 1000).toLocaleString() : '';
@@ -771,35 +783,35 @@ async function simklPanel(box) {
     const imp = st.importing || a.importStatus === 'running' ? 'Importing your history…'
       : a.importStatus === 'done' ? `Last import ${ago(a.importAt)}: ${a.importMovies} movies and ${a.importEpisodes} episodes marked watched.`
       : a.importStatus ? `Import failed: ${esc(a.importStatus)}` : '';
-    body = `<p>Linked to <b>${esc(a.username || 'your Simkl account')}</b>.</p>
-      <label class="check"><input type="checkbox" id="sk-scrobble" ${a.scrobble ? 'checked' : ''}> Send what I watch to Simkl</label>
-      <p class="small muted">Simkl shows what you're watching while you play, and marks it watched when you pass your “counts as watched” point. Marking something watched by hand updates Simkl too.</p>
+    body = `<p>Linked to <b>${esc(a.username || `your ${name} account`)}</b>.</p>
+      <label class="check"><input type="checkbox" data-a="scrobble" ${a.scrobble ? 'checked' : ''}> Send what I watch to ${name}</label>
+      <p class="small muted">${name} shows what you're watching while you play, and marks it watched when you pass your “counts as watched” point. Marking something watched by hand updates ${name} too.</p>
       ${imp ? `<p class="small muted">${imp}</p>` : ''}
-      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="sk-import" ${st.importing ? 'disabled' : ''}>Import history again</button>
-      <button class="btn danger" id="sk-unlink">Disconnect</button></div>`;
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-a="import" ${st.importing ? 'disabled' : ''}>Import history again</button>
+      <button class="btn danger" data-a="unlink">Disconnect</button></div>`;
   } else if (st.pending && !st.pending.error) {
     const url = st.pending.urlComplete || st.pending.url;
     body = `<p>Open <a href="${esc(url)}" target="_blank" rel="noopener">${esc(st.pending.url.replace(/^https?:\/\//, ''))}</a> and enter</p>
       <p style="font-size:28px;font-weight:700;letter-spacing:2px;margin:6px 0 12px">${esc(st.pending.userCode)}</p>
-      <p class="small muted">Waiting for you to approve it on Simkl…</p>
-      <button class="btn" id="sk-cancel">Cancel</button>`;
+      <p class="small muted">Waiting for you to approve it on ${name}…</p>
+      <button class="btn" data-a="cancel">Cancel</button>`;
   } else {
-    body = `<p class="small muted">Link your Simkl account to import what you've already watched and keep Simkl up to date as you watch here.</p>
+    body = `<p class="small muted">Link your ${name} account to import what you've already watched and keep ${name} up to date as you watch here.</p>
       ${st.pending?.error ? `<p class="small" style="color:var(--danger,#e66)">${esc(st.pending.error)}</p>` : ''}
-      <button class="btn primary" id="sk-link">Connect Simkl</button>`;
+      <button class="btn primary" data-a="link">Connect ${name}</button>`;
   }
-  box.innerHTML = `<h2>Simkl</h2>${body}`;
-  const again = () => simklPanel(box);
-  const act = (sel, fn) => { const b = $(sel, box); if (b) b.onclick = async () => { try { await fn(); } catch (err) { toast(err.message); } again(); }; };
-  act('#sk-link', async () => {
-    const p = await api('/api/me/simkl/link', { method: 'POST' });
+  box.innerHTML = `<h2>${name}</h2>${body}`;
+  const again = () => trackerPanel(box, tracker);
+  const act = (key, fn) => { const b = $(`[data-a=${key}]`, box); if (b) b.onclick = async () => { try { await fn(); } catch (err) { toast(err.message); } again(); }; };
+  act('link', async () => {
+    const p = await api(`${base}/link`, { method: 'POST' });
     if (p.urlComplete) window.open(p.urlComplete, '_blank', 'noopener');
   });
-  act('#sk-cancel', () => api('/api/me/simkl/link', { method: 'DELETE' }));
-  act('#sk-unlink', () => api('/api/me/simkl', { method: 'DELETE' }));
-  act('#sk-import', () => api('/api/me/simkl/import', { method: 'POST' }));
-  const cb = $('#sk-scrobble', box);
-  if (cb) cb.onchange = async () => { try { await api('/api/me/simkl', { method: 'PATCH', body: { scrobble: cb.checked } }); toast('Saved.'); } catch (err) { toast(err.message); } };
+  act('cancel', () => api(`${base}/link`, { method: 'DELETE' }));
+  act('unlink', () => api(base, { method: 'DELETE' }));
+  act('import', () => api(`${base}/import`, { method: 'POST' }));
+  const cb = $('[data-a=scrobble]', box);
+  if (cb) cb.onchange = async () => { try { await api(base, { method: 'PATCH', body: { scrobble: cb.checked } }); toast('Saved.'); } catch (err) { toast(err.message); } };
   if ((st.pending && !st.pending.error) || st.importing || a?.importStatus === 'running') {
     setTimeout(() => { if (box.isConnected) again(); }, 3000);
   }
@@ -817,9 +829,9 @@ export async function editLibraryRows(libId) {
   const row = (c, checked) => `<li class="row-pick" data-id="${c.id}"><label class="check" style="flex:1"><input type="checkbox" ${checked ? 'checked' : ''}>
     <span>${esc(c.name)} <span class="small muted">${esc(kindLabel(c))}${c.libraryId ? '' : ' · all libraries, moves here'}</span></span></label>
     <button type="button" class="btn ghost small" data-up title="Move up">↑</button><button type="button" class="btn ghost small" data-down title="Move down">↓</button></li>`;
-  const body = all.length ? `<p class="muted small">Ticked collections show as rows on this library's page, in this order. Add MDBList and Simkl lists with New collection.</p>
+  const body = all.length ? `<p class="muted small">Ticked collections show as rows on this library's page, in this order. Add MDBList, Simkl and Trakt lists with New collection.</p>
     <ul class="row-picks" style="list-style:none;padding:0;margin:0">${on.map((c) => row(c, true)).join('')}${off.map((c) => row(c, false)).join('')}</ul>`
-    : '<p class="muted">No collections yet. Make one under Collections (hand-picked, smart, TMDB, MDBList or Simkl), then pick it here.</p>';
+    : '<p class="muted">No collections yet. Make one under Collections (hand-picked, smart, TMDB, MDBList, Simkl or Trakt), then pick it here.</p>';
   const p = modal('Library rows', body, {
     ok: 'Save',
     onOk: async (f) => {

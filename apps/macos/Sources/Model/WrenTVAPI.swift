@@ -175,13 +175,13 @@ struct WrenTVAPI: Sendable {
     func pairInfo(_ code: String) async throws -> PairInfo { try await get("/api/pair/\(code)") }
     func approvePair(_ code: String) async throws { try await send("POST", "/api/pair/\(code)/approve") }
 
-    // Simkl: what's watched here is sent there, and its history imported.
-    func simkl() async throws -> SimklStatus { try await get("/api/me/simkl") }
-    func simklLink() async throws { try await send("POST", "/api/me/simkl/link") }
-    func simklCancelLink() async throws { try await send("DELETE", "/api/me/simkl/link") }
-    func simklUnlink() async throws { try await send("DELETE", "/api/me/simkl") }
-    func simklImport() async throws { try await send("POST", "/api/me/simkl/import") }
-    func simklScrobble(_ on: Bool) async throws { try await send("PATCH", "/api/me/simkl", body: ["scrobble": on]) }
+    // Simkl and Trakt: what's watched here is sent there, and its history imported.
+    func tracker(_ t: Tracker) async throws -> TrackerStatus { try await get("/api/me/\(t.rawValue)") }
+    func trackerLink(_ t: Tracker) async throws { try await send("POST", "/api/me/\(t.rawValue)/link") }
+    func trackerCancelLink(_ t: Tracker) async throws { try await send("DELETE", "/api/me/\(t.rawValue)/link") }
+    func trackerUnlink(_ t: Tracker) async throws { try await send("DELETE", "/api/me/\(t.rawValue)") }
+    func trackerImport(_ t: Tracker) async throws { try await send("POST", "/api/me/\(t.rawValue)/import") }
+    func trackerScrobble(_ t: Tracker, _ on: Bool) async throws { try await send("PATCH", "/api/me/\(t.rawValue)", body: ["scrobble": on]) }
 
     func stats(days: Int) async throws -> StatsResponse {
         let tz = TimeZone.current.secondsFromGMT()
@@ -276,8 +276,27 @@ struct WrenTVAPI: Sendable {
         return r.channels
     }
     /// hls asks the server to repackage plain TS channels as HLS, for AVPlayer.
-    func playChannel(_ id: String, hls: Bool) async throws -> LivePlayResponse {
-        try await post("/api/livetv/channels/\(id)/play", ["hls": hls])
+    /// Plays a channel. A preview is the guide's muted picture: it doesn't
+    /// count as watching the channel.
+    func playChannel(_ id: String, hls: Bool, preview: Bool = false) async throws -> LivePlayResponse {
+        try await post("/api/livetv/channels/\(id)/play", ["hls": hls, "preview": preview])
+    }
+    /// The channels with the viewer's favorites and recently watched.
+    func liveLineup() async throws -> LiveChannelsResponse {
+        try await get("/api/livetv/channels")
+    }
+    /// The guide from a time (now when nil) for some hours.
+    func liveGuide(from: Date?, hours: Int) async throws -> [LiveGuideChannel] {
+        var q = [URLQueryItem(name: "hours", value: String(hours))]
+        if let from { q.append(.init(name: "from", value: String(Int(from.timeIntervalSince1970)))) }
+        let r: LiveGuideResponse = try await get("/api/livetv/guide", query: q)
+        return r.channels
+    }
+    func liveSearch(_ q: String) async throws -> LiveSearchResult {
+        try await get("/api/livetv/search", query: [.init(name: "q", value: q), .init(name: "limit", value: "40")])
+    }
+    func setLiveFavorite(_ id: String, _ on: Bool) async throws {
+        _ = try await send(on ? "PUT" : "DELETE", "/api/livetv/favorites/\(id)")
     }
     func liveLogoURL(_ logo: String?) -> URL? {
         guard let logo, !logo.isEmpty else { return nil }

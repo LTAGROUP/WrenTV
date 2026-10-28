@@ -1,9 +1,7 @@
 package com.wrentv.phone.ui
 
-import androidx.compose.foundation.lazy.rememberLazyListState
-import kotlinx.coroutines.flow.first
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,12 +14,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -30,10 +30,10 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Movie
-import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Visibility
@@ -53,14 +53,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wrentv.tv.data.HubCard
@@ -73,6 +76,7 @@ import com.wrentv.tv.data.LayoutRow
 import com.wrentv.tv.data.WrenTVException
 import com.wrentv.tv.ui.playTarget
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /*
@@ -236,7 +240,7 @@ private fun MoreCard(label: String, route: Route) {
     }
 }
 
-/** A hub's tile: its artwork with the name over it, or a service's logo on its colour. */
+/** A hub's tile: its artwork with the name over it, or a service's icon and name. */
 @Composable
 fun HubTile(hub: HubCard, logos: Boolean) {
     val state = LocalAppState.current
@@ -245,8 +249,7 @@ fun HubTile(hub: HubCard, logos: Boolean) {
     val tint = hubColor(hub.color)
     Box(Modifier.width(m.landscape).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).clickable { nav.push(Route.Hub(hub.id, hub.name)) }) {
         if (logos && hub.logoPath != null) {
-            Box(Modifier.fillMaxSize().background(tint ?: Color.White.copy(alpha = 0.08f)))
-            RemoteImage(state.api?.imageUrl(hub.logoPath, "w300"), Modifier.fillMaxSize().padding(26.dp), ContentScale.Fit)
+            ServiceFace(hub.name, tint, state.api?.imageUrl(hub.logoPath, "w300"), 13.sp)
         } else {
             RemoteImage(state.api?.imageUrl(hub.backdropPath, "w780"), Modifier.fillMaxSize())
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.4f to Color.Transparent, 1f to (tint ?: Color.Black).copy(alpha = 0.85f))))
@@ -409,6 +412,36 @@ fun LayoutEditorScreen(scope: String, title: String) {
                 }
                 error == null -> item { Loading(Modifier.fillMaxWidth().padding(top = 120.dp)) }
             }
+        }
+    }
+}
+
+/**
+ * A streaming service's tile face: its icon, ringed so it stands off any
+ * colour, over its name on a dark wash of its colour. The same for every
+ * service, on every app.
+ */
+@Composable
+private fun ServiceFace(name: String, tint: Color?, logo: String?, fontSize: TextUnit) {
+    val ink = Color(0xFF0C0B10)
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        Modifier.fillMaxSize()
+            .background(tint ?: Color(0xFF3A3640))
+            .background(Brush.linearGradient(listOf(ink.copy(alpha = 0.45f), ink.copy(alpha = 0.84f))))
+            .background(Brush.verticalGradient(0f to Color.White.copy(alpha = 0.08f), 0.6f to Color.Transparent)),
+        contentAlignment = Alignment.Center,
+    ) {
+        val side = maxHeight * 0.46f
+        val gap = maxHeight * 0.07f
+        val shape = RoundedCornerShape(side * 0.22f)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            RemoteImage(
+                logo,
+                Modifier.size(side).shadow(side * 0.12f, shape).clip(shape).border(1.dp, Color.White.copy(alpha = 0.22f), shape),
+                ContentScale.Crop,
+            )
+            Spacer(Modifier.height(gap))
+            Text(name, Modifier.padding(horizontal = 10.dp), color = Color.White.copy(alpha = 0.94f), fontSize = fontSize, fontWeight = FontWeight.SemiBold, maxLines = 1)
         }
     }
 }

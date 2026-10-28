@@ -100,12 +100,13 @@ function layoutRows(rows) {
 
 const moreCard = (label, href) => `<a class="card more-card" href="${href}"><div class="poster"><span>${icons.stack}<b>${esc(label)}</b></span></div></a>`;
 
-// A hub's tile: its artwork with the name over it, or a service's logo on its colour.
+// A hub's tile: its artwork with the name over it, or a service's icon and
+// name on a dark wash of its colour, the same for every service.
 function hubTile(h, logos) {
   const href = `/hub/${encodeURIComponent(h.id)}`;
   if (logos && h.logoPath) {
-    return `<a class="card wide hub logo" href="${href}" title="${esc(h.name)}"${bd(h.backdropPath)}><div class="thumb" style="background:${esc(h.color || 'var(--bg-3)')}">
-      <img loading="lazy" src="${img(h.logoPath, 'w300')}" alt="${esc(h.name)}"></div></a>`;
+    return `<a class="card wide hub logo" href="${href}" title="${esc(h.name)}"${bd(h.backdropPath)}><div class="thumb" style="--tint:${esc(h.color || '#3a3640')}">
+      <img loading="lazy" src="${img(h.logoPath, 'w300')}" alt=""><span>${esc(h.name)}</span></div></a>`;
   }
   return `<a class="card wide hub" href="${href}" title="${esc(h.name)}"${bd(h.backdropPath)}><div class="thumb">${h.backdropPath ? lazyImg(img(h.backdropPath, 'w780')) : ''}
     <div class="shade" style="--tint:${esc(h.color || '#000000')}"></div><b>${esc(h.name)}</b></div></a>`;

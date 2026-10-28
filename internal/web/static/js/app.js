@@ -6,6 +6,7 @@ import * as browse from './browse.js';
 import * as ambient from './ambient.js';
 import * as layouts from './layouts.js';
 import { viewStats } from './stats.js';
+import { viewLive } from './live.js';
 
 const app = $('#app');
 let libraries = [];
@@ -28,6 +29,7 @@ document.addEventListener('click', (e) => {
 const routes = [
   [/^\/$/, () => layouts.viewLayoutPage('home', 'Home', viewHome)],
   [/^\/watchlist$/, viewWatchlist],
+  [/^\/live$/, viewLive],
   [/^\/movies$/, () => layouts.viewLayoutPage('movies', 'Movies', () => viewCatalog('movie'), '/movies/all')],
   [/^\/shows$/, () => layouts.viewLayoutPage('shows', 'TV Shows', () => viewCatalog('show'), '/shows/all')],
   [/^\/movies\/all$/, () => viewCatalog('movie')],
@@ -362,6 +364,7 @@ async function shell(view, seq) {
         <a class="brand" href="/"><img class="logo" src="/brand/wren-symbol-small-on-dark.svg" alt="">${esc(state.server.name || 'Wren TV')}</a>
         <a class="nav" href="/" data-path="/">${icons.home}<span>Home</span></a>
         <a class="nav" href="/watchlist" data-path="/watchlist">${icons.bookmark}<span>Watchlist</span></a>
+        ${state.server.liveTv ? `<a class="nav" href="/live" data-path="/live">${icons.live}<span>Live TV</span></a>` : ''}
         ${canStream() ? `<a class="nav" href="/movies" data-path="/movies">${icons.movies}<span>Movies</span></a>
           <a class="nav" href="/shows" data-path="/shows">${icons.shows}<span>TV Shows</span></a>
           <a class="nav" href="/collections" data-path="/collections">${icons.stack}<span>Collections</span></a>

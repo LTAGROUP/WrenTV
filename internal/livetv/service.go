@@ -200,6 +200,7 @@ func (s *Service) refresh(ctx context.Context, force bool) {
 
 	// The guide.
 	guide := Guide{}
+	logos := map[string]string{}
 	var guideTime time.Time
 	now := time.Now()
 	for i, u := range guideURLs {
@@ -212,7 +213,7 @@ func (s *Service) refresh(ctx context.Context, force bool) {
 		if err != nil {
 			continue
 		}
-		if err := ParseXMLTV(f, all, now.Add(-guideBehind), now.Add(guideAhead), guide); err != nil {
+		if err := ParseXMLTV(f, all, now.Add(-guideBehind), now.Add(guideAhead), guide, logos); err != nil {
 			errs = append(errs, fmt.Sprintf("guide %d: %v", i+1, err))
 		}
 		f.Close()
@@ -223,6 +224,11 @@ func (s *Service) refresh(ctx context.Context, force bool) {
 	guide.Tidy()
 	s.mu.Lock()
 	s.guide = guide
+	for _, c := range all {
+		if c.Logo == "" {
+			c.Logo = logos[c.ID]
+		}
+	}
 	s.status.GuideChannels = len(guide)
 	s.status.GuideRefreshed = guideTime
 	s.status.Errors = errs
@@ -331,52 +337,6 @@ func (s *Service) pruneCache(sources []config.LiveTVSource, guides []string) {
 			os.Remove(filepath.Join(s.dir, e.Name()))
 		}
 	}
-}
-
-// ChannelView is a channel with what's on.
-type ChannelView struct {
-	Channel
-	Now  *Program `json:"now,omitempty"`
-	Next *Program `json:"next,omitempty"`
-}
-
-// Channels lists the visible channels with what's on now and next.
-func (s *Service) Channels() []ChannelView {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	t := time.Now().Unix()
-	out := make([]ChannelView, 0, len(s.visible))
-	for _, c := range s.visible {
-		v := ChannelView{Channel: *c}
-		v.Now, v.Next = s.guide.NowNext(c.ID, t)
-		out = append(out, v)
-	}
-	return out
-}
-
-// GuideView is a channel's programmes in a window.
-type GuideView struct {
-	ID       string    `json:"id"`
-	Programs []Program `json:"programs"`
-}
-
-// Schedule lists each visible channel's programmes from now for [hours].
-func (s *Service) Schedule(hours int) []GuideView {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	from := time.Now().Unix()
-	to := from + int64(hours)*3600
-	out := make([]GuideView, 0, len(s.visible))
-	for _, c := range s.visible {
-		ps := []Program{}
-		for _, p := range s.guide[c.ID] {
-			if p.End > from && p.Start < to {
-				ps = append(ps, p)
-			}
-		}
-		out = append(out, GuideView{ID: c.ID, Programs: ps})
-	}
-	return out
 }
 
 // Channel finds a visible channel.

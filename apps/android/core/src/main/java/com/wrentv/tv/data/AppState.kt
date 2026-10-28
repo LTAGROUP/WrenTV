@@ -77,10 +77,34 @@ class AppState(context: Context) {
         recentSearches = (listOf(t) + recentSearches.filterNot { it.equals(t, ignoreCase = true) }).take(8)
     }
 
+    /** The viewer's starred channels, and the ones they watched last (newest first). */
+    var liveFavorites by mutableStateOf<Set<String>>(emptySet())
+        private set
+    var liveRecents by mutableStateOf<List<String>>(emptyList())
+        private set
+
     /** Fetches the channels and what's on them now. */
     suspend fun loadLiveChannels(): List<LiveChannel> {
         val api = api ?: return liveChannels
-        return api.liveChannels().also { liveChannels = it }
+        val l = api.liveLineup()
+        liveFavorites = l.favorites.toSet()
+        liveRecents = l.recents
+        return l.channels.also { liveChannels = it }
+    }
+
+    fun toggleLiveFavorite(id: String) {
+        val on = id !in liveFavorites
+        liveFavorites = if (on) liveFavorites + id else liveFavorites - id
+        val api = api ?: return
+        scope.launch {
+            runCatching { api.setLiveFavorite(id, on) }
+                .onFailure { liveFavorites = if (on) liveFavorites - id else liveFavorites + id }
+        }
+    }
+
+    /** A channel was watched: it's first among the recent ones. */
+    fun watchedChannel(id: String) {
+        liveRecents = listOf(id) + liveRecents.filter { it != id }
     }
     var api by mutableStateOf<WrenTVApi?>(null)
         private set

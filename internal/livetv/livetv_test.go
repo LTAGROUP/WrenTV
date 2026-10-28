@@ -78,7 +78,7 @@ func TestParseXMLTV(t *testing.T) {
 	pl, _ := ParseM3U(strings.NewReader(playlist), "src")
 	g := Guide{}
 	from := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
-	if err := ParseXMLTV(strings.NewReader(xmltv), pl.Channels, from, from.Add(48*time.Hour), g); err != nil {
+	if err := ParseXMLTV(strings.NewReader(xmltv), pl.Channels, from, from.Add(48*time.Hour), g, nil); err != nil {
 		t.Fatal(err)
 	}
 	g.Tidy()

@@ -26,7 +26,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import com.wrentv.tv.data.WrenCollection
 import com.wrentv.tv.data.ContinueAfters
 import com.wrentv.tv.data.OfflineItem
-import com.wrentv.tv.data.SimklStatus
+import com.wrentv.tv.data.Tracker
+import com.wrentv.tv.data.TrackerStatus
 import com.wrentv.tv.data.UserPrefs
 import com.wrentv.tv.data.WatchedPercents
 import com.wrentv.tv.data.continueAfterLabel
@@ -140,7 +141,7 @@ fun SettingsScreen() {
                         detail = "How big titles are on Home and as you browse, saved to your account",
                         value = posterSizes.firstOrNull { it.value == state.posterSize }?.label ?: "Medium")
                 }
-                SimklSection()
+                Tracker.entries.forEach { TrackerSection(it) }
                 FormSection("Sound", "Kept on this TV.") {
                     ListRow("Interface Sounds", { state.uiSounds = !state.uiSounds }, Modifier.rememberFocus("set:sounds"),
                         detail = "A click as you move around", value = if (state.uiSounds) "On" else "Off")
@@ -235,42 +236,42 @@ private fun connectionLabel(url: String?): String? {
 }
 
 /**
- * Linking Simkl: what's watched here is sent there, and its history
+ * Linking Simkl or Trakt: what's watched here is sent there, and its history
  * imported. The code is entered on a phone. Hidden when the server has no
- * Simkl app.
+ * app for the tracker.
  */
 @Composable
-private fun SimklSection() {
+private fun TrackerSection(tracker: Tracker) {
     val state = LocalAppState.current
     val notices = LocalNotices.current
-    var st by remember { mutableStateOf<SimklStatus?>(null) }
+    var st by remember { mutableStateOf<TrackerStatus?>(null) }
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(tick) {
-        st = runCatching { state.api?.simkl() }.getOrNull()
+        st = runCatching { state.api?.tracker(tracker) }.getOrNull()
         // Waiting on approval or an import: check again shortly.
         if (st?.busy == true) { delay(3000); tick++ }
     }
     val s = st ?: return
     if (!s.available && !s.linked) return
     fun act(f: suspend () -> Unit) {
-        state.scope.launch { runCatching { f() }.onFailure { notices.show("Simkl: ${it.message}") }; tick++ }
+        state.scope.launch { runCatching { f() }.onFailure { notices.show("${tracker.label}: ${it.message}") }; tick++ }
     }
     val a = s.account
     val pending = s.pending
     when {
-        s.linked && a != null -> FormSection("Simkl", when {
+        s.linked && a != null -> FormSection(tracker.label, when {
             s.importing || a.importStatus == "running" -> "Importing your history…"
             a.importStatus == "done" -> "Last import: ${a.importMovies} movies and ${a.importEpisodes} episodes marked watched."
             a.importStatus.isNotEmpty() -> "Import failed: ${a.importStatus}"
             else -> null
         }) {
-            ListRow("Linked to ${a.username.ifEmpty { "Simkl" }}", {}, Modifier.rememberFocus("set:simkl"))
-            ListRow("Send what I watch to Simkl", { act { state.api?.simklScrobble(!a.scrobble) } }, Modifier.rememberFocus("set:simkl-scrobble"),
+            ListRow("Linked to ${a.username.ifEmpty { tracker.label }}", {}, Modifier.rememberFocus("set:${tracker.id}"))
+            ListRow("Send what I watch to ${tracker.label}", { act { state.api?.trackerScrobble(tracker, !a.scrobble) } }, Modifier.rememberFocus("set:${tracker.id}-scrobble"),
                 value = if (a.scrobble) "On" else "Off")
-            ListRow("Import history again", { act { state.api?.simklImport() } }, Modifier.rememberFocus("set:simkl-import"), enabled = !s.importing)
-            ListRow("Disconnect", { act { state.api?.simklUnlink() } }, Modifier.rememberFocus("set:simkl-unlink"))
+            ListRow("Import history again", { act { state.api?.trackerImport(tracker) } }, Modifier.rememberFocus("set:${tracker.id}-import"), enabled = !s.importing)
+            ListRow("Disconnect", { act { state.api?.trackerUnlink(tracker) } }, Modifier.rememberFocus("set:${tracker.id}-unlink"))
         }
-        pending != null && pending.error.isNullOrEmpty() -> FormSection("Simkl", "Waiting for you to approve it on Simkl…") {
+        pending != null && pending.error.isNullOrEmpty() -> FormSection(tracker.label, "Waiting for you to approve it on ${tracker.label}…") {
             Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
                 QrCode(pending.urlComplete ?: pending.url, size = 160.dp)
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -278,10 +279,10 @@ private fun SimklSection() {
                     Text(pending.userCode, style = MaterialTheme.typography.displaySmall, color = Wren.text)
                 }
             }
-            ListRow("Cancel", { act { state.api?.simklCancelLink() } }, Modifier.rememberFocus("set:simkl-cancel"))
+            ListRow("Cancel", { act { state.api?.trackerCancelLink(tracker) } }, Modifier.rememberFocus("set:${tracker.id}-cancel"))
         }
-        else -> FormSection("Simkl", pending?.error ?: "Link your Simkl account to import what you've already watched and keep Simkl up to date as you watch here.") {
-            ListRow("Connect Simkl", { act { state.api?.simklLink() } }, Modifier.rememberFocus("set:simkl-link"))
+        else -> FormSection(tracker.label, pending?.error ?: "Link your ${tracker.label} account to import what you've already watched and keep ${tracker.label} up to date as you watch here.") {
+            ListRow("Connect ${tracker.label}", { act { state.api?.trackerLink(tracker) } }, Modifier.rememberFocus("set:${tracker.id}-link"))
         }
     }
 }

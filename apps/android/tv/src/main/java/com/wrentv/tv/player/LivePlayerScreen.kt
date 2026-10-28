@@ -85,11 +85,17 @@ import kotlinx.coroutines.delay
  * Back closes whatever is showing, then leaves.
  */
 @Composable
-fun LivePlayerScreen(channelId: String, group: String? = null) {
+fun LivePlayerScreen(channelId: String, group: String? = null, ids: List<String>? = null) {
     val state = LocalAppState.current
     val nav = LocalNavigator.current
     // Opened from a group, flipping stays in it, in the order the group page shows.
-    val pick = { all: List<LiveChannel> -> if (group == null) all else all.inGroup(group, System.currentTimeMillis() / 1000) }
+    val pick = { all: List<LiveChannel> ->
+        when {
+            ids != null -> ids.mapNotNull { id -> all.firstOrNull { it.id == id } }
+            group != null -> all.inGroup(group, System.currentTimeMillis() / 1000)
+            else -> all
+        }
+    }
     var channels by remember { mutableStateOf(pick(state.liveChannels)) }
     var error by remember { mutableStateOf<String?>(null) }
     // Opened without the list loaded (straight from Home, say): fetch it first.

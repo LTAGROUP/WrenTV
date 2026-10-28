@@ -37,6 +37,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 	"github.com/LTAGROUP/wrentv/internal/onlinesubs"
 	"github.com/LTAGROUP/wrentv/internal/simkl"
+	"github.com/LTAGROUP/wrentv/internal/trakt"
 	"github.com/LTAGROUP/wrentv/internal/stream"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
 	"github.com/LTAGROUP/wrentv/internal/sysstat"
@@ -213,6 +214,7 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	streamer := streaming.New(streaming.Deps{Cfg: cfg, DB: d, TMDB: tm, Scanner: scanner, Hub: hub, Hooks: hooks, Server: serverInfo, HTTPPort: port})
 	streamer.Start(ctx)
 	tracker := tracking.New(d, simkl.New(func() string { return cfg.Simkl.ClientID }, version), hooks, serverInfo)
+	tracker.Trakt = trakt.New(func() string { return cfg.Trakt.ClientID }, func() string { return cfg.Trakt.ClientSecret }, version)
 	tracker.AddTitle = func(ctx context.Context, userID, kind string, tmdbID int) error {
 		if u, err := d.UserByID(ctx, userID); err != nil || !u.AllowStreaming || !streamer.Active() {
 			return err

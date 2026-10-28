@@ -161,13 +161,13 @@ public sealed class WrenTVApi
     public async Task SetPosterSize(string size) => await Send(HttpMethod.Patch, "/api/me/prefs", body: new PosterPref { PosterSize = size });
     public async Task<string?> PosterSize() => (await Get<PosterPref>("/api/me/prefs")).PosterSize;
 
-    // Simkl: what's watched here is sent there, and its history imported.
-    public Task<SimklStatus> Simkl() => Get<SimklStatus>("/api/me/simkl");
-    public Task SimklLink() => Send(HttpMethod.Post, "/api/me/simkl/link");
-    public Task SimklCancelLink() => Send(HttpMethod.Delete, "/api/me/simkl/link");
-    public Task SimklUnlink() => Send(HttpMethod.Delete, "/api/me/simkl");
-    public Task SimklImport() => Send(HttpMethod.Post, "/api/me/simkl/import");
-    public Task SimklScrobble(bool on) => Send(HttpMethod.Patch, "/api/me/simkl", body: new { scrobble = on });
+    // Simkl and Trakt: what's watched here is sent there, and its history imported.
+    public Task<TrackerStatus> TrackerState(Tracker t) => Get<TrackerStatus>($"/api/me/{t.Id()}");
+    public Task TrackerLink(Tracker t) => Send(HttpMethod.Post, $"/api/me/{t.Id()}/link");
+    public Task TrackerCancelLink(Tracker t) => Send(HttpMethod.Delete, $"/api/me/{t.Id()}/link");
+    public Task TrackerUnlink(Tracker t) => Send(HttpMethod.Delete, $"/api/me/{t.Id()}");
+    public Task TrackerImport(Tracker t) => Send(HttpMethod.Post, $"/api/me/{t.Id()}/import");
+    public Task TrackerScrobble(Tracker t, bool on) => Send(HttpMethod.Patch, $"/api/me/{t.Id()}", body: new { scrobble = on });
 
     /// A TV waiting to be signed in with a code, and signing it in as the caller.
     public Task<PairInfo> PairInfo(string code) => Get<PairInfo>($"/api/pair/{code}");
@@ -216,8 +216,21 @@ public sealed class WrenTVApi
     public Task SetWatchlist(string id, bool on) => Send(on ? HttpMethod.Put : HttpMethod.Delete, $"/api/items/{id}/watchlist");
 
     // Live TV
-    public async Task<List<LiveChannel>> LiveChannels() => (await Get<LiveChannelsResponse>("/api/livetv/channels")).Channels;
+    public async Task<List<LiveChannel>> LiveChannels() => (await LiveLineup()).Channels;
+    /// The channels with the viewer's favorites and recently watched.
+    public Task<LiveChannelsResponse> LiveLineup() => Get<LiveChannelsResponse>("/api/livetv/channels");
+    /// Every channel's programmes for a few hours, from a Unix time or now.
+    public async Task<List<LiveGuideChannel>> LiveGuide(int hours, long? from = null)
+    {
+        var q = new List<(string, string)> { ("hours", hours.ToString()) };
+        if (from is { } f) q.Add(("from", f.ToString()));
+        return (await Get<LiveGuideResponse>("/api/livetv/guide", q)).Channels;
+    }
+    public Task<LiveSearchResult> LiveSearch(string q) => Get<LiveSearchResult>("/api/livetv/search", [("q", q)]);
+    public Task SetLiveFavorite(string id, bool on) => Send(on ? HttpMethod.Put : HttpMethod.Delete, $"/api/livetv/favorites/{Uri.EscapeDataString(id)}");
     public Task<LivePlayResponse> PlayChannel(string id) => Post<LivePlayResponse>($"/api/livetv/channels/{id}/play", new { hls = false });
+    /// The guide's muted picture: HLS for Windows' own player, not counted as watching.
+    public Task<LivePlayResponse> PreviewChannel(string id) => Post<LivePlayResponse>($"/api/livetv/channels/{id}/play", new { hls = true, preview = true });
 
     public Uri? LiveLogoUrl(string? logo)
     {

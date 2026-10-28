@@ -68,6 +68,8 @@ type settingsView struct {
 	Webhooks        []config.WebhookConfig  `json:"webhooks"`
 	IntegrationKey  string                  `json:"integrationKey"`
 	SimklClientID   string                  `json:"simklClientId"`
+	TraktClientID   string                  `json:"traktClientId"`
+	TraktSecret     string                  `json:"traktClientSecret"`
 	RemoteAccess    *remoteAccessView       `json:"remoteAccess,omitempty"`
 	LiveTV          liveTVView              `json:"liveTv"`
 	RestartRequired bool                    `json:"restartRequired,omitempty"`
@@ -195,7 +197,8 @@ func (s *Server) settings() settingsView {
 		OMDbKeySet: c.Metadata.OMDbAPIKey != "", Fingerprint: c.Markers.Fingerprint, Community: c.Markers.Community, Streaming: sv,
 		Subtitles: subtitlesView{OpenSubtitlesKeySet: c.Subtitles.OpenSubtitles.APIKey != "", OpenSubtitlesUsername: c.Subtitles.OpenSubtitles.Username,
 			OpenSubtitlesPasswordSet: c.Subtitles.OpenSubtitles.Password != "", SubDLKeySet: c.Subtitles.SubDL.APIKey != ""}, UserDefaults: c.Users,
-		Webhooks: hooks, IntegrationKey: c.IntegrationKey, SimklClientID: c.Simkl.ClientID, RemoteAccess: s.remoteAccess(), LiveTV: s.liveTVView(),
+		Webhooks: hooks, IntegrationKey: c.IntegrationKey, SimklClientID: c.Simkl.ClientID,
+		TraktClientID: c.Trakt.ClientID, TraktSecret: maskSecret(c.Trakt.ClientSecret), RemoteAccess: s.remoteAccess(), LiveTV: s.liveTVView(),
 	}
 }
 
@@ -495,6 +498,8 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		UserDefaults *config.UserLimitsConfig `json:"userDefaults"`
 		Webhooks     *[]config.WebhookConfig  `json:"webhooks"`
 		SimklID      *string                  `json:"simklClientId"`
+		TraktID      *string                  `json:"traktClientId"`
+		TraktSecret  *string                  `json:"traktClientSecret"`
 		RemoteAccess *struct {
 			Enabled    *bool `json:"enabled"`
 			UPnP       *bool `json:"upnp"`
@@ -588,6 +593,12 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	if req.SimklID != nil {
 		c.Simkl.ClientID = strings.TrimSpace(*req.SimklID)
 	}
+	if req.TraktID != nil {
+		c.Trakt.ClientID = strings.TrimSpace(*req.TraktID)
+	}
+	if req.TraktSecret != nil && *req.TraktSecret != maskedPassword {
+		c.Trakt.ClientSecret = strings.TrimSpace(*req.TraktSecret)
+	}
 	if ra := req.RemoteAccess; ra != nil {
 		if ra.Enabled != nil {
 			c.RemoteAccess.Enabled = *ra.Enabled
@@ -659,4 +670,12 @@ func (s *Server) RunHeartbeat(ctx context.Context) {
 			s.heartbeat()
 		}
 	}
+}
+
+// maskSecret hides a saved secret from the settings page.
+func maskSecret(s string) string {
+	if s == "" {
+		return ""
+	}
+	return maskedPassword
 }

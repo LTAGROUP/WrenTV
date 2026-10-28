@@ -41,7 +41,7 @@ sealed interface Route {
 enum class Tab(val label: String) { Home("Home"), Movies("Movies"), Shows("TV Shows"), Library("Library"), Live("Live TV"), Downloads("Downloads"), More("More") }
 
 /** Which channel the live player opens on, and the channels channel up and down step through. */
-data class LiveTarget(val channelId: String, val group: String?)
+data class LiveTarget(val channelId: String, val group: String?, val ids: List<String>? = null)
 
 /** A stack of pages per tab, like the iPhone app, plus what's playing full screen. */
 class Navigator {

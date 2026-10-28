@@ -717,6 +717,9 @@ export async function viewSettings() {
         <div class="hooks"></div><button type="button" class="btn small" data-addhook>Add webhook</button></div>
       <div class="panel"><h2>Simkl</h2><p class="small muted">Lets people link their Simkl account in their settings, to import watch history and scrobble what they watch. Register an app at <a href="https://simkl.com/settings/developer/" target="_blank" rel="noopener">simkl.com/settings/developer</a> (AUTH V2, type “TV, devices &amp; command line”) and paste its client ID.</p>
         <div class="field"><label>Client ID</label><input name="simklClientId" value="${esc(s.simklClientId || '')}" autocomplete="off" spellcheck="false"></div></div>
+      <div class="panel"><h2>Trakt</h2><p class="small muted">Lets people link their Trakt account in their settings, to import watch history and scrobble what they watch, and adds Trakt charts and watchlists as collection sources. Create an app at <a href="https://trakt.tv/oauth/applications/new" target="_blank" rel="noopener">trakt.tv/oauth/applications</a> with the redirect URI <code>urn:ietf:wg:oauth:2.0:oob</code>, then paste its client ID and secret.</p>
+        <div class="field"><label>Client ID</label><input name="traktClientId" value="${esc(s.traktClientId || '')}" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label>Client secret</label><input name="traktClientSecret" type="password" value="${esc(s.traktClientSecret || '')}" autocomplete="off" spellcheck="false"></div></div>
       <div class="panel"><h2>Integration key</h2><p class="small muted">Lets other services manage libraries on this server (header <code>X-WrenTV-Key</code>).</p>
         <div class="mono">${esc(s.integrationKey)}</div></div>
     </div>
@@ -956,6 +959,8 @@ export async function viewSettings() {
       body.remoteAccess = { enabled: !!v.remoteEnabled, upnp: !!v.remoteUpnp, publicPort: Number(v.remotePort) || 0 };
     }
     if (v.simklClientId !== undefined) body.simklClientId = v.simklClientId.trim();
+    if (v.traktClientId !== undefined) body.traktClientId = v.traktClientId.trim();
+    if (v.traktClientSecret !== undefined) body.traktClientSecret = v.traktClientSecret.trim();
     if (v.tmdbApiKey) body.tmdbApiKey = v.tmdbApiKey;
     if (v.omdbApiKey) body.omdbApiKey = v.omdbApiKey;
     body.subtitles = { openSubtitlesUsername: String(v.osUsername || '').trim() };

@@ -341,19 +341,67 @@ static class LayoutRows
         return b;
     }
 
-    /// A hub's tile: its artwork with the name over it, or a service's logo on its colour.
+    /// A streaming service's tile face: its icon, ringed so it stands off any
+    /// colour, over its name on a dark wash of its colour. The same for every
+    /// service, on every app.
+    static UIElement ServiceFace(string name, Color? tint, Uri? logo, double height)
+    {
+        var ink = Color.FromArgb(255, 0x0C, 0x0B, 0x10);
+        var g = new Grid { Background = new SolidColorBrush(tint ?? Color.FromArgb(255, 0x3A, 0x36, 0x40)) };
+        g.Children.Add(new Border
+        {
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new Windows.Foundation.Point(0, 0),
+                EndPoint = new Windows.Foundation.Point(1, 1),
+                GradientStops =
+                {
+                    new GradientStop { Color = Color.FromArgb(0x73, ink.R, ink.G, ink.B), Offset = 0 },
+                    new GradientStop { Color = Color.FromArgb(0xD6, ink.R, ink.G, ink.B), Offset = 1 },
+                },
+            },
+        });
+        g.Children.Add(new Border
+        {
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new Windows.Foundation.Point(0, 0),
+                EndPoint = new Windows.Foundation.Point(0, 1),
+                GradientStops =
+                {
+                    new GradientStop { Color = Color.FromArgb(0x14, 255, 255, 255), Offset = 0 },
+                    new GradientStop { Color = Color.FromArgb(0, 255, 255, 255), Offset = 0.6 },
+                },
+            },
+        });
+        var side = height * 0.46;
+        var icon = new Border
+        {
+            Width = side,
+            Height = side,
+            CornerRadius = new CornerRadius(side * 0.22),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x38, 255, 255, 255)),
+            BorderThickness = new Thickness(1),
+            Child = Ui.Image(logo, 300),
+        };
+        var label = Ui.Text(name, 13, FontWeights.SemiBold, new SolidColorBrush(Color.FromArgb(0xF0, 255, 255, 255)), maxLines: 1);
+        label.HorizontalAlignment = HorizontalAlignment.Center;
+        label.Margin = new Thickness(10, height * 0.07, 10, 0);
+        var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+        stack.Children.Add(icon);
+        stack.Children.Add(label);
+        g.Children.Add(stack);
+        return g;
+    }
+
+    /// A hub's tile: its artwork with the name over it, or a service's icon and name.
     public static UIElement HubTile(HubCard hub, bool logos)
     {
         var api = App.State.Api;
         var tint = ParseColor(hub.Color);
         var g = new Grid();
         if (logos && hub.LogoPath != null)
-        {
-            g.Background = tint is { } t ? new SolidColorBrush(t) : Theme.CardBrush;
-            var logo = Ui.Image(api?.ImageUrl(hub.LogoPath, "w300"), 400, Stretch.Uniform);
-            logo.Margin = new Thickness(30);
-            g.Children.Add(logo);
-        }
+            g.Children.Add(ServiceFace(hub.Name, tint, api?.ImageUrl(hub.LogoPath, "w300"), Cards.WideWidth * 9 / 16));
         else
         {
             g.Children.Add(Ui.Image(api?.ImageUrl(hub.BackdropPath, "w780"), 560));

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -17,16 +18,36 @@ import (
 // ---------- viewers ----------
 
 func (s *Server) handleLiveChannels(w http.ResponseWriter, r *http.Request) {
-	if !s.LiveTV.Active() {
-		writeJSON(w, 200, map[string]any{"channels": []any{}})
-		return
+	uid := principal(r).User.ID
+	favs, _ := s.DB.LiveFavorites(r.Context(), uid)
+	recents, _ := s.DB.LiveRecents(r.Context(), uid)
+	chs := []livetv.ChannelView{}
+	if s.LiveTV.Active() {
+		chs = s.LiveTV.Channels()
 	}
-	writeJSON(w, 200, map[string]any{"channels": s.LiveTV.Channels()})
+	writeJSON(w, 200, map[string]any{"channels": chs, "favorites": nonNil(favs), "recents": nonNil(recents)})
 }
 
+// handleLiveGuide is every channel's programmes for a few hours, from now
+// or from "from" (Unix seconds): the guide pages forward a few hours at a time.
 func (s *Server) handleLiveGuide(w http.ResponseWriter, r *http.Request) {
 	hours := min(max(queryInt(r, "hours", 6), 1), 36)
-	writeJSON(w, 200, map[string]any{"channels": s.LiveTV.Schedule(hours)})
+	from, _ := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64)
+	writeJSON(w, 200, map[string]any{"channels": s.LiveTV.Schedule(from, hours)})
+}
+
+// handleLiveSearch finds channels and the programmes coming up on them.
+func (s *Server) handleLiveSearch(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, s.LiveTV.Search(r.URL.Query().Get("q"), min(max(queryInt(r, "limit", 40), 1), 200)))
+}
+
+// handleLiveFavorite stars (PUT) or unstars (DELETE) a channel.
+func (s *Server) handleLiveFavorite(w http.ResponseWriter, r *http.Request) {
+	if err := s.DB.SetLiveFavorite(r.Context(), principal(r).User.ID, chi.URLParam(r, "id"), r.Method == http.MethodPut); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleLivePlay(w http.ResponseWriter, r *http.Request) {
@@ -35,8 +56,10 @@ func (s *Server) handleLivePlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Apple's players ask for HLS: they can't read a plain TS stream.
+	// A preview is the guide playing the picked channel muted: not watched.
 	var req struct {
-		HLS bool `json:"hls"`
+		HLS     bool `json:"hls"`
+		Preview bool `json:"preview"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
 	// A player that retunes after an admin stopped it mustn't just start again.
@@ -52,6 +75,9 @@ func (s *Server) handleLivePlay(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		writeErr(w, 404, err.Error())
 		return
+	}
+	if !req.Preview {
+		_ = s.DB.WatchedChannel(r.Context(), principal(r).User.ID, chi.URLParam(r, "id"))
 	}
 	writeJSON(w, 200, map[string]any{"url": sess.URL(), "type": sess.Type(), "sessionId": sess.ID})
 }

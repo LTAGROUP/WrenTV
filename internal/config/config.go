@@ -41,6 +41,7 @@ type Config struct {
 	Users        UserLimitsConfig   `yaml:"users"`
 	Webhooks     []WebhookConfig    `yaml:"webhooks"`
 	Simkl        SimklConfig        `yaml:"simkl"`
+	Trakt        TraktConfig        `yaml:"trakt"`
 	Scanner      ScannerConfig      `yaml:"scanner"`
 	Markers      MarkersConfig      `yaml:"markers"`
 	Subtitles    SubtitlesConfig    `yaml:"subtitles"`
@@ -304,6 +305,14 @@ func DefaultAddons() []AddonConfig {
 // simkl.com/settings/developer.
 type SimklConfig struct {
 	ClientID string `yaml:"client_id"`
+}
+
+// TraktConfig lets users link Trakt accounts for scrobbling and importing
+// watch history. It's an app registered at trakt.tv/oauth/applications
+// (redirect URI urn:ietf:wg:oauth:2.0:oob).
+type TraktConfig struct {
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
 }
 
 type WebhookConfig struct {

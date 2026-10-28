@@ -2,6 +2,8 @@ import AVFoundation
 import Combine
 import MediaPlayer
 import Observation
+import SwiftUI
+import UIKit
 
 /// Plays a live channel. AVPlayer can't read a plain MPEG-TS stream, so the
 /// app asks the server for HLS; the server repackages TS channels.
@@ -155,5 +157,84 @@ final class LivePlayerModel {
         ]
         info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+}
+
+/// The guide's muted picture of the channel in focus. It starts a moment
+/// after the focus settles, so skimming down the guide doesn't open a stream
+/// per channel, and stops the last one before the next.
+@MainActor
+@Observable
+final class LivePreview {
+    let player = AVPlayer()
+    /// The picture is moving (until then the guide shows the programme's art).
+    private(set) var showing = false
+    private(set) var channelId: String?
+
+    @ObservationIgnored private var api: WrenTVAPI?
+    @ObservationIgnored private var sessionId: String?
+    @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var subs: Set<AnyCancellable> = []
+
+    init() {
+        player.isMuted = true
+        player.publisher(for: \.timeControlStatus).receive(on: DispatchQueue.main).sink { [weak self] s in
+            guard let self, self.player.currentItem != nil else { return }
+            if s == .playing { self.showing = true }
+        }.store(in: &subs)
+    }
+
+    func show(_ ch: LiveChannel?, api: WrenTVAPI?, after delay: Duration = .milliseconds(900)) {
+        guard ch?.id != channelId else { return }
+        stop()
+        channelId = ch?.id
+        guard let ch, let api else { return }
+        self.api = api
+        task = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            guard let r = try? await api.playChannel(ch.id, hls: true, preview: true) else { return }
+            guard let self, !Task.isCancelled, self.channelId == ch.id, r.type == "hls" else {
+                await api.stopSession(r.sessionId)
+                return
+            }
+            self.sessionId = r.sessionId
+            self.player.replaceCurrentItem(with: AVPlayerItem(url: api.absolute(r.url)))
+            self.player.play()
+        }
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+        channelId = nil
+        showing = false
+        player.replaceCurrentItem(with: nil)
+        if let sid = sessionId, let api {
+            Task.detached { await api.stopSession(sid) }
+        }
+        sessionId = nil
+    }
+}
+
+/// A player's picture with no controls, filling its frame.
+struct LivePreviewSurface: UIViewRepresentable {
+    let player: AVPlayer
+
+    final class Surface: UIView {
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    }
+
+    func makeUIView(context: Context) -> Surface {
+        let v = Surface()
+        v.playerLayer.videoGravity = .resizeAspectFill
+        v.playerLayer.player = player
+        v.isUserInteractionEnabled = false
+        return v
+    }
+
+    func updateUIView(_ v: Surface, context: Context) {
+        if v.playerLayer.player !== player { v.playerLayer.player = player }
     }
 }

@@ -51,3 +51,26 @@ func TestSharedLookupOutlivesFirstCaller(t *testing.T) {
 		t.Errorf("%d upstream requests, want 1", n)
 	}
 }
+
+func TestServiceNames(t *testing.T) {
+	for _, c := range []struct {
+		name, service string
+		want          bool
+	}{
+		{"Paramount+ Amazon Channel", "paramount plus", true},
+		{"Paramount Plus Premium", "paramount plus", true},
+		{"Paramount Plus", "paramount plus", true},
+		{"Paramount+ with Showtime", "paramount plus", true},
+		{"Max", "max", true},
+		{"Max Amazon Channel", "max", true},
+		{"MaxdomeX", "max", false},
+		{"Netflix basic with Ads", "netflix", true},
+		{"Peacock Premium Plus", "peacock", true},
+		{"Disney Plus", "disney plus", true},
+		{"Hulu", "netflix", false},
+	} {
+		if got := sameService(providerName(c.name), c.service); got != c.want {
+			t.Errorf("sameService(%q, %q) = %v", c.name, c.service, got)
+		}
+	}
+}

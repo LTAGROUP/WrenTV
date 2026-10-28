@@ -946,9 +946,9 @@ func (s *Server) providerLogo(ctx context.Context, h *db.Hub) string {
 	if id == 0 {
 		return ""
 	}
-	ps, _ := s.TMDB.WatchProviders(ctx)
-	for _, p := range ps {
-		if p.ID == id {
+	// The saved ID may no longer be listed; any of its service's will do.
+	for _, p := range s.TMDB.ServiceProviders(ctx, []int{id}) {
+		if p.LogoPath != "" {
 			return p.LogoPath
 		}
 	}

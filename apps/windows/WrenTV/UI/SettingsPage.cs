@@ -104,11 +104,15 @@ sealed class SettingsPage : Page
             about.Children.Add(Ui.Button($"Download {avail.Version}", () => Ui.Open(avail.Download), "", accent: true));
 
         var simkl = Ui.Column(14, Section("Simkl"));
+        var trakt = Ui.Column(14, Section("Trakt"));
         var linkTv = LinkTv();
-        var col = Ui.Column(20, Ui.Card(account), Ui.Card(playback), Ui.Card(browsing), Ui.Card(simkl), Ui.Card(linkTv), Ui.Card(about));
-        var simklCard = col.Children[3];
-        simklCard.Visibility = Visibility.Collapsed;
-        _ = ShowSimkl(simkl, simklCard);
+        var col = Ui.Column(20, Ui.Card(account), Ui.Card(playback), Ui.Card(browsing), Ui.Card(simkl), Ui.Card(trakt), Ui.Card(linkTv), Ui.Card(about));
+        foreach (var (t, panel, at) in new[] { (Tracker.Simkl, simkl, 3), (Tracker.Trakt, trakt, 4) })
+        {
+            var card = col.Children[at];
+            card.Visibility = Visibility.Collapsed;
+            _ = ShowTracker(t, panel, card);
+        }
         col.MaxWidth = 720;
         col.HorizontalAlignment = HorizontalAlignment.Left;
         return Scroll("Settings", Padded(col));
@@ -129,31 +133,31 @@ sealed class SettingsPage : Page
         return g;
     }
 
-    /// Linking Simkl: what's watched here is sent there, and its history
-    /// imported. Hidden when the server has no Simkl app.
-    async Task ShowSimkl(StackPanel panel, UIElement card)
+    /// Linking Simkl or Trakt: what's watched here is sent there, and its history
+    /// imported. Hidden when the server has no app for the tracker.
+    async Task ShowTracker(Tracker t, StackPanel panel, UIElement card)
     {
         var api = App.State.Api!;
-        SimklStatus? st;
-        try { st = await api.Simkl(); } catch { st = null; }
+        TrackerStatus? st;
+        try { st = await api.TrackerState(t); } catch { st = null; }
         if (st == null || (!st.Available && !st.Linked)) { card.Visibility = Visibility.Collapsed; return; }
         card.Visibility = Visibility.Visible;
         while (panel.Children.Count > 1) panel.Children.RemoveAt(1);
         async void Do(Func<Task> f)
         {
             try { await f(); } catch (Exception e) { panel.Children.Add(Ui.Error(e.Message)); return; }
-            await ShowSimkl(panel, card);
+            await ShowTracker(t, panel, card);
         }
         if (st.Linked && st.Account is { } a)
         {
-            panel.Children.Add(Line("Linked to", a.Username ?? "Simkl"));
-            var scrobble = new ToggleSwitch { Header = "Send what I watch to Simkl", IsOn = a.Scrobble };
-            scrobble.Toggled += (_, _) => Do(() => api.SimklScrobble(scrobble.IsOn));
+            panel.Children.Add(Line("Linked to", a.Username ?? t.Name()));
+            var scrobble = new ToggleSwitch { Header = $"Send what I watch to {t.Name()}", IsOn = a.Scrobble };
+            scrobble.Toggled += (_, _) => Do(() => api.TrackerScrobble(t, scrobble.IsOn));
             panel.Children.Add(scrobble);
             var importing = st.Importing || a.ImportStatus == "running";
-            var import = Ui.Button("Import History Again", () => Do(api.SimklImport), "");
+            var import = Ui.Button("Import History Again", () => Do(() => api.TrackerImport(t)), "");
             import.IsEnabled = !importing;
-            panel.Children.Add(Ui.Row(10, import, Ui.Button("Disconnect", () => Do(api.SimklUnlink), "")));
+            panel.Children.Add(Ui.Row(10, import, Ui.Button("Disconnect", () => Do(() => api.TrackerUnlink(t)), "")));
             var note = importing ? "Importing your history…"
                 : a.ImportStatus == "done" ? $"Last import: {a.ImportMovies} movies and {a.ImportEpisodes} episodes marked watched."
                 : !string.IsNullOrEmpty(a.ImportStatus) ? $"Import failed: {a.ImportStatus}" : null;
@@ -165,24 +169,24 @@ sealed class SettingsPage : Page
             code.IsTextSelectionEnabled = true;
             panel.Children.Add(Ui.Secondary($"Open {p.Url.Replace("https://", "")} and enter", 14));
             panel.Children.Add(code);
-            panel.Children.Add(Ui.Row(10, Ui.Button("Open Simkl", () => Ui.Open(new Uri(p.UrlComplete ?? p.Url)), "", accent: true),
-                Ui.Button("Cancel", () => Do(api.SimklCancelLink), "")));
-            panel.Children.Add(Ui.Secondary("Waiting for you to approve it on Simkl…"));
+            panel.Children.Add(Ui.Row(10, Ui.Button($"Open {t.Name()}", () => Ui.Open(new Uri(p.UrlComplete ?? p.Url)), "", accent: true),
+                Ui.Button("Cancel", () => Do(() => api.TrackerCancelLink(t)), "")));
+            panel.Children.Add(Ui.Secondary($"Waiting for you to approve it on {t.Name()}…"));
         }
         else
         {
-            panel.Children.Add(Ui.Secondary(st.Pending?.Error ?? "Link your Simkl account to import what you've already watched and keep Simkl up to date as you watch here.", 13, 3));
-            panel.Children.Add(Ui.Button("Connect Simkl", () => Do(async () =>
+            panel.Children.Add(Ui.Secondary(st.Pending?.Error ?? $"Link your {t.Name()} account to import what you've already watched and keep {t.Name()} up to date as you watch here.", 13, 3));
+            panel.Children.Add(Ui.Button($"Connect {t.Name()}", () => Do(async () =>
             {
-                await api.SimklLink();
-                if ((await api.Simkl()).Pending is { } np) Ui.Open(new Uri(np.UrlComplete ?? np.Url));
+                await api.TrackerLink(t);
+                if ((await api.TrackerState(t)).Pending is { } np) Ui.Open(new Uri(np.UrlComplete ?? np.Url));
             }), "", accent: true));
         }
         // Waiting on approval or an import: check again shortly, while this page is open.
         if (st.Busy)
         {
             await Task.Delay(3000);
-            if (panel.XamlRoot != null) await ShowSimkl(panel, card);
+            if (panel.XamlRoot != null) await ShowTracker(t, panel, card);
         }
     }
 

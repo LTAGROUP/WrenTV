@@ -462,6 +462,33 @@ var migrations = []string{
 		created_at INTEGER NOT NULL,
 		PRIMARY KEY (item_id, key)
 	);`,
+	// Linked Trakt accounts, for scrobbling and importing watch history.
+	`CREATE TABLE trakt_accounts (
+		user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		access_token TEXT NOT NULL,
+		refresh_token TEXT NOT NULL DEFAULT '',
+		expires_at INTEGER NOT NULL DEFAULT 0,
+		username TEXT NOT NULL DEFAULT '',
+		scrobble INTEGER NOT NULL DEFAULT 1,
+		linked_at INTEGER NOT NULL,
+		import_status TEXT NOT NULL DEFAULT '',
+		import_at INTEGER NOT NULL DEFAULT 0,
+		import_movies INTEGER NOT NULL DEFAULT 0,
+		import_episodes INTEGER NOT NULL DEFAULT 0
+	);`,
+	// Live TV channels each user starred, and the ones they watched lately.
+	`CREATE TABLE live_favorites (
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		channel_id TEXT NOT NULL,
+		added_at INTEGER NOT NULL,
+		PRIMARY KEY (user_id, channel_id)
+	);
+	CREATE TABLE live_recents (
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		channel_id TEXT NOT NULL,
+		watched_at INTEGER NOT NULL,
+		PRIMARY KEY (user_id, channel_id)
+	);`,
 }
 
 // fkOff lists migrations (1-based) that rebuild tables. They run with

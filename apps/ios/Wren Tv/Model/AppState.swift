@@ -17,6 +17,9 @@ final class AppState {
     var refreshTick = 0
     /// The server's live TV channels, kept for flipping through them in the player.
     var liveChannels: [LiveChannel] = []
+    /// The viewer's starred channels, and the ones they watched last.
+    var liveFavorites: Set<String> = []
+    var liveRecents: [String] = []
     var restoring = true
     /// What this user may do: stream, download to this device, how many at once.
     var limits: UserLimitsInfo?

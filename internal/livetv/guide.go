@@ -18,6 +18,12 @@ type Program struct {
 	End         int64  `json:"end"`
 	Description string `json:"description,omitempty"`
 	Episode     string `json:"episode,omitempty"`
+	// Icon is the programme's artwork, when the guide has it.
+	Icon       string   `json:"icon,omitempty"`
+	Categories []string `json:"categories,omitempty"`
+	// New is a first airing; Live is happening as it airs.
+	New  bool `json:"new,omitempty"`
+	Live bool `json:"live,omitempty"`
 }
 
 // Guide is programmes by channel ID.
@@ -25,8 +31,9 @@ type Guide map[string][]Program
 
 // ParseXMLTV reads an XMLTV guide (gzipped or not), keeping programmes for
 // [channels] between [from] and [to]. Guide channels are matched to playlist
-// channels by tvg-id, else by name.
-func ParseXMLTV(r io.Reader, channels []*Channel, from, to time.Time, into Guide) error {
+// channels by tvg-id, else by name. The guide's channel icons go in
+// [logos], by playlist channel ID, for channels the playlist gave none.
+func ParseXMLTV(r io.Reader, channels []*Channel, from, to time.Time, into Guide, logos map[string]string) error {
 	br := bufio.NewReaderSize(r, 64<<10)
 	if magic, _ := br.Peek(2); len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
 		gz, err := gzip.NewReader(br)
@@ -51,6 +58,7 @@ func ParseXMLTV(r io.Reader, channels []*Channel, from, to time.Time, into Guide
 		}
 	}
 	names := map[string][]string{} // guide channel id -> its display names
+	icons := map[string]string{}   // guide channel id -> its icon
 	resolved := map[string][]string{}
 	resolve := func(gid string) []string {
 		if ids, ok := resolved[gid]; ok {
@@ -89,9 +97,15 @@ func ParseXMLTV(r io.Reader, channels []*Channel, from, to time.Time, into Guide
 			var ch struct {
 				ID    string   `xml:"id,attr"`
 				Names []string `xml:"display-name"`
+				Icons []struct {
+					Src string `xml:"src,attr"`
+				} `xml:"icon"`
 			}
 			if err := dec.DecodeElement(&ch, &se); err == nil {
 				names[ch.ID] = ch.Names
+				if len(ch.Icons) > 0 && strings.HasPrefix(ch.Icons[0].Src, "http") {
+					icons[ch.ID] = ch.Icons[0].Src
+				}
 			}
 		case "programme":
 			var gid, start, stop string
@@ -119,6 +133,13 @@ func ParseXMLTV(r io.Reader, channels []*Channel, from, to time.Time, into Guide
 					System string `xml:"system,attr"`
 					Value  string `xml:",chardata"`
 				} `xml:"episode-num"`
+				Icons []struct {
+					Src string `xml:"src,attr"`
+				} `xml:"icon"`
+				Categories []string  `xml:"category"`
+				New        *struct{} `xml:"new"`
+				Live       *struct{} `xml:"live"`
+				Premiere   *struct{} `xml:"premiere"`
 			}
 			if err := dec.DecodeElement(&p, &se); err != nil {
 				continue
@@ -139,8 +160,21 @@ func ParseXMLTV(r io.Reader, channels []*Channel, from, to time.Time, into Guide
 			if prog.Title == "" {
 				continue
 			}
+			if len(p.Icons) > 0 && strings.HasPrefix(p.Icons[0].Src, "http") {
+				prog.Icon = p.Icons[0].Src
+			}
+			for _, c := range p.Categories {
+				if c = strings.TrimSpace(c); c != "" && !contains(prog.Categories, c) {
+					prog.Categories = append(prog.Categories, c)
+				}
+			}
+			prog.New = p.New != nil || p.Premiere != nil
+			prog.Live = p.Live != nil
 			for _, id := range ids {
 				into[id] = append(into[id], prog)
+				if icon := icons[gid]; icon != "" && logos != nil && logos[id] == "" {
+					logos[id] = icon
+				}
 			}
 		}
 	}

@@ -1,5 +1,6 @@
-// Package tracking reports playback to trackers: Simkl (scrobbling, marking
-// watched, importing history) and playback webhooks for anything else.
+// Package tracking reports playback to trackers: Simkl and Trakt
+// (scrobbling, marking watched, importing history) and playback webhooks
+// for anything else.
 //
 // Players only post their position every ten seconds or so while playing,
 // so the player events are inferred: the first report starts a play, a
@@ -10,7 +11,6 @@ package tracking
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"math"
 	"strconv"
@@ -20,6 +20,7 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/db"
 	"github.com/LTAGROUP/wrentv/internal/library"
 	"github.com/LTAGROUP/wrentv/internal/simkl"
+	"github.com/LTAGROUP/wrentv/internal/trakt"
 	"github.com/LTAGROUP/wrentv/internal/webhook"
 )
 
@@ -39,8 +40,10 @@ var (
 )
 
 type Service struct {
-	DB     *db.DB
-	Simkl  *simkl.Client
+	DB    *db.DB
+	Simkl *simkl.Client
+	// Trakt, when set, is scrobbled to alongside Simkl.
+	Trakt  *trakt.Client
 	Hooks  *webhook.Sender
 	Server func() webhook.Server
 	// AddTitle, when set, adds a title the server doesn't have to the
@@ -48,13 +51,14 @@ type Service struct {
 	// Continue Watching. It does nothing for a user who can't stream.
 	AddTitle func(ctx context.Context, userID, kind string, tmdbID int) error
 
-	mu      sync.Mutex
-	plays   map[string]*play
+	mu    sync.Mutex
+	plays map[string]*play
+	// links, imports and queues are per tracker and user (linkKey).
 	links   map[string]*pendingLink
 	imports map[string]bool
 	queues  map[string]chan func()
 	now     func() time.Time
-	// pollEvery overrides Simkl's sign-in poll interval (tests).
+	// pollEvery overrides the trackers' sign-in poll interval (tests).
 	pollEvery time.Duration
 }
 
@@ -281,6 +285,9 @@ func (s *Service) emit(event string, p *play) {
 	if s.Simkl.Enabled() {
 		s.scrobble(event, p)
 	}
+	if s.Trakt.Enabled() {
+		s.scrobbleTrakt(event, p)
+	}
 }
 
 func (s *Service) send(event string, data any) {
@@ -305,6 +312,9 @@ func (s *Service) Marked(ctx context.Context, u *db.User, it *db.Item, watched b
 		Item    ItemRef `json:"item"`
 		Watched bool    `json:"watched"`
 	}{userRef(u), itemRef(it, show), watched})
+	if s.Trakt.Enabled() {
+		s.markTrakt(u, it, show, watched)
+	}
 	if !s.Simkl.Enabled() {
 		return
 	}
@@ -312,7 +322,7 @@ func (s *Service) Marked(ctx context.Context, u *db.User, it *db.Item, watched b
 	if !ok {
 		return
 	}
-	s.withSimkl(u.ID, func(ctx context.Context, access string) error {
+	s.withAccount(db.Simkl, u.ID, func(ctx context.Context, access string) error {
 		if watched {
 			return s.Simkl.AddHistory(ctx, access, h)
 		}
@@ -404,57 +414,17 @@ func (s *Service) scrobble(event string, p *play) {
 		return
 	}
 	minProgress := int(math.Round(p.watchedAt * 100))
-	s.withSimkl(p.user.ID, func(ctx context.Context, access string) error {
+	s.withAccount(db.Simkl, p.user.ID, func(ctx context.Context, access string) error {
 		return s.Simkl.Scrobble(ctx, access, action, minProgress, body)
 	})
 }
 
-// withSimkl runs fn with the user's token, one call at a time per user
-// (Simkl locks each user for a moment per scrobble), refreshing the token
-// when it's close to expiring or rejected.
-func (s *Service) withSimkl(userID string, fn func(ctx context.Context, access string) error) {
-	s.enqueue(userID, func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		a, err := s.DB.GetSimkl(ctx, userID)
-		if err != nil || a == nil || !a.Scrobble {
-			return
-		}
-		if a.RefreshToken != "" && a.ExpiresAt > 0 && a.ExpiresAt-s.now().Unix() < 24*3600 {
-			if err := s.refresh(ctx, a); err != nil {
-				slog.Warn("simkl refresh", "user", userID, "err", err)
-			}
-		}
-		err = fn(ctx, a.AccessToken)
-		if errors.Is(err, simkl.ErrUnauthorized) && a.RefreshToken != "" {
-			if s.refresh(ctx, a) == nil {
-				err = fn(ctx, a.AccessToken)
-			}
-		}
-		if err != nil {
-			slog.Warn("simkl", "user", userID, "err", err)
-		}
-	})
-}
-
-func (s *Service) refresh(ctx context.Context, a *db.SimklAccount) error {
-	t, err := s.Simkl.Refresh(ctx, a.RefreshToken)
-	if err != nil {
-		return err
-	}
-	a.AccessToken, a.ExpiresAt = t.Access, t.Expires
-	if t.Refresh != "" {
-		a.RefreshToken = t.Refresh
-	}
-	return s.DB.SetSimklTokens(ctx, a.UserID, a.AccessToken, a.RefreshToken, a.ExpiresAt)
-}
-
-func (s *Service) enqueue(userID string, fn func()) {
+func (s *Service) enqueue(key string, fn func()) {
 	s.mu.Lock()
-	q := s.queues[userID]
+	q := s.queues[key]
 	if q == nil {
 		q = make(chan func(), 32)
-		s.queues[userID] = q
+		s.queues[key] = q
 		go func() {
 			for {
 				select {
@@ -463,7 +433,7 @@ func (s *Service) enqueue(userID string, fn func()) {
 				case <-time.After(time.Minute):
 					s.mu.Lock()
 					if len(q) == 0 {
-						delete(s.queues, userID)
+						delete(s.queues, key)
 						s.mu.Unlock()
 						return
 					}
@@ -475,7 +445,7 @@ func (s *Service) enqueue(userID string, fn func()) {
 	select { // under the lock, so the worker can't retire q meanwhile
 	case q <- fn:
 	default:
-		slog.Warn("simkl queue full; dropping event", "user", userID)
+		slog.Warn("tracker queue full; dropping event", "key", key)
 	}
 	s.mu.Unlock()
 }

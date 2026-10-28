@@ -275,7 +275,7 @@ struct LayoutRows: View {
     }
 }
 
-/// A hub's tile: its artwork with the name over it, or a service's logo on its colour.
+/// A hub's tile: its artwork with the name over it, or a service's icon and name.
 struct HubTile: View {
     @Environment(AppState.self) private var state
     @Environment(\.metrics) private var m
@@ -286,10 +286,8 @@ struct HubTile: View {
         NavigationLink(value: HubRoute(id: hub.id, name: hub.name)) {
             ZStack(alignment: .bottomLeading) {
                 if logos, let logo = hub.logoPath {
-                    (Color(hex: hub.color) ?? Color.white.opacity(0.08))
-                    RemoteImage(url: state.api?.imageURL(logo, size: "w300"), contentMode: .fit)
-                        .padding(m.compact ? 22 : 30)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ServiceFace(name: hub.name, color: hub.color, logo: state.api?.imageURL(logo, size: "w300"), height: m.landscape * 9 / 16,
+                                font: m.compact ? .caption : .subheadline)
                 } else {
                     RemoteImage(url: state.api?.imageURL(hub.backdropPath, size: "w780"))
                     LinearGradient(colors: [.clear, (Color(hex: hub.color) ?? .black).opacity(0.85)], startPoint: .center, endPoint: .bottom)
@@ -508,4 +506,37 @@ struct LayoutEditorView: View {
             }
         }
     }
+}
+
+/// A streaming service's tile face: its icon, ringed so it stands off any
+/// colour, over its name on a dark wash of its colour. The same for every
+/// service, on every app.
+struct ServiceFace: View {
+    let name: String
+    let color: String?
+    let logo: URL?
+    let height: CGFloat
+    var font: Font = .caption
+
+    var body: some View {
+        let side = height * 0.46
+        let shape = RoundedRectangle(cornerRadius: side * 0.22, style: .continuous)
+        ZStack {
+            Color(hex: color) ?? Color(red: 0.23, green: 0.21, blue: 0.25)
+            LinearGradient(colors: [Self.ink.opacity(0.45), Self.ink.opacity(0.84)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            RadialGradient(colors: [.white.opacity(0.08), .clear], center: .top, startRadius: 0, endRadius: height * 0.9)
+            VStack(spacing: height * 0.07) {
+                RemoteImage(url: logo)
+                    .frame(width: side, height: side)
+                    .clipShape(shape)
+                    .overlay(shape.strokeBorder(.white.opacity(0.22), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.45), radius: side * 0.12, y: side * 0.07)
+                Text(name).font(font.weight(.semibold)).foregroundStyle(.white.opacity(0.94)).lineLimit(1)
+                    .shadow(color: .black.opacity(0.4), radius: 4, y: 1)
+            }
+            .padding(.horizontal, 10)
+        }
+    }
+
+    private static let ink = Color(red: 0.047, green: 0.043, blue: 0.063)
 }

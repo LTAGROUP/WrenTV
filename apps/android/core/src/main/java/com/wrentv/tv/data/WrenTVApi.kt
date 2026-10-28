@@ -190,13 +190,13 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     suspend fun person(id: Int): Person = get("/api/people/$id")
     suspend fun company(id: Int): Company = get("/api/companies/$id")
 
-    // Simkl: link with a code, then what's watched here goes to Simkl.
-    suspend fun simkl(): SimklStatus = get("/api/me/simkl")
-    suspend fun simklLink(): SimklPending = post("/api/me/simkl/link")
-    suspend fun simklCancelLink() { send("DELETE", "/api/me/simkl/link") }
-    suspend fun simklUnlink() { send("DELETE", "/api/me/simkl") }
-    suspend fun simklImport() { send("POST", "/api/me/simkl/import") }
-    suspend fun simklScrobble(on: Boolean) { send("PATCH", "/api/me/simkl", body = buildJsonObject { put("scrobble", on) }) }
+    // Simkl and Trakt: link with a code, then what's watched here goes there.
+    suspend fun tracker(t: Tracker): TrackerStatus = get("/api/me/${t.id}")
+    suspend fun trackerLink(t: Tracker): TrackerPending = post("/api/me/${t.id}/link")
+    suspend fun trackerCancelLink(t: Tracker) { send("DELETE", "/api/me/${t.id}/link") }
+    suspend fun trackerUnlink(t: Tracker) { send("DELETE", "/api/me/${t.id}") }
+    suspend fun trackerImport(t: Tracker) { send("POST", "/api/me/${t.id}/import") }
+    suspend fun trackerScrobble(t: Tracker, on: Boolean) { send("PATCH", "/api/me/${t.id}", body = buildJsonObject { put("scrobble", on) }) }
 
     // A sign-in code a TV shows: a signed-in phone approves it.
     suspend fun pairInfo(code: String): PairInfo = get("/api/pair/$code")
@@ -317,11 +317,17 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
     suspend fun calendar(from: String? = null, to: String? = null): CalendarResponse =
         get("/api/calendar", buildMap { from?.let { put("from", it) }; to?.let { put("to", it) } })
 
-    suspend fun liveChannels(): List<LiveChannel> = get<LiveChannelsResponse>("/api/livetv/channels").channels
-    suspend fun liveGuide(hours: Int): List<LiveGuideChannel> =
-        get<LiveGuideResponse>("/api/livetv/guide", mapOf("hours" to hours.toString())).channels
+    suspend fun liveChannels(): List<LiveChannel> = liveLineup().channels
+    /** The channels with the viewer's favorites and recently watched. */
+    suspend fun liveLineup(): LiveChannelsResponse = get("/api/livetv/channels")
+    /** Every channel's programmes for [hours], from [from] (Unix seconds) or now. */
+    suspend fun liveGuide(hours: Int, from: Long? = null): List<LiveGuideChannel> =
+        get<LiveGuideResponse>("/api/livetv/guide", buildMap { put("hours", hours.toString()); from?.let { put("from", it.toString()) } }).channels
+    suspend fun liveSearch(q: String): LiveSearchResult = get("/api/livetv/search", mapOf("q" to q))
+    suspend fun setLiveFavorite(id: String, on: Boolean) { send(if (on) "PUT" else "DELETE", "/api/livetv/favorites/$id") }
 
-    suspend fun playChannel(id: String, caps: ClientCaps): LivePlayResponse = post("/api/livetv/channels/$id/play", enc(LivePlayRequest(caps)))
+    suspend fun playChannel(id: String, caps: ClientCaps, preview: Boolean = false): LivePlayResponse =
+        post("/api/livetv/channels/$id/play", enc(LivePlayRequest(caps, preview = preview)))
 
     suspend fun stopSession(sid: String) {
         runCatching { send("DELETE", "/api/sessions/$sid") }

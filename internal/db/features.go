@@ -102,15 +102,22 @@ type CollectionRules struct {
 
 	// TMDB: "collection" (a franchise), "list", "trending", "popular",
 	// "top_rated", "now_playing", "upcoming", "airing". Outside TMDB:
-	// "mdblist" and "simkl", named by SourceRef.
+	// "mdblist", "simkl" and "trakt", named by SourceRef.
 	Source    string `json:"source,omitempty"`
 	SourceID  int    `json:"sourceId,omitempty"`
 	MediaType string `json:"mediaType,omitempty"` // "movie" or "show" for chart sources
-	// SourceRef names an MDBList list ("user/list" or its URL) or a Simkl
-	// chart ("trending/movies/week") or watchlist ("watchlist/plantowatch").
+	// SourceRef names an MDBList list ("user/list" or its URL), a Simkl
+	// chart ("trending/movies/week") or watchlist ("watchlist/plantowatch"),
+	// or a Trakt chart ("trending/movies") or "watchlist".
 	SourceRef string `json:"sourceRef,omitempty"`
-	// SimklUser is whose linked Simkl account a watchlist comes from.
+	// SimklUser is whose linked Simkl or Trakt account a watchlist comes from.
 	SimklUser string `json:"simklUser,omitempty"`
+}
+
+// IsWatchlist: the source is a user's Simkl or Trakt watchlist.
+func (ru CollectionRules) IsWatchlist() bool {
+	return (ru.Source == "simkl" && strings.HasPrefix(ru.SourceRef, "watchlist/")) ||
+		(ru.Source == "trakt" && ru.SourceRef == "watchlist")
 }
 
 // CollectionTitle is one entry of a TMDB-sourced collection, in source order.
@@ -171,8 +178,7 @@ func (c *Collection) GroupOf() string {
 		return "Collections"
 	case c.Rules.Source == "collection":
 		return "Franchises"
-	case c.Rules.Source == "list" || c.Rules.Source == "mdblist",
-		c.Rules.Source == "simkl" && strings.HasPrefix(c.Rules.SourceRef, "watchlist"):
+	case c.Rules.Source == "list" || c.Rules.Source == "mdblist", c.Rules.IsWatchlist():
 		return "Lists"
 	}
 	return "Charts"
