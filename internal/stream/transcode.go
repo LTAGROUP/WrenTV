@@ -142,6 +142,10 @@ func (t *transcoder) launch(n int) {
 	} else {
 		args = append(args, hw.DecodeArgs()...)
 	}
+	// The encode keeps a minute or so ahead of the player and no more than
+	// twice its pace: run flat out, one read a whole streamed file (5 GB in
+	// a minute and a half) and took the encoder from everyone else's.
+	args = append(args, "-readrate", "2", "-readrate_initial_burst", "60")
 	args = append(args, "-copyts", "-ss", fmtTS(startTS), "-i", s.Src.Input())
 	if v != nil {
 		args = append(args, "-map", fmt.Sprintf("0:v:%d", v.TypeIdx))

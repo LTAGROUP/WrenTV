@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -405,7 +406,20 @@ type urgentKey struct{}
 // Urgent marks a fetch a reader is stuck waiting on: it takes the next
 // free connection ahead of read-ahead.
 func Urgent(ctx context.Context) context.Context {
-	return context.WithValue(ctx, urgentKey{}, true)
+	u := new(atomic.Bool)
+	u.Store(true)
+	return context.WithValue(ctx, urgentKey{}, u)
+}
+
+// urgentOnce marks a fetch that turns urgent when u is set: read-ahead
+// that a reader comes to wait on before it has a connection.
+func urgentOnce(ctx context.Context, u *atomic.Bool) context.Context {
+	return context.WithValue(ctx, urgentKey{}, u)
+}
+
+func isUrgent(ctx context.Context) bool {
+	u, _ := ctx.Value(urgentKey{}).(*atomic.Bool)
+	return u != nil && u.Load()
 }
 
 type abortKey struct{}
@@ -533,7 +547,9 @@ func (s *server) with(ctx context.Context, f func(*conn) error) error {
 		s.mu.Lock()
 		s.drop(c, false)
 		s.mu.Unlock()
-		if fresh || attempt > 0 || ctx.Err() != nil {
+		// abort is checked itself: the cancel it sets off runs a moment
+		// later, and a retry then would fetch an article already brought.
+		if fresh || attempt > 0 || ctx.Err() != nil || abort != nil && abort.Err() != nil {
 			return err
 		}
 	}
@@ -542,7 +558,6 @@ func (s *server) with(ctx context.Context, f func(*conn) error) error {
 // acquire takes one of the server's MaxConns request slots. Urgent
 // requests take the next one free; others wait while any are waiting.
 func (s *server) acquire(ctx context.Context) error {
-	urgent := ctx.Value(urgentKey{}) != nil
 	waiting := false
 	defer func() {
 		if waiting {
@@ -553,6 +568,7 @@ func (s *server) acquire(ctx context.Context) error {
 		}
 	}()
 	for {
+		urgent := isUrgent(ctx) // read-ahead can turn urgent while it waits
 		s.mu.Lock()
 		if s.busy < s.MaxConns && (urgent || s.urgent == 0) {
 			s.busy++

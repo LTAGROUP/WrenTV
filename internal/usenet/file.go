@@ -7,6 +7,7 @@ import (
 	"io"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -73,8 +74,11 @@ type segEntry struct {
 	// hedge. The first to bring it wins; stop then cuts the other off.
 	running int
 	hedged  bool
-	stop    context.Context
-	abort   context.CancelFunc
+	// urgent is set once a reader waits on the article: if it hasn't got a
+	// connection yet, it goes before every stream's read-ahead.
+	urgent atomic.Bool
+	stop   context.Context
+	abort  context.CancelFunc
 }
 
 // Hedging: a read waits on articles in order, so one article that's slow
@@ -145,6 +149,7 @@ func (f *File) segment(ctx context.Context, k segKey) ([]byte, error) {
 		e := f.start(ctx, k)
 		var hedge <-chan time.Time
 		if ctx.Value(bgKey{}) == nil {
+			e.urgent.Store(true)
 			t := time.NewTimer(max(f.hedgeAfter()-time.Since(e.started), 250*time.Millisecond))
 			hedge = t.C
 			defer t.Stop()
@@ -275,6 +280,9 @@ func (f *File) start(ctx context.Context, k segKey) *segEntry {
 		}
 		f.order = keep
 	}
+	if ctx.Value(bgKey{}) == nil && ctx.Value(urgentKey{}) == nil {
+		ctx = urgentOnce(ctx, &e.urgent)
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(abortable(finishing(ctx), e.stop), 2*time.Minute)
 		defer cancel()
@@ -383,6 +391,16 @@ func (f *File) ReadAt(p []byte, off int64) (int, error) {
 // WriteRange writes n bytes from off to w, keeping Ahead articles in flight.
 func (f *File) WriteRange(ctx context.Context, w io.Writer, off, n int64) (int64, error) {
 	var written int64
+	// Read-ahead starts small and doubles as the read goes on: players
+	// probe with many short reads, and a seek shouldn't queue tens of
+	// megabytes ahead of the bytes it's waiting for.
+	// Background reads (seek thumbnails) need a few megabytes, not the
+	// tens a player streams through.
+	most := max(f.Ahead, 1)
+	if ctx.Value(bgKey{}) != nil {
+		most = min(most, 4)
+	}
+	ahead := min(2, most)
 	for n > 0 {
 		// Plan a stretch at a time; long ranges would list many articles.
 		chunk := min(n, 256<<20)
@@ -393,16 +411,11 @@ func (f *File) WriteRange(ctx context.Context, w io.Writer, off, n int64) (int64
 		if len(sp) == 0 {
 			return written, io.EOF
 		}
-		// Read-ahead starts small and doubles as the read goes on: players
-		// probe with many short reads, and a seek shouldn't queue tens of
-		// megabytes ahead of the bytes it's waiting for.
-		// Background reads (seek thumbnails) need a few megabytes, not the
-		// tens a player streams through.
-		most := max(f.Ahead, 1)
-		if ctx.Value(bgKey{}) != nil {
-			most = min(most, 4)
-		}
-		ahead, started := min(2, most), 0
+		started := 0
+		// The next stretch's first articles, fetched as this one ends, so
+		// read-ahead doesn't run dry at the seam.
+		var next []span
+		nextStarted := 0
 		pos := off
 		for i, s := range sp {
 			if i > 0 && ahead < most {
@@ -410,6 +423,14 @@ func (f *File) WriteRange(ctx context.Context, w io.Writer, off, n int64) (int64
 			}
 			for ; started < len(sp) && started <= i+ahead; started++ {
 				f.start(ctx, sp[started].key)
+			}
+			if over := i + ahead - (len(sp) - 1); over > 0 && n > chunk {
+				if next == nil {
+					next, _ = f.spans(off+chunk, min(n-chunk, 64<<20))
+				}
+				for ; nextStarted < len(next) && nextStarted < over; nextStarted++ {
+					f.start(ctx, next[nextStarted].key)
+				}
 			}
 			data, err := f.segment(ctx, s.key)
 			if err != nil {

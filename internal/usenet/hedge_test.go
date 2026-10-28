@@ -146,3 +146,45 @@ func TestStalledRead(t *testing.T) {
 		t.Fatalf("gave up after %v", d)
 	}
 }
+
+// An article a player is waiting on goes before other streams' read-ahead
+// that's still queued for a connection.
+func TestWaitedArticleSkipsQueuedReadAhead(t *testing.T) {
+	s := newFakeServer(t)
+	s.bodyDelay = 40 * time.Millisecond
+	other := append([]byte{0x1a, 0x45, 0xdf, 0xa3}, randomBytes(64000*40, 10)...)
+	mine := append([]byte{0x1a, 0x45, 0xdf, 0xa3}, randomBytes(64000*4, 11)...)
+	nzb := &NZB{Files: []NZBFile{
+		s.post("Other.2020.1080p.mkv", other, 64000, `"Other.2020.1080p.mkv" yEnc`),
+		s.post("Mine.2020.1080p.mkv", mine, 64000, `"Mine.2020.1080p.mkv" yEnc`),
+	}}
+	pool := s.pool(2)
+	defer pool.Close()
+	vids, err := Inspect(context.Background(), pool, nzb, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lay [2]*Layout
+	for _, v := range vids {
+		if v.Layout.Name == "Mine.2020.1080p.mkv" {
+			lay[1] = v.Layout
+		} else {
+			lay[0] = v.Layout
+		}
+	}
+	// The other stream queues forty articles ahead: a second's worth on
+	// two connections.
+	o := NewFile(pool, nzb, lay[0])
+	sp, _ := o.spans(0, o.Size())
+	for _, x := range sp {
+		o.start(context.Background(), x.key)
+	}
+	start := time.Now()
+	var buf bytes.Buffer
+	if _, err := NewFile(pool, nzb, lay[1]).WriteRange(context.Background(), &buf, 0, 64000); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 400*time.Millisecond {
+		t.Fatalf("waited %v behind another stream's read-ahead", d)
+	}
+}

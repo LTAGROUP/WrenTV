@@ -38,6 +38,8 @@ type fakeServer struct {
 	hang    map[string]int
 	asked   map[string]int
 	release chan struct{}
+	// bodyDelay is how long every article takes to come.
+	bodyDelay time.Duration
 }
 
 func newFakeServer(t *testing.T) *fakeServer {
@@ -122,7 +124,11 @@ func (s *fakeServer) serve(c net.Conn) {
 					s.hang[id]--
 				}
 			}
+			delay := s.bodyDelay
 			s.mu.Unlock()
+			if cmd == "BODY" && delay > 0 {
+				time.Sleep(delay)
+			}
 			if hang {
 				<-s.release // never answers; the client gives up on the connection
 				return
