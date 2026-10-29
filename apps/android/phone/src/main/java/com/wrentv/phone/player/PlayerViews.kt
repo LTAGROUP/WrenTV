@@ -9,6 +9,8 @@ import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -75,6 +77,6 @@ fun VideoSurface(player: Player, modifier: Modifier = Modifier, sideShowing: Boo
             }
         },
         onRelease = { it.player = null },
-        modifier = modifier,
+        modifier = modifier.onGloballyPositioned { Pip.surface = it.boundsInWindow() },
     )
 }

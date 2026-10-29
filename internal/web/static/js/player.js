@@ -1,7 +1,7 @@
 // Full-screen web player: <video> + hls.js (native HLS on Safari), with its
 // own controls for chapters, skip intro/credits and up next.
 import { api, browserCaps, img, ApiError } from './api.js';
-import { esc, $, $$, el, toast, fmtDuration } from './ui.js';
+import { esc, $, $$, el, toast, fmtDuration, pictureInPicture } from './ui.js';
 
 const qualities = [
   ['orig', 'Original quality', 0, 0],
@@ -23,6 +23,7 @@ const ico = {
   mute: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9v6h4l5 4V5L8 9z" fill="currentColor"/><path d="M17 9l5 6M22 9l-5 6"/></svg>',
   chapters: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h11M4 12h16M4 18h9"/><circle cx="19" cy="6" r="1.5" fill="currentColor"/><circle cx="17" cy="18" r="1.5" fill="currentColor"/></svg>',
   episodes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="13" height="10" rx="2"/><path d="M7 19h13M20 9v10"/></svg>',
+  pip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="11" width="7" height="6" rx="1" fill="currentColor"/></svg>',
   full: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
 };
 
@@ -81,6 +82,7 @@ class Player {
           <input type="range" min="0" max="1" step="0.05" data-volume aria-label="Volume">
           <button class="cbtn" data-episodes title="Episodes (E)" hidden>${ico.episodes}</button>
           <button class="cbtn" data-chapters title="Chapters (C)" hidden>${ico.chapters}</button>
+          <button class="cbtn" data-pip title="Picture in picture (P)" hidden>${ico.pip}</button>
           <button class="cbtn" data-full title="Full screen (F)">${ico.full}</button>
         </div>
       </div></div>`);
@@ -124,6 +126,8 @@ class Player {
     $('[data-back]', r).onclick = () => this.seek(v.currentTime - 10);
     $('[data-fwd]', r).onclick = () => this.seek(v.currentTime + 10);
     $('[data-full]', r).onclick = () => this.toggleFullscreen();
+    this.pip = pictureInPicture(v, $('[data-pip]', r));
+    $('[data-pip]', r).onclick = () => this.pip.toggle();
     $('[data-chapters]', r).onclick = () => this.toggleChapters();
     $('[data-episodes]', r).onclick = () => this.toggleEpisodes();
     $('[data-mute]', r).onclick = () => { v.muted = !v.muted; };
@@ -138,6 +142,7 @@ class Player {
         if ($('.ep-shelf', r)) return this.closeEpisodes();
         if (!document.fullscreenElement) this.close();
       } else if (k === 'f') this.toggleFullscreen();
+      else if (k === 'p') this.pip.toggle();
       else if (k === ' ' || k === 'k') { e.preventDefault(); this.toggle(); }
       else if (k === 'ArrowRight') { e.preventDefault(); this.seek(v.currentTime + 10); }
       else if (k === 'ArrowLeft') { e.preventDefault(); this.seek(v.currentTime - 10); }
@@ -815,6 +820,7 @@ class Player {
     clearInterval(this.statsTimer);
     document.removeEventListener('keydown', this.onKey);
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    this.pip?.stop();
     await this.stopSession();
     this.root.remove();
     document.body.style.overflow = '';

@@ -1,5 +1,6 @@
 package com.wrentv.phone.player
 
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.rounded.ClosedCaption
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.SkipNext
@@ -120,6 +122,8 @@ fun PlayerScreen(target: PlayTarget) {
         if (controls && !c.paused && dragging == null && !menuOpen && !shelf) { delay(4000); controls = false }
     }
     fun poke() { controls = true; touched++ }
+    // Paused when the floating window is closed, so coming back finds it where it was.
+    val pip = rememberPictureInPicture(c.player, c.paused, { c.togglePause() }) { if (!c.paused) c.togglePause() }
 
     Box(
         Modifier.fillMaxSize().background(Color.Black)
@@ -134,7 +138,7 @@ fun PlayerScreen(target: PlayTarget) {
             else -> if (c.buffering) Spinner()
         }
 
-        AnimatedVisibility(controls && phase !is PlayerController.Phase.Failed, enter = fadeIn(), exit = fadeOut()) {
+        AnimatedVisibility(controls && !pip && phase !is PlayerController.Phase.Failed, enter = fadeIn(), exit = fadeOut()) {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.3f to Color.Transparent,
                 0.7f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f)))) {
                 Row(Modifier.fillMaxWidth().safeDrawingPadding().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -150,6 +154,7 @@ fun PlayerScreen(target: PlayTarget) {
                         { menuOpen = it }, search = if (c.onlineSubtitles) ({ search = true }) else null) { c.selectSubtitle(it) }
                     if (c.episode != null) IconButton({ shelf = !shelf; poke() }) { Icon(Icons.Rounded.VideoLibrary, "Episodes", tint = if (shelf) Wren.ember else Color.White) }
                     IconButton({ stats = !stats; poke() }) { Icon(Icons.Rounded.Info, "Stats", tint = if (stats) Wren.ember else Color.White) }
+                    PipButton()
                 }
                 if (phase is PlayerController.Phase.Playing && !shelf) Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(48.dp), verticalAlignment = Alignment.CenterVertically) {
                     RoundButton(Icons.Rounded.Replay10, "Back 10 seconds", 44.dp) { c.seekBy(-10.0); poke() }
@@ -172,11 +177,11 @@ fun PlayerScreen(target: PlayTarget) {
             }
         }
 
-        if (stats) Stats(c, Modifier.align(Alignment.TopStart).safeDrawingPadding().padding(start = 16.dp, top = 64.dp))
+        if (stats && !pip) Stats(c, Modifier.align(Alignment.TopStart).safeDrawingPadding().padding(start = 16.dp, top = 64.dp))
         if (search) OnlineSubtitlesDialog(c) { search = false }
 
         // Skip intro / credits, and the next episode.
-        if (!shelf) Box(Modifier.align(Alignment.BottomEnd).safeDrawingPadding().padding(end = 24.dp, bottom = if (controls) 96.dp else 32.dp)) {
+        if (!shelf && !pip) Box(Modifier.align(Alignment.BottomEnd).safeDrawingPadding().padding(end = 24.dp, bottom = if (controls) 96.dp else 32.dp)) {
             val next = c.upNext
             when {
                 next != null && c.skip == PlayerController.Skip.Credits || next != null && c.countdown != null -> UpNext(c)
@@ -351,6 +356,14 @@ private fun OnlineSubtitlesDialog(c: PlayerController, onDismiss: () -> Unit) {
             }
         },
     )
+}
+
+/** Shrinks the player into the floating window, where the device has one. */
+@Composable
+fun PipButton() {
+    val activity = LocalContext.current.activity() as? ComponentActivity ?: return
+    if (!remember { Pip.supported(activity) }) return
+    IconButton({ Pip.enter(activity) }) { Icon(Icons.Rounded.PictureInPictureAlt, "Picture in picture", tint = Color.White) }
 }
 
 @Composable

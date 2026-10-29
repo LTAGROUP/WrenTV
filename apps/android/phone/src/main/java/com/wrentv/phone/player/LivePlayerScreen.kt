@@ -109,6 +109,8 @@ private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel, close: (
     LaunchedEffect(controls, touched, list) { if (controls && !list) { delay(5000); controls = false } }
     LaunchedEffect(c.channel.id) { controls = true; touched++ }
     fun poke() { controls = true; touched++ }
+    // Closing the floating window stops watching: live has nowhere to come back to.
+    val pip = rememberPictureInPicture(c.player, c.paused, { c.togglePause() }, close)
 
     Box(Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, indication = null) {
         if (list) list = false else if (controls) controls = false else poke()
@@ -119,7 +121,7 @@ private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel, close: (
             LiveController.Phase.Tuning -> Spinner()
             else -> if (c.buffering) Spinner()
         }
-        AnimatedVisibility(controls || list, enter = fadeIn(), exit = fadeOut()) {
+        AnimatedVisibility((controls || list) && !pip, enter = fadeIn(), exit = fadeOut()) {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.3f to Color.Transparent,
                 0.6f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.8f)))) {
                 Row(Modifier.fillMaxWidth().safeDrawingPadding().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -129,11 +131,12 @@ private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel, close: (
                     Box(Modifier.weight(1f))
                     IconButton({ c.togglePause(); poke() }) { Icon(if (c.paused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause, if (c.paused) "Play" else "Pause", tint = Color.White) }
                     IconButton({ list = !list; poke() }) { Icon(Icons.AutoMirrored.Rounded.List, "Channels", tint = Color.White) }
+                    PipButton()
                 }
                 Banner(c, Modifier.align(Alignment.BottomStart).safeDrawingPadding().padding(20.dp)) { d -> c.flip(d); poke() }
             }
         }
-        if (list) ChannelList(c, Modifier.align(Alignment.CenterEnd)) { ch -> c.tune(ch); list = false }
+        if (list && !pip) ChannelList(c, Modifier.align(Alignment.CenterEnd)) { ch -> c.tune(ch); list = false }
     }
 }
 

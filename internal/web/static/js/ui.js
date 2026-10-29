@@ -232,3 +232,39 @@ new MutationObserver((muts) => {
     if (n.tagName === 'SELECT') enhanceSelect(n); else if (n.querySelector) enhanceAll(n);
   }
 }).observe(document.documentElement, { childList: true, subtree: true });
+
+// pictureInPicture floats [video] in its own window, through the standard API
+// or Safari's own. [button] shows only where the browser can, and is enabled
+// once there's a picture to float (not while loading, nor for radio). Chrome
+// may also float a playing video by itself when the tab is left.
+export function pictureInPicture(video, button) {
+  const standard = !!document.pictureInPictureEnabled && !video.disablePictureInPicture;
+  const safari = !standard && typeof video.webkitSupportsPresentationMode === 'function' && video.webkitSupportsPresentationMode('picture-in-picture');
+  button.hidden = !standard && !safari;
+  if (button.hidden) return { toggle() {}, stop() {} };
+  const active = () => (standard ? document.pictureInPictureElement === video : video.webkitPresentationMode === 'picture-in-picture');
+  const update = () => {
+    button.disabled = !active() && (video.readyState < 1 || !video.videoWidth);
+    button.classList.toggle('on', active());
+  };
+  const toggle = () => {
+    if (button.disabled) return;
+    if (!standard) video.webkitSetPresentationMode(active() ? 'inline' : 'picture-in-picture');
+    else (active() ? document.exitPictureInPicture() : video.requestPictureInPicture()).catch(() => {});
+  };
+  const events = ['loadedmetadata', 'resize', 'emptied', 'enterpictureinpicture', 'leavepictureinpicture', 'webkitpresentationmodechanged'];
+  events.forEach((e) => video.addEventListener(e, update));
+  update();
+  const auto = (h) => { try { navigator.mediaSession?.setActionHandler('enterpictureinpicture', h); } catch {} };
+  if (standard) auto(() => video.requestPictureInPicture().catch(() => {}));
+  return {
+    toggle,
+    stop() {
+      events.forEach((e) => video.removeEventListener(e, update));
+      if (standard) auto(null);
+      if (!active()) return;
+      if (standard) document.exitPictureInPicture().catch(() => {});
+      else video.webkitSetPresentationMode('inline');
+    },
+  };
+}

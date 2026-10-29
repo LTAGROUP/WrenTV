@@ -151,6 +151,10 @@ private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel, pick: (L
     var digits by remember { mutableStateOf("") }
     // Bumped on every key press so the banner stays up while in use.
     var touched by remember { mutableIntStateOf(0) }
+    // The OK that opens the channel list: focus moves to the playing channel
+    // while it's held, and TV buttons click on release, so letting it through
+    // would pick that channel and close the list again. Its release is eaten.
+    var eatOkUp by remember { mutableStateOf(false) }
     val root = remember { FocusRequester() }
 
     fun showBanner() { banner = true; touched++ }
@@ -188,7 +192,15 @@ private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel, pick: (L
 
     Box(
         Modifier.fillMaxSize().background(Color.Black)
-            .onPreviewKeyEvent { if (it.type == KeyEventType.KeyDown) touched++; false }
+            .onPreviewKeyEvent { e ->
+                if (e.type == KeyEventType.KeyUp && e.key.isOk()) {
+                    val eat = eatOkUp
+                    eatOkUp = false
+                    return@onPreviewKeyEvent eat
+                }
+                if (e.type == KeyEventType.KeyDown) touched++
+                false
+            }
             .focusRequester(root)
             .focusable()
             .onKeyEvent { e ->
@@ -201,6 +213,7 @@ private fun LivePlayer(channels: List<LiveChannel>, start: LiveChannel, pick: (L
                     Key.DirectionUp, Key.ChannelUp -> { c.flip(1); true }
                     Key.DirectionDown, Key.ChannelDown -> { c.flip(-1); true }
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                        eatOkUp = true
                         if (digits.isNotEmpty()) { c.tuneNumber(digits); digits = "" } else guide = true
                         true
                     }
@@ -362,6 +375,8 @@ private fun ChannelList(channels: List<LiveChannel>, current: String, onPick: (L
         }
     }
 }
+
+private fun Key.isOk() = this == Key.DirectionCenter || this == Key.Enter || this == Key.NumPadEnter
 
 private fun digit(key: Key): Char? = when (key) {
     Key.Zero, Key.NumPad0 -> '0'

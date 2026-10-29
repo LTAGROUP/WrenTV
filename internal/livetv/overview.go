@@ -30,14 +30,25 @@ const shelfMax = 24
 // and coming up, the viewer's channels, then what's on by kind. A
 // programme on several channels shows once, on the one the viewer is
 // likeliest to want ([favorites], then [recents], then lineup order).
+// With several providers the lineup takes them in turn, so what they both
+// carry, and shelves that fill up, show every provider's channels rather
+// than only the first one's.
 func (s *Service) Overview(favorites, recents, shows []string) []Shelf {
 	t := time.Now().Unix()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	sources := map[string]int{} // each provider's place
+	for _, c := range s.visible {
+		if _, ok := sources[c.Source]; !ok {
+			sources[c.Source] = len(sources)
+		}
+	}
 	rank := make(map[string]int, len(s.visible))
-	for i, c := range s.visible {
-		rank[c.ID] = len(favorites) + len(recents) + i
+	turn := map[string]int{} // each provider's channels so far
+	for _, c := range s.visible {
+		rank[c.ID] = len(favorites) + len(recents) + turn[c.Source]*len(sources) + sources[c.Source]
+		turn[c.Source]++
 	}
 	for i, id := range recents {
 		if _, ok := rank[id]; ok {

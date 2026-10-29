@@ -12,6 +12,7 @@ import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import coil3.request.crossfade
+import com.wrentv.phone.player.Pip
 import com.wrentv.phone.ui.WrenApp
 import com.wrentv.tv.data.AppState
 import com.wrentv.tv.data.Client
@@ -46,6 +47,11 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
         setContent { WrenApp(state) }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        Pip.onUserLeaveHint(this)
     }
 
     override fun onResume() {

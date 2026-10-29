@@ -1,5 +1,3 @@
-@file:OptIn(UnstableApi::class)
-
 package com.wrentv.phone.ui
 
 import androidx.compose.animation.core.animateFloatAsState
@@ -188,6 +186,8 @@ fun LiveTvScreen() {
     val everyChannel = state.liveChannels
     val channels = remember(everyChannel, chosenProvider) { chosenProvider?.let { p -> everyChannel.filter { it.source == p.id } } ?: everyChannel }
     val byId = remember(channels) { channels.associateBy { it.id } }
+    // The overview and search span every provider, whichever the guide shows.
+    val everyById = remember(everyChannel) { everyChannel.associateBy { it.id } }
     fun programs(c: LiveChannel) = guide[c.id] ?: listOfNotNull(c.now, c.next)
     fun onNow(c: LiveChannel) = programs(c).firstOrNull { it.start <= now && now < it.end }
     val groups = channels.mapNotNull { it.group?.takeIf(String::isNotEmpty) }.distinct()
@@ -212,7 +212,7 @@ fun LiveTvScreen() {
     val shown = if (filter == "recent" && !searching) list else list.filter { onNow(it) != null } + list.filter { onNow(it) == null }
     val spotlight = state.liveRecents.firstNotNullOfOrNull { byId[it] } ?: channels.firstOrNull()
     val overview = view == "overview" && !searching
-    fun channel(t: LiveTile) = channels.firstOrNull { it.id == t.channelId }
+    fun channel(t: LiveTile) = everyById[t.channelId]
     val heroTile = shelves?.firstNotNullOfOrNull { sh -> sh.tiles.firstOrNull { t -> channel(t) != null && t.program?.let { it.start <= now } != false } }
 
     // Channel up and down go through [ids]: the shelf, or the guide's list.
@@ -387,7 +387,7 @@ fun LiveTvScreen() {
                 val airings = if (searching) results?.airings.orEmpty() else emptyList()
                 if (airings.isNotEmpty()) item("h-shows") { Header("Shows", m.gutter) }
                 items(airings, { "a:${it.channelId}:${it.program.start}" }) { a ->
-                    val ch = channels.firstOrNull { it.id == a.channelId } ?: return@items
+                    val ch = everyById[a.channelId] ?: return@items
                     val p = a.program
                     val airing = p.start <= now && now < p.end
                     Row(
@@ -673,6 +673,7 @@ private fun Spotlight(ch: LiveChannel, p: LiveProgram?, next: LiveProgram?, now:
 }
 
 /** A channel's muted live picture over the programme's (or tile's) art until it starts. */
+@androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 private fun Picture(ch: LiveChannel, p: LiveProgram?, preview: LivePreview, modifier: Modifier, tile: LiveTile? = null) {
     Box(modifier) {

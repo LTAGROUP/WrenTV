@@ -3,7 +3,7 @@
 // either shelves of games, the viewer's shows and channels and what's on by
 // kind, or filters and a grid of every channel's programmes with a now line.
 import { api } from './api.js';
-import { esc, $, $$, el, toast, icons } from './ui.js';
+import { esc, $, $$, el, toast, icons, pictureInPicture } from './ui.js';
 import { setTitle } from './app.js';
 
 const ROW = 68;          // guide row height, px
@@ -649,6 +649,7 @@ export function openLive(start, listFn, { programs, onNow, onClose }) {
   </div>`);
   const video = $('video', ov);
   const stream = new Stream(video);
+  const pip = pictureInPicture(video, $('[data-a="pip"]', ov));
   stream.onfail = () => {
     ov.classList.remove('tuning');
     const msg = $('.lv-p-msg', ov);
@@ -704,6 +705,7 @@ export function openLive(start, listFn, { programs, onNow, onClose }) {
   };
 
   function close() {
+    pip.stop();
     stream.stop();
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     document.removeEventListener('keydown', key, true);
@@ -720,6 +722,7 @@ export function openLive(start, listFn, { programs, onNow, onClose }) {
     else if (k === 'Backspace' || k === 'l') { if (last) { e.preventDefault(); tune(last); } }
     else if (k === 'm') { video.muted = !video.muted; $('[data-a="mute"]', ov).innerHTML = speaker(video.muted); }
     else if (k === 'f') { fullscreen(); }
+    else if (k === 'p') { pip.toggle(); }
     else return wake();
     wake();
   };
@@ -732,7 +735,7 @@ export function openLive(start, listFn, { programs, onNow, onClose }) {
     if (a === 'up') return step(-1);
     if (a === 'down') return step(1);
     if (a === 'fs') return fullscreen();
-    if (a === 'pip') return (document.pictureInPictureElement ? document.exitPictureInPicture() : video.requestPictureInPicture?.())?.catch?.(() => {});
+    if (a === 'pip') return pip.toggle();
     if (a === 'mute') { video.muted = !video.muted; e.target.closest('button').innerHTML = speaker(video.muted); return; }
     const c = e.target.closest('[data-ch]');
     if (c) { const next = listFn().find((x) => x.id === c.dataset.ch); if (next && (next.id !== ch.id || !stream.sid)) tune(next); return; }
