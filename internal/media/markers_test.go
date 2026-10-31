@@ -22,6 +22,13 @@ func TestMarkersFromChapters(t *testing.T) {
 		{"missing end times", []Chapter{ch(0, 0, "Recap"), ch(30, 0, "Opening"), ch(85, 0, "Episode"), ch(1250, 0, "Ending")}, 1320,
 			&Range{30, 85}, &Range{1250, 1320}},
 	}
+	recap := MarkersFromChapters([]Chapter{ch(0, 0, "Recap"), ch(30, 0, "Opening"), ch(85, 0, "Episode")}, 1320)
+	if !eqRange(recap.Recap, &Range{0, 30}) {
+		t.Fatalf("recap = %v", recap.Recap)
+	}
+	if p := MarkersFromChapters([]Chapter{ch(0, 45, "Previously On"), ch(45, 3000, "Episode")}, 3000); !eqRange(p.Recap, &Range{0, 45}) || p.Intro != nil {
+		t.Fatalf("previously on = %+v", p)
+	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			m := MarkersFromChapters(c.chapters, c.duration)

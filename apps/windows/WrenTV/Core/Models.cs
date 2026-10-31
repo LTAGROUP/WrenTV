@@ -757,6 +757,7 @@ public sealed class TimeRange
 /// The skippable parts of a file, from chapter names or audio fingerprinting.
 public sealed class Markers
 {
+    public TimeRange? Recap { get; set; }
     public TimeRange? Intro { get; set; }
     public TimeRange? Credits { get; set; }
 }

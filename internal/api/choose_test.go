@@ -145,3 +145,15 @@ func TestStartingSubtitle(t *testing.T) {
 		t.Errorf("forced named in the title: got %d, want 3", got)
 	}
 }
+
+func TestChooseFileGuessedHDR(t *testing.T) {
+	dv := &db.MediaFile{ID: "dv", StreamID: "s1", Height: 2160, Width: 3840, HDR: "DV", Size: 30 << 30}
+	hdr := &db.MediaFile{ID: "hdr", StreamID: "s2", Height: 2160, Width: 3840, HDR: "HDR10", Size: 20 << 30, StreamRank: 1}
+	files := []*db.MediaFile{dv, hdr}
+	if got := chooseFile(files, playRequest{Caps: media.ClientCaps{HDR: true}}).ID; got != "hdr" {
+		t.Errorf("HDR10 TV: got %s, want the HDR10 stream over Dolby Vision only", got)
+	}
+	if got := chooseFile(files, playRequest{Caps: media.ClientCaps{HDR: true, DolbyVision: true}}).ID; got != "dv" {
+		t.Errorf("Dolby Vision TV: got %s, want the bigger Dolby Vision stream", got)
+	}
+}

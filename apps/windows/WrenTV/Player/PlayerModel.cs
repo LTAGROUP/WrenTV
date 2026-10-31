@@ -3,11 +3,11 @@ using WrenTV.Core;
 namespace WrenTV.Player;
 
 /// Plays one item (then the next episode) through mpv: asks the server for a
-/// stream, reports progress, and offers skip intro / credits and up next.
+/// stream, reports progress, and offers skip recap / intro / credits and up next.
 public sealed class PlayerModel
 {
     public enum PhaseKind { Loading, Pending, Error, Playing, Ended }
-    public enum SkipKind { Intro, Credits }
+    public enum SkipKind { Recap, Intro, Credits }
 
     readonly WrenTVApi api;
     readonly Mpv mpv;
@@ -321,6 +321,7 @@ public sealed class PlayerModel
     void UpdateSkip()
     {
         var t = Position;
+        if (markers.Recap is { } r && t < r.Start) dismissed.Remove(SkipKind.Recap);
         if (markers.Intro is { } i && t < i.Start) dismissed.Remove(SkipKind.Intro);
         // No credits marker: count down over the last seconds of an episode
         // that has a next one, so it still moves on before the end.
@@ -329,7 +330,8 @@ public sealed class PlayerModel
         if (credits is { } c0 && t < c0.Start - 1) { dismissed.Remove(SkipKind.Credits); CancelCountdown(); }
 
         SkipKind? next = null;
-        if (markers.Intro is { } intro && t >= intro.Start && t < intro.End - 1 && !dismissed.Contains(SkipKind.Intro)) next = SkipKind.Intro;
+        if (markers.Recap is { } recap && t >= recap.Start && t < recap.End - 1 && !dismissed.Contains(SkipKind.Recap)) next = SkipKind.Recap;
+        else if (markers.Intro is { } intro && t >= intro.Start && t < intro.End - 1 && !dismissed.Contains(SkipKind.Intro)) next = SkipKind.Intro;
         else if (credits is { } c && t >= c.Start && t < c.End - 1 && !dismissed.Contains(SkipKind.Credits)) next = SkipKind.Credits;
         if (next == SkipKind.Credits && nextEpisode != null && Countdown == null && countdown == null && !Paused) StartCountdown();
         if (Skip != next)
@@ -337,6 +339,15 @@ public sealed class PlayerModel
             Skip = next;
             Changed?.Invoke();
         }
+    }
+
+    public void SkipRecap()
+    {
+        if (markers.Recap is not { } r) return;
+        dismissed.Add(SkipKind.Recap);
+        Skip = null;
+        SeekTo(r.End);
+        Changed?.Invoke();
     }
 
     public void SkipIntro()

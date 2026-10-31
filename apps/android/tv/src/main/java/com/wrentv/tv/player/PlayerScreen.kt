@@ -244,6 +244,7 @@ fun PlayerScreen(target: PlayTarget) {
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
                         eatOkUp = true
                         when (c.skip) {
+                            PlayerController.Skip.Recap -> c.skipRecap()
                             PlayerController.Skip.Intro -> c.skipIntro()
                             PlayerController.Skip.Credits -> c.skipCredits()
                             // Opens the controls on Play; a second OK pauses.
@@ -314,6 +315,7 @@ fun PlayerScreen(target: PlayTarget) {
         AnimatedVisibility(controls && c.upNext == null, enter = fadeIn(), exit = fadeOut()) {
             Controls(c, playButton, seekBar, shelf, onShelf = { shelf = it && c.episode != null }, onPanel = { panel = it }, onStats = { stats = !stats }, onSkip = {
                 when (c.skip) {
+                    PlayerController.Skip.Recap -> c.skipRecap()
                     PlayerController.Skip.Intro -> c.skipIntro()
                     PlayerController.Skip.Credits -> c.skipCredits()
                     null -> {}
@@ -697,6 +699,7 @@ private fun ScrubPreview(url: String?, seconds: Double, modifier: Modifier = Mod
 }
 
 private fun skipText(skip: PlayerController.Skip?, countdown: Int?): String = when (skip) {
+    PlayerController.Skip.Recap -> "Skip Recap"
     PlayerController.Skip.Intro -> "Skip Intro"
     PlayerController.Skip.Credits -> if (countdown != null) "Next Episode in $countdown" else "Skip Credits"
     null -> ""

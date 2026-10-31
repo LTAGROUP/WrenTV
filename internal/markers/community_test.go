@@ -36,7 +36,7 @@ func TestCommunityLookup(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		w.Write([]byte(`{"intro":{"start_sec":60,"end_sec":105,"confidence":0.9},"outro":{"start_sec":2700,"end_sec":null},"recap":null}`))
+		w.Write([]byte(`{"intro":{"start_sec":60,"end_sec":105,"confidence":0.9},"outro":{"start_sec":2700,"end_sec":null},"recap":{"start_sec":0,"end_sec":42}}`))
 	}))
 	defer srv.Close()
 	old := communityBase
@@ -51,6 +51,9 @@ func TestCommunityLookup(t *testing.T) {
 	}
 	if m.Intro == nil || m.Intro.Start != 60 || m.Intro.End != 105 || m.Credits == nil || m.Credits.Start != 2700 || m.Source != "community" {
 		t.Fatalf("got %+v", m)
+	}
+	if m.Recap == nil || m.Recap.Start != 0 || m.Recap.End != 42 {
+		t.Fatalf("recap = %+v", m.Recap)
 	}
 	// An open outro runs to the end of this file.
 	if f := Fit(m, 2800); f.Credits == nil || f.Credits.End != 2800 {

@@ -185,6 +185,7 @@ fun PlayerScreen(target: PlayTarget) {
             val next = c.upNext
             when {
                 next != null && c.skip == PlayerController.Skip.Credits || next != null && c.countdown != null -> UpNext(c)
+                c.skip == PlayerController.Skip.Recap -> GlassButton("Skip Recap", Icons.Rounded.SkipNext, { c.skipRecap() })
                 c.skip == PlayerController.Skip.Intro -> GlassButton("Skip Intro", Icons.Rounded.SkipNext, { c.skipIntro() })
                 c.skip == PlayerController.Skip.Credits -> GlassButton("Skip Credits", Icons.Rounded.SkipNext, { c.skipCredits() })
             }

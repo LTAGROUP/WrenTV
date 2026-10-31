@@ -142,7 +142,7 @@ final class PlayerModel {
     /// The last play response, for the stats panel.
     @ObservationIgnored private var response: PlayResponse?
 
-    enum Skip: Equatable { case intro, credits }
+    enum Skip: Equatable { case recap, intro, credits }
 
     /// The chapter playing now.
     var currentChapter: Chapter? { chapters.last(where: { $0.start <= position + 0.01 }) }
@@ -557,6 +557,7 @@ final class PlayerModel {
     private func updateSkip() {
         let t = position
         // Seeking back before a marker offers it again.
+        if let r = markers.recap, t < r.start { dismissed.remove(.recap) }
         if let i = markers.intro, t < i.start { dismissed.remove(.intro) }
         // No credits marker: count down over the last seconds of an episode
         // that has a next one, so it still moves on before the end.
@@ -565,7 +566,9 @@ final class PlayerModel {
         if let c = credits, t < c.start - 1 { dismissed.remove(.credits); cancelCountdown() }
 
         var next: Skip?
-        if let i = markers.intro, t >= i.start, t < i.end - 1, !dismissed.contains(.intro) {
+        if let r = markers.recap, t >= r.start, t < r.end - 1, !dismissed.contains(.recap) {
+            next = .recap
+        } else if let i = markers.intro, t >= i.start, t < i.end - 1, !dismissed.contains(.intro) {
             next = .intro
         } else if let c = credits, t >= c.start, t < c.end - 1, !dismissed.contains(.credits) {
             next = .credits
@@ -574,6 +577,13 @@ final class PlayerModel {
             startCountdown()
         }
         if skip != next { skip = next }
+    }
+
+    func skipRecap() {
+        guard let r = markers.recap else { return }
+        dismissed.insert(.recap)
+        skip = nil
+        seek(to: r.end)
     }
 
     func skipIntro() {

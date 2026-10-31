@@ -12,6 +12,40 @@ import (
 // or a regular expression written /like this/ (flags after the last slash,
 // e.g. /hevc/i). Words and phrases ignore case.
 func ExcludeMatcher(words []string) (func(string) bool, error) {
+	res, err := wordPatterns(words)
+	if err != nil || len(res) == 0 {
+		return nil, err
+	}
+	return func(s string) bool {
+		for _, re := range res {
+			if re.MatchString(s) {
+				return true
+			}
+		}
+		return false
+	}, nil
+}
+
+// PreferMatcher compiles the owner's preferred words (written like
+// ExcludeMatcher's) into a score: the first entry a name has counts for the
+// most, so the list reads in order of preference.
+func PreferMatcher(words []string) (func(string) int, error) {
+	res, err := wordPatterns(words)
+	if err != nil || len(res) == 0 {
+		return nil, err
+	}
+	return func(s string) int {
+		for i, re := range res {
+			if re.MatchString(s) {
+				return len(res) - i
+			}
+		}
+		return 0
+	}, nil
+}
+
+// wordPatterns compiles a list of words, phrases and /regular expressions/.
+func wordPatterns(words []string) ([]*regexp.Regexp, error) {
 	var res []*regexp.Regexp
 	for _, w := range words {
 		w = strings.TrimSpace(w)
@@ -20,7 +54,7 @@ func ExcludeMatcher(words []string) (func(string) bool, error) {
 		}
 		if re, ok, err := slashRegexp(w); ok {
 			if err != nil {
-				return nil, fmt.Errorf("exclude %q: %w", w, err)
+				return nil, fmt.Errorf("%q: %w", w, err)
 			}
 			res = append(res, re)
 			continue
@@ -35,17 +69,7 @@ func ExcludeMatcher(words []string) (func(string) bool, error) {
 		// Letters and digits on either side mean it's part of a longer word.
 		res = append(res, regexp.MustCompile(`(?i)(?:^|[^\pL\pN])`+strings.Join(parts, `[\s._-]+`)+`(?:$|[^\pL\pN])`))
 	}
-	if len(res) == 0 {
-		return nil, nil
-	}
-	return func(s string) bool {
-		for _, re := range res {
-			if re.MatchString(s) {
-				return true
-			}
-		}
-		return false
-	}, nil
+	return res, nil
 }
 
 func isNameSep(r rune) bool { return r == ' ' || r == '.' || r == '_' || r == '-' || r == '\t' }
@@ -69,9 +93,11 @@ func slashRegexp(w string) (*regexp.Regexp, bool, error) {
 	return re, true, err
 }
 
-// rank is Rank without releases the owner excluded.
+// rank is Rank without releases the owner excluded, and with their size
+// floor and preferred words.
 func (s *Service) rank(rels []Release, quality string, maxSize int64, season int) []Release {
-	if ex, _ := ExcludeMatcher(s.cfg().ExcludeWords); ex != nil {
+	cfg := s.cfg()
+	if ex, _ := ExcludeMatcher(cfg.ExcludeWords); ex != nil {
 		kept := make([]Release, 0, len(rels))
 		for _, r := range rels {
 			if !ex(r.Name) && !ex(r.FileName) && !ex(r.Text) {
@@ -80,5 +106,6 @@ func (s *Service) rank(rels []Release, quality string, maxSize int64, season int
 		}
 		rels = kept
 	}
-	return Rank(rels, quality, maxSize, season)
+	prefer, _ := PreferMatcher(cfg.PreferWords)
+	return RankWith(rels, quality, RankOptions{MaxSize: maxSize, MinSize: int64(cfg.MinSizeGB[quality] * (1 << 30)), Season: season, Prefer: prefer})
 }

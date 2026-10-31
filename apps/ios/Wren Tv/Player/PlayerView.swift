@@ -597,7 +597,7 @@ private struct ChapterTicks: View {
             let w = g.size.width - inset * 2
             let x = { (t: Double) in inset + w * CGFloat(min(max(t / d, 0), 1)) }
             ZStack(alignment: .leading) {
-                ForEach([model.markers.intro, model.markers.credits].compactMap { $0 }, id: \.start) { r in
+                ForEach([model.markers.recap, model.markers.intro, model.markers.credits].compactMap { $0 }, id: \.start) { r in
                     Capsule().fill(Color.wrenEmber.opacity(0.45))
                         .frame(width: max(2, x(r.end) - x(r.start)), height: 4)
                         .offset(x: x(r.start))
@@ -656,9 +656,9 @@ private struct SkipOverlay: View {
             .transition(.move(edge: .trailing).combined(with: .opacity))
         } else if let k = model.skip {
             Button {
-                k == .intro ? model.skipIntro() : model.skipCredits()
+                k == .recap ? model.skipRecap() : k == .intro ? model.skipIntro() : model.skipCredits()
             } label: {
-                Text(k == .intro ? "Skip Intro" : model.nextEpisode != nil ? "Next Episode" : "Skip Credits")
+                Text(k == .recap ? "Skip Recap" : k == .intro ? "Skip Intro" : model.nextEpisode != nil ? "Next Episode" : "Skip Credits")
                     .font(.headline)
                     .padding(.horizontal, 18).padding(.vertical, 10)
                     .foregroundStyle(.white)

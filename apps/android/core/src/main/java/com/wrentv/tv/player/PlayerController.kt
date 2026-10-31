@@ -76,7 +76,7 @@ class PlayerController(
         data object Ended : Phase
     }
 
-    enum class Skip { Intro, Credits }
+    enum class Skip { Recap, Intro, Credits }
 
     var itemId by mutableStateOf(target.itemId); private set
     var title by mutableStateOf(target.title); private set
@@ -702,24 +702,34 @@ class PlayerController(
 
     private fun updateSkip() {
         val t = position
+        val recap = markers.recap
         val intro = markers.intro
         // An episode with no credits marker counts down over its last
         // seconds instead, so it can still roll on to the next.
         val credits = markers.credits
             ?: if (nextEpisode != null && duration >= 300) TimeRange(duration - UP_NEXT_LEAD, duration + 1) else null
         // Seeking back before a marker offers it again.
+        if (recap != null && t < recap.start) dismissed.remove(Skip.Recap)
         if (intro != null && t < intro.start) dismissed.remove(Skip.Intro)
         if (credits != null && t < credits.start - 1) {
             dismissed.remove(Skip.Credits)
             cancelCountdown()
         }
         val next = when {
+            recap != null && t >= recap.start && t < recap.end - 1 && Skip.Recap !in dismissed -> Skip.Recap
             intro != null && t >= intro.start && t < intro.end - 1 && Skip.Intro !in dismissed -> Skip.Intro
             credits != null && t >= credits.start && t < credits.end - 1 && Skip.Credits !in dismissed -> Skip.Credits
             else -> null
         }
         if (next == Skip.Credits && nextEpisode != null && countdown == null && countdownJob == null && !paused) startCountdown()
         if (skip != next) skip = next
+    }
+
+    fun skipRecap() {
+        val r = markers.recap ?: return
+        dismissed += Skip.Recap
+        skip = null
+        seekTo(r.end)
     }
 
     fun skipIntro() {

@@ -34,7 +34,7 @@ type Cache interface {
 	CachePut(ctx context.Context, key string, body []byte)
 }
 
-// Community looks up intro and credits timestamps that viewers submitted to
+// Community looks up recap, intro and credits timestamps that viewers submitted to
 // IntroDB, by IMDb id. It covers what neither chapters nor fingerprinting
 // can: streamed files, which the server never has on disk to compare, and
 // lone episodes with no season peers. Reads are anonymous.
@@ -55,6 +55,7 @@ type segment struct {
 }
 
 type segments struct {
+	Recap *segment `json:"recap"`
 	Intro *segment `json:"intro"`
 	Outro *segment `json:"outro"`
 }
@@ -122,6 +123,9 @@ func parseSegments(b []byte) media.Markers {
 	var s segments
 	_ = json.Unmarshal(b, &s)
 	var m media.Markers
+	if s.Recap != nil && s.Recap.End > s.Recap.Start {
+		m.Recap = &media.Range{Start: s.Recap.Start, End: s.Recap.End}
+	}
 	if s.Intro != nil && s.Intro.End > s.Intro.Start {
 		m.Intro = &media.Range{Start: s.Intro.Start, End: s.Intro.End}
 	}
@@ -139,6 +143,11 @@ func parseSegments(b []byte) media.Markers {
 func Fit(m media.Markers, duration float64) media.Markers {
 	if duration <= 0 {
 		return m
+	}
+	if m.Recap != nil {
+		if l := m.Recap.End - m.Recap.Start; l < 5 || l > 300 || m.Recap.Start >= duration/2 {
+			m.Recap = nil
+		}
 	}
 	if m.Intro != nil {
 		if l := m.Intro.End - m.Intro.Start; l < 5 || l > 300 || m.Intro.Start >= duration/2 {

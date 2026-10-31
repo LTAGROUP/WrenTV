@@ -4,7 +4,7 @@ import SwiftUI
 /// The full-screen player: Apple TV's own player for the controls, with the
 /// server's audio tracks, versions and subtitle-site search in its menus,
 /// chapters, the season's episodes and playback stats in its info panel
-/// (swipe down), and Skip Intro / Next Episode as its contextual buttons.
+/// (swipe down), and Skip Recap / Skip Intro / Next Episode as its contextual buttons.
 struct PlayerScreen: View {
     @Environment(AppState.self) private var state
     let target: PlayTarget
@@ -264,6 +264,10 @@ private struct SystemPlayer: UIViewControllerRepresentable {
     private func actions() -> [UIAction] {
         let model = self.model
         switch skip {
+        case .recap:
+            return [UIAction(title: "Skip Recap", image: UIImage(systemName: "forward.fill")) { _ in
+                MainActor.assumeIsolated { model.skipRecap() }
+            }]
         case .intro:
             return [UIAction(title: "Skip Intro", image: UIImage(systemName: "forward.fill")) { _ in
                 MainActor.assumeIsolated { model.skipIntro() }

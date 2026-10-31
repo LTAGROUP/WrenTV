@@ -464,8 +464,9 @@ function streamingTab(s, libs) {
     <div class="panel"><h2>Quality</h2>
       <p class="small muted">Streams are saved for each quality picked here. The player chooses between them like versions of a file.</p>
       <div class="quality-grid">${QUALITIES.map(([q, label]) => `<div class="q"><label class="check"><input type="checkbox" name="stQ" value="${q}" ${st.qualities.includes(q) ? 'checked' : ''}> ${label}</label>
+        <div class="unit-input"><input name="stMin-${q}" type="number" min="0" step="0.5" value="${st.minSizeGB?.[q] || ''}" placeholder="Any size"><span>GB min</span></div>
         <div class="unit-input"><input name="stMax-${q}" type="number" min="0" step="0.5" value="${st.maxSizeGB?.[q] || ''}" placeholder="Any size"><span>GB max</span></div></div>`).join('')}</div>
-      <p class="small muted" style="margin-bottom:0">Size limits apply to the file that plays (one episode of a season pack, not the whole pack).</p>
+      <p class="small muted" style="margin-bottom:0">The maximum applies to the file that plays (one episode of a season pack, not the whole pack). The minimum skips small single releases; season packs aren't held to it.</p>
     </div>
 
     <div class="panel"><h2>Saving to the server</h2>
@@ -484,7 +485,8 @@ function streamingTab(s, libs) {
 
     <div class="panel"><h2>Release filters</h2>
       <div class="field"><label>Skip releases containing</label><textarea name="stExclude" rows="3" placeholder="One per line: HDTS, korean dub, /\\b3d\\b/i">${esc((st.excludeWords || []).join('\n'))}</textarea></div>
-      <p class="small muted">Whole words only, so TS won't skip DTS-HD. Phrases match across dots, dashes and underscores. Put a regular expression between slashes.</p>
+      <div class="field"><label>Prefer releases containing</label><textarea name="stPrefer" rows="3" placeholder="One per line, most wanted first: remux, /\\bDV\\b.*\\bHDR10\\b/i, web-dl">${esc((st.preferWords || []).join('\n'))}</textarea></div>
+      <p class="small muted">Whole words only, so TS won't skip DTS-HD. Phrases match across dots, dashes and underscores. Put a regular expression between slashes. Preferred releases go first within each quality, after English and season-pack releases; higher lines count for more.</p>
     </div>
 
     <div class="panel"><h2>Limits</h2>
@@ -683,7 +685,7 @@ export async function viewSettings() {
         <div class="field"><label>Hardware acceleration</label><select name="hwaccel">${hw.map((h) => `<option ${h === s.hwaccel ? 'selected' : ''}>${h}</option>`).join('')}</select></div>
       </div>
         <label class="check"><input type="checkbox" name="markerFingerprinting" ${s.markerFingerprinting ? 'checked' : ''}> Detect intros and credits by comparing episode audio (background job; chapters are always used)</label>
-        <label class="check"><input type="checkbox" name="markerCommunity" ${s.markerCommunity ? 'checked' : ''}> Use community intro and credits timestamps from IntroDB where nothing else has them (sends the title's IMDb id to IntroDB)</label></div>
+        <label class="check"><input type="checkbox" name="markerCommunity" ${s.markerCommunity ? 'checked' : ''}> Use community recap, intro and credits timestamps from IntroDB where nothing else has them (sends the title's IMDb id to IntroDB)</label></div>
       <div class="panel"><h2>Online subtitles</h2>
         <p class="small muted">Lets players search subtitle sites when a file has none in the right language. A provider is used once it has a key.</p>
         <div class="form-grid">
@@ -926,12 +928,14 @@ export async function viewSettings() {
       addons,
       qualities: $$('input[name=stQ]:checked', node).map((c) => c.value),
       maxSizeGB: Object.fromEntries(QUALITIES.map(([q]) => [q, num(v['stMax-' + q])])),
+      minSizeGB: Object.fromEntries(QUALITIES.map(([q]) => [q, num(v['stMin-' + q])])),
       mode: v.stMode,
       movieLibrary: v.stMovieLib,
       showLibrary: v.stShowLib,
       downloadQuality: v.stDlQuality,
       perQuality: int(v.stPerQuality),
       excludeWords: String(v.stExclude || '').split('\n').map((w) => w.trim()).filter(Boolean),
+      preferWords: String(v.stPrefer || '').split('\n').map((w) => w.trim()).filter(Boolean),
       usenetCacheMB: int(v.stCacheMB),
       usenetDiskCacheGB: num(v.stDiskGB),
       usenet: !!v.stUsenet,

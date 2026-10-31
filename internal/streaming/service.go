@@ -753,7 +753,9 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 		s.recordLookup(ctx, it.ID, len(sts), err)
 		return len(sts), err
 	}
+	t0 := time.Now()
 	rels, nzbs, err := s.search(ctx, s.usenetQuery(ctx, it, imdb, season, episode))
+	searched := time.Since(t0)
 	if err != nil && len(rels) == 0 {
 		s.recordLookup(ctx, it.ID, len(sts), err)
 		return len(sts), err
@@ -786,10 +788,16 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 	var mu sync.Mutex
 	var readyOnce sync.Once
 	found := len(sts)
+	var readyAfter time.Duration
 	fire := func() {
 		unlead()
 		if ready != nil {
-			readyOnce.Do(ready)
+			readyOnce.Do(func() {
+				mu.Lock()
+				readyAfter = time.Since(t0)
+				mu.Unlock()
+				ready()
+			})
 		}
 	}
 	settle := func(q string, got bool) {
@@ -1009,7 +1017,11 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 		}(q)
 	}
 	wg.Wait()
-	slog.Info("stream lookup", "title", it.Title, "season", season, "episode", episode, "releases", len(rels), "usenet", len(nzbs), "streams", found)
+	mu.Lock()
+	tookReady := readyAfter
+	mu.Unlock()
+	slog.Info("stream lookup", "title", it.Title, "season", season, "episode", episode, "releases", len(rels), "usenet", len(nzbs), "streams", found,
+		"search", searched.Round(time.Millisecond), "ready", tookReady.Round(time.Millisecond), "took", time.Since(t0).Round(time.Millisecond))
 	s.recordLookup(ctx, it.ID, found, nil)
 	return found, nil
 }
@@ -1043,9 +1055,15 @@ func (s *Service) add(ctx context.Context, r Release, caches map[string]*cacheSt
 			f := RemoteFile{Name: linkFileName(r.FileName, ""), Size: r.Size}
 			return &pick{rel: r, tor: &Torrent{}, file: f}, true
 		}
+		opened := time.Now()
 		target, size, err := openLink(ctx, r.Link)
 		if err != nil {
-			slog.Debug("addon link", "release", r.Name, "addon", r.Addon, "err", err)
+			// A slow failure holds up the lookup, so it's worth seeing.
+			if took := time.Since(opened); took > 5*time.Second {
+				slog.Info("slow addon link failed", "release", r.Name, "addon", r.Addon, "took", took.Round(time.Millisecond), "err", err)
+			} else {
+				slog.Debug("addon link", "release", r.Name, "addon", r.Addon, "err", err)
+			}
 			return nil, true
 		}
 		if maxSize > 0 && size > maxSize {

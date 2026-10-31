@@ -39,6 +39,12 @@ class AppState(context: Context) {
     var themeMusic: Boolean
         get() = themeMusicOn
         set(v) { themeMusicOn = v; store.setBool("themeMusic", v) }
+    /** HDR output: "auto" (what the display reports), "on" or "off". Kept on this TV; DeviceCaps reads it
+     *  when a play starts, for TVs whose HDR the device can't see. */
+    private var hdrModeValue by mutableStateOf(store.string("hdrMode", "auto"))
+    var hdrMode: String
+        get() = hdrModeValue
+        set(v) { hdrModeValue = v; store.setString("hdrMode", v) }
     /** What the screensaver shows: "auto" (the library's highlights), "collection:<id>" or "clock". Kept on this TV. */
     private var screensaverValue by mutableStateOf(store.string("screensaver", "auto"))
     var screensaver: String

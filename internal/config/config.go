@@ -211,6 +211,13 @@ type StreamingConfig struct {
 	ExcludeWords []string `yaml:"exclude_words"`
 	// MaxSizeGB skips releases larger than this per quality (0 = no limit).
 	MaxSizeGB map[string]float64 `yaml:"max_size_gb"`
+	// MinSizeGB skips releases smaller than this per quality (0 = no limit).
+	// Season packs are let through: their size is the whole pack's.
+	MinSizeGB map[string]float64 `yaml:"min_size_gb"`
+	// PreferWords puts releases that have any of these (same forms as
+	// ExcludeWords) ahead of the rest at their quality; earlier entries
+	// count for more.
+	PreferWords []string `yaml:"prefer_words"`
 	// Prefetch looks streams up ahead of play: the rest of the season after
 	// an episode is played, and what's on watchlists.
 	Prefetch bool `yaml:"prefetch"`

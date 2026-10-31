@@ -12,7 +12,7 @@ using static WrenTV.Player.PlayerModel;
 namespace WrenTV.UI;
 
 /// Plays a movie or episode: seek bar, tracks, versions, chapters, the
-/// season's episodes, subtitle-site search, stats, skip intro / credits and
+/// season's episodes, subtitle-site search, stats, skip recap / intro / credits and
 /// the next episode.
 sealed class PlayerWindow : VideoWindow
 {
@@ -156,7 +156,8 @@ sealed class PlayerWindow : VideoWindow
             case VirtualKey.Down: model.SetVolume(model.Volume - 5); return true;
             case VirtualKey.M: model.ToggleMute(); return true;
             case VirtualKey.S:
-                if (model.Skip == SkipKind.Intro) model.SkipIntro();
+                if (model.Skip == SkipKind.Recap) model.SkipRecap();
+                else if (model.Skip == SkipKind.Intro) model.SkipIntro();
                 else if (model.Skip == SkipKind.Credits) model.SkipCredits();
                 return true;
             case VirtualKey.N when model.UpNext != null: model.PlayNext(); return true;
@@ -231,7 +232,9 @@ sealed class PlayerWindow : VideoWindow
         skipPanel.Children.Clear();
         if (model.Phase == PhaseKind.Playing)
         {
-            if (model.Skip == SkipKind.Intro)
+            if (model.Skip == SkipKind.Recap)
+                skipPanel.Children.Add(Ui.Button("Skip Recap", model.SkipRecap, "", accent: true));
+            else if (model.Skip == SkipKind.Intro)
                 skipPanel.Children.Add(Ui.Button("Skip Intro", model.SkipIntro, "", accent: true));
             else if (model.Skip == SkipKind.Credits)
             {

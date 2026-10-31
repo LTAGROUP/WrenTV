@@ -99,6 +99,7 @@ type streamingView struct {
 	PerQuality      int                    `json:"perQuality"`
 	Usenet          bool                   `json:"usenet"`
 	MaxSizeGB       map[string]float64     `json:"maxSizeGB"`
+	MinSizeGB       map[string]float64     `json:"minSizeGB"`
 	Prefetch        bool                   `json:"prefetch"`
 	LookupOnOpen    bool                   `json:"lookupOnOpen"`
 	CheckAddonLinks bool                   `json:"checkAddonLinks"`
@@ -113,6 +114,7 @@ type streamingView struct {
 	UsenetCacheMB   int                    `json:"usenetCacheMB"`
 	UsenetDiskGB    float64                `json:"usenetDiskCacheGB"`
 	ExcludeWords    []string               `json:"excludeWords"`
+	PreferWords     []string               `json:"preferWords"`
 }
 
 // indexerView is a Newznab indexer without its API key.
@@ -168,7 +170,8 @@ func (s *Server) settings() settingsView {
 	sv := streamingView{Enabled: st.Enabled, Active: s.Streaming.Active(), Addons: nonNil(st.Addons), Qualities: nonNil(st.Qualities),
 		PerQuality: max(st.PerQuality, 1), Usenet: st.Usenet, MaxSizeGB: st.MaxSizeGB, Prefetch: st.Prefetch, LookupOnOpen: st.LookupOnOpen, CheckAddonLinks: st.CheckAddonLinks, LinkTTLMinutes: nonNilMap(st.LinkTTLMinutes), Mode: st.Mode, MovieLibrary: st.MovieLibrary, ShowLibrary: st.ShowLibrary,
 		DownloadQuality: st.DownloadQuality, Limits: st.Limits, Debrid: []debridView{},
-		UsenetCacheMB: st.UsenetCacheMB, UsenetDiskGB: st.UsenetDiskCacheGB, ExcludeWords: nonNil(st.ExcludeWords)}
+		UsenetCacheMB: st.UsenetCacheMB, UsenetDiskGB: st.UsenetDiskCacheGB, ExcludeWords: nonNil(st.ExcludeWords),
+		MinSizeGB: nonNilMap(st.MinSizeGB), PreferWords: nonNil(st.PreferWords)}
 	if sv.MaxSizeGB == nil {
 		sv.MaxSizeGB = map[string]float64{}
 	}
@@ -240,6 +243,7 @@ type streamingPatch struct {
 	PerQuality      *int                    `json:"perQuality"`
 	Usenet          *bool                   `json:"usenet"`
 	MaxSizeGB       *map[string]float64     `json:"maxSizeGB"`
+	MinSizeGB       *map[string]float64     `json:"minSizeGB"`
 	Prefetch        *bool                   `json:"prefetch"`
 	LookupOnOpen    *bool                   `json:"lookupOnOpen"`
 	CheckAddonLinks *bool                   `json:"checkAddonLinks"`
@@ -254,6 +258,7 @@ type streamingPatch struct {
 	UsenetCacheMB   *int                    `json:"usenetCacheMB"`
 	UsenetDiskGB    *float64                `json:"usenetDiskCacheGB"`
 	ExcludeWords    *[]string               `json:"excludeWords"`
+	PreferWords     *[]string               `json:"preferWords"`
 }
 
 // indexerPatch and newsServerPatch leave the saved key or password alone
@@ -383,6 +388,20 @@ func (s *Server) applyStreaming(r *http.Request, p *streamingPatch) error {
 			c.MaxSizeGB[q] = v
 		}
 	}
+	if p.MinSizeGB != nil {
+		for q, v := range *p.MinSizeGB {
+			if v < 0 {
+				return fmt.Errorf("size limits can't be negative")
+			}
+			if m := c.MaxSizeGB[q]; m > 0 && v > m {
+				return fmt.Errorf("the %s minimum size is above its maximum", q)
+			}
+			if c.MinSizeGB == nil {
+				c.MinSizeGB = map[string]float64{}
+			}
+			c.MinSizeGB[q] = v
+		}
+	}
 	if p.PerQuality != nil {
 		if *p.PerQuality < 1 || *p.PerQuality > 5 {
 			return fmt.Errorf("keep between 1 and 5 streams per quality")
@@ -416,12 +435,24 @@ func (s *Server) applyStreaming(r *http.Request, p *streamingPatch) error {
 		for _, w := range *p.ExcludeWords {
 			if w = strings.TrimSpace(w); w != "" {
 				if _, err := streaming.ExcludeMatcher([]string{w}); err != nil {
-					return err
+					return fmt.Errorf("exclude %w", err)
 				}
 				ws = append(ws, w)
 			}
 		}
 		c.ExcludeWords = ws
+	}
+	if p.PreferWords != nil {
+		var ws []string
+		for _, w := range *p.PreferWords {
+			if w = strings.TrimSpace(w); w != "" {
+				if _, err := streaming.PreferMatcher([]string{w}); err != nil {
+					return fmt.Errorf("prefer %w", err)
+				}
+				ws = append(ws, w)
+			}
+		}
+		c.PreferWords = ws
 	}
 	if p.Prefetch != nil {
 		c.Prefetch = *p.Prefetch

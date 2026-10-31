@@ -219,3 +219,45 @@ func TestFakesAndTrailers(t *testing.T) {
 		t.Fatalf("no runtime dropped releases: %d", n)
 	}
 }
+
+func TestUncachedLinksSkipped(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		ok   bool
+	}{
+		{"[RD+] Torrentio\n4k", true},
+		{"[RD download] Torrentio\n4k", false},
+		{"[TB download] Torrentio\n1080p", false},
+		{"[RD⚡] Comet 2160p", true},
+		{"[RD⬇️] Comet 2160p", false},
+		{"⏳ MediaFusion 4k", false},
+	} {
+		s := addonStream{Name: c.name, Title: "Dune.Part.Two.2024.2160p.WEB-DL\n💾 21.4 GB", URL: "https://addon.example/play/1"}
+		if _, ok := releaseFrom(s, "addon"); ok != c.ok {
+			t.Errorf("%q: ok = %v, want %v", c.name, ok, c.ok)
+		}
+	}
+}
+
+func TestRankWithSizeFloorAndPreferWords(t *testing.T) {
+	const gb = 1 << 30
+	rels := []Release{
+		{Name: "Movie.2024.1080p.WEB-DL.x264", Text: "Movie.2024.1080p.WEB-DL.x264", InfoHash: "web", Seeders: 500, Size: 6 * gb},
+		{Name: "Movie.2024.1080p.BluRay.REMUX", Text: "Movie.2024.1080p.BluRay.REMUX", InfoHash: "remux", Seeders: 5, Size: 25 * gb},
+		{Name: "Movie.2024.1080p.WEBRip.x265", Text: "Movie.2024.1080p.WEBRip.x265", InfoHash: "tiny", Seeders: 900, Size: gb},
+	}
+	prefer, err := PreferMatcher([]string{"remux", "web-dl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range RankWith(rels, "1080p", RankOptions{MinSize: 2 * gb, Prefer: prefer}) {
+		got = append(got, r.InfoHash)
+	}
+	if want := []string{"remux", "web"}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if _, err := PreferMatcher([]string{"/(/"}); err == nil {
+		t.Error("bad regexp accepted")
+	}
+}

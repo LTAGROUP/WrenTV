@@ -156,16 +156,33 @@ func bigEnough(rels []Release, runtime int) []Release {
 	return out
 }
 
+// RankOptions are the owner's choices that Rank applies.
+type RankOptions struct {
+	MaxSize, MinSize int64 // bytes; 0 = no limit
+	Season           int
+	// Prefer scores a release name by the owner's preferred words (0 = none).
+	Prefer func(string) int
+}
+
 // Rank orders an addon's releases for one quality: matching quality only,
 // junk, unplayable and oversized releases dropped, then English releases
 // before dubbed or hard-subbed ones, then (for episodes) season packs before
 // single episodes whatever their seeders, so the rest of the season can come
 // from the same torrent, then quality markers and seeders.
 func Rank(rels []Release, quality string, maxSize int64, season int) []Release {
+	return RankWith(rels, quality, RankOptions{MaxSize: maxSize, Season: season})
+}
+
+// RankWith is Rank with the owner's size floor and preferred words: a
+// release with preferred words goes ahead of others in the same language
+// and pack standing.
+func RankWith(rels []Release, quality string, o RankOptions) []Release {
+	maxSize, season := o.MaxSize, o.Season
 	type scored struct {
 		r       Release
 		foreign int
 		pack    bool
+		prefer  int
 		score   int
 	}
 	var list []scored
@@ -176,7 +193,8 @@ func Rank(rels []Release, quality string, maxSize int64, season int) []Release {
 		}
 		pack := isPack(r.Name, season)
 		// Packs report the whole torrent's size; their file is checked once picked.
-		if maxSize > 0 && r.Size > maxSize && !pack && !multiSeasonRE.MatchString(r.Name) {
+		whole := pack || multiSeasonRE.MatchString(r.Name)
+		if maxSize > 0 && r.Size > maxSize && !whole || o.MinSize > 0 && r.Size > 0 && r.Size < o.MinSize && !whole {
 			continue
 		}
 		t := strings.ToLower(r.Text)
@@ -193,7 +211,11 @@ func Rank(rels []Release, quality string, maxSize int64, season int) []Release {
 		if quality != "2160p" && (strings.Contains(t, "hdr") || strings.Contains(t, "dolby vision")) {
 			score -= 300 // HDR at 1080p is rarer to play back well
 		}
-		list = append(list, scored{r, foreignPenalty(r.Text), pack, score})
+		prefer := 0
+		if o.Prefer != nil {
+			prefer = max(o.Prefer(r.Name), o.Prefer(r.FileName), o.Prefer(r.Text))
+		}
+		list = append(list, scored{r, foreignPenalty(r.Text), pack, prefer, score})
 	}
 	sort.SliceStable(list, func(i, j int) bool {
 		a, b := list[i], list[j]
@@ -202,6 +224,9 @@ func Rank(rels []Release, quality string, maxSize int64, season int) []Release {
 		}
 		if a.pack != b.pack {
 			return a.pack
+		}
+		if a.prefer != b.prefer {
+			return a.prefer > b.prefer
 		}
 		return a.score > b.score
 	})

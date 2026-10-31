@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.mutableIntStateOf
 import com.wrentv.tv.data.WrenCollection
+import com.wrentv.tv.player.DeviceCaps
 import com.wrentv.tv.data.ContinueAfters
 import com.wrentv.tv.data.OfflineItem
 import com.wrentv.tv.data.Tracker
@@ -61,7 +62,9 @@ private val Languages = listOf(
 private fun languageChoices(none: String): List<Choice<String>> =
     listOf(Choice("", none)) + Languages.map { Choice(it, languageName(it) ?: it) }.sortedBy { it.label.lowercase(Locale.getDefault()) }
 
-private enum class SettingsPanel { Audio, Subtitles, Watched, ContinueAfter, PosterSize, Screensaver, SignOut }
+private enum class SettingsPanel { Audio, Subtitles, Watched, ContinueAfter, PosterSize, Screensaver, Hdr, SignOut }
+
+private val hdrChoices = listOf(Choice("auto", "Automatic"), Choice("on", "Always On"), Choice("off", "Off (convert to SDR)"))
 
 private val posterSizes = listOf(Choice("small", "Small"), Choice("medium", "Medium"), Choice("large", "Large"))
 
@@ -142,6 +145,13 @@ fun SettingsScreen() {
                         value = posterSizes.firstOrNull { it.value == state.posterSize }?.label ?: "Medium")
                 }
                 Tracker.entries.forEach { TrackerSection(it) }
+                FormSection("Picture", "Kept on this TV.") {
+                    val context = LocalContext.current
+                    val detected = remember { DeviceCaps.displayHdr(context).first }
+                    ListRow("HDR", { panel = SettingsPanel.Hdr }, Modifier.rememberFocus("set:hdr"),
+                        detail = if (detected) "This TV reports HDR" else "This TV doesn't report HDR. Check its HDMI input's HDR setting (Input Signal Plus on Samsung)",
+                        value = hdrChoices.firstOrNull { it.value == state.hdrMode }?.label ?: "Automatic")
+                }
                 FormSection("Sound", "Kept on this TV.") {
                     ListRow("Interface Sounds", { state.uiSounds = !state.uiSounds }, Modifier.rememberFocus("set:sounds"),
                         detail = "A click as you move around", value = if (state.uiSounds) "On" else "Off")
@@ -202,6 +212,7 @@ fun SettingsScreen() {
         SettingsPanel.Screensaver -> ChoicePanel("Screensaver", screensaverChoices(collections), state.screensaver, { panel = null }) {
             state.screensaver = it
         }
+        SettingsPanel.Hdr -> ChoicePanel("HDR", hdrChoices, state.hdrMode, { panel = null }) { state.hdrMode = it }
         SettingsPanel.SignOut -> ConfirmPanel("Sign out?", "You'll need to sign in again to watch from ${server?.name ?: "this server"}.", "Sign Out", { panel = null }, destructive = true) {
             state.signOut()
         }

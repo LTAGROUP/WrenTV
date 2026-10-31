@@ -657,7 +657,7 @@ data class TimeRange(val start: Double, val end: Double)
 
 /** The skippable parts of a file, from chapter names or audio fingerprinting. */
 @Serializable
-data class Markers(val intro: TimeRange? = null, val credits: TimeRange? = null, val source: String? = null)
+data class Markers(val recap: TimeRange? = null, val intro: TimeRange? = null, val credits: TimeRange? = null, val source: String? = null)
 
 /** A streamed title being saved to the server as a file. */
 @Serializable

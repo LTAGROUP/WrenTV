@@ -873,6 +873,7 @@ struct TimeRange: Codable, Hashable {
 
 /// The skippable parts of a file, from chapter names or audio fingerprinting.
 struct Markers: Codable, Hashable {
+    var recap: TimeRange?
     var intro: TimeRange?
     var credits: TimeRange?
     var source: String?

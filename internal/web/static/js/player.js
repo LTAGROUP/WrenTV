@@ -1,5 +1,5 @@
 // Full-screen web player: <video> + hls.js (native HLS on Safari), with its
-// own controls for chapters, skip intro/credits and up next.
+// own controls for chapters, skip recap/intro/credits and up next.
 import { api, browserCaps, img, ApiError } from './api.js';
 import { esc, $, $$, el, toast, fmtDuration, pictureInPicture } from './ui.js';
 
@@ -323,14 +323,14 @@ class Player {
     return c;
   }
 
-  // drawMarks places chapter ticks and shades the intro/credits on the timeline.
+  // drawMarks places chapter ticks and shades the recap/intro/credits on the timeline.
   drawMarks() {
     const d = this.dur();
     const marks = $('.marks', this.root);
     if (!d || !marks) return;
     const pct = (t) => `${Math.min(100, Math.max(0, (t / d) * 100)).toFixed(3)}%`;
     let html = this.chapters.filter((c) => c.start > 0.5).map((c) => `<i class="tick" style="left:${pct(c.start)}"></i>`).join('');
-    for (const k of ['intro', 'credits']) {
+    for (const k of ['recap', 'intro', 'credits']) {
       const m = this.markers[k];
       if (m) html += `<i class="zone" title="${k}" style="left:${pct(m.start)};width:${pct(m.end - m.start)}"></i>`;
     }
@@ -387,25 +387,26 @@ class Player {
     this.updateSkip(t);
   }
 
-  // updateSkip shows "Skip Intro" inside the intro, and at the credits either
-  // the next-episode countdown or "Skip Credits". An episode with no credits
-  // marker gets the countdown over its last seconds instead.
+  // updateSkip shows "Skip Recap" or "Skip Intro" inside those, and at the
+  // credits either the next-episode countdown or "Skip Credits". An episode
+  // with no credits marker gets the countdown over its last seconds instead.
   updateSkip(t) {
-    const { intro } = this.markers;
     const credits = this.markers.credits || this.closingStretch();
-    const inIntro = intro && t >= intro.start && t < intro.end - 1 && !this.dismissed.has('intro');
     const inCredits = credits && t >= credits.start && t < credits.end - 1 && !this.dismissed.has('credits');
     let btn = $('.skip', this.root);
-    if (inIntro) {
-      if (!btn || btn.dataset.kind !== 'intro') {
-        btn?.remove();
-        btn = el('<button class="skip" data-kind="intro" title="S">Skip Intro</button>');
-        btn.onclick = () => { this.seek(intro.end); btn.remove(); };
-        this.root.append(btn);
+    for (const [kind, label] of [['recap', 'Skip Recap'], ['intro', 'Skip Intro']]) {
+      const m = this.markers[kind];
+      if (m && t >= m.start && t < m.end - 1 && !this.dismissed.has(kind)) {
+        if (!btn || btn.dataset.kind !== kind) {
+          btn?.remove();
+          const b = el(`<button class="skip" data-kind="${kind}" title="S">${label}</button>`);
+          b.onclick = () => { this.seek(m.end); b.remove(); };
+          this.root.append(b);
+        }
+        return;
       }
-      return;
     }
-    if (btn?.dataset.kind === 'intro') btn.remove();
+    if (btn?.dataset.kind === 'recap' || btn?.dataset.kind === 'intro') btn.remove();
     if (!inCredits) {
       if (btn?.dataset.kind === 'credits') btn.remove();
       if (credits && t < credits.start) this.creditsShown = false; // seeked back: offer again

@@ -5,6 +5,7 @@ package com.wrentv.tv.player
 import android.content.Context
 import android.hardware.display.DisplayManager
 import android.media.MediaCodecList
+import android.os.Build
 import android.view.Display
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -47,6 +48,37 @@ object DeviceCaps {
 
     private var decoders: Set<String>? = null
 
+    /** "auto" (what the display reports), "on" or "off": set in Settings when a TV's HDR isn't detected. */
+    fun hdrMode(context: Context): String =
+        context.getSharedPreferences("wrentv", Context.MODE_PRIVATE).getString("hdrMode", "auto") ?: "auto"
+
+    /**
+     * Whether the display takes HDR10 and Dolby Vision. The display's own
+     * capabilities can come back empty on newer Google TV devices and while
+     * the current output mode is SDR, so every mode's HDR types count too
+     * (Android 14+), and so does a display that is showing HDR right now.
+     */
+    fun displayHdr(context: Context, decoderTypes: Set<String>? = decoders): Pair<Boolean, Boolean> {
+        val display = context.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)
+            ?: return false to false
+        val hdrTypes = buildSet {
+            @Suppress("DEPRECATION")
+            display.hdrCapabilities?.supportedHdrTypes?.let { addAll(it.toList()) }
+            if (Build.VERSION.SDK_INT >= 34) {
+                runCatching {
+                    display.mode.supportedHdrTypes.forEach { add(it) }
+                    display.supportedModes.forEach { m -> m.supportedHdrTypes.forEach { add(it) } }
+                }
+            }
+        }
+        val hdr = display.isHdr || hdrTypes.any {
+            it == Display.HdrCapabilities.HDR_TYPE_HDR10 || it == Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS
+        }
+        val dolbyVision = Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION in hdrTypes &&
+            decoderTypes?.contains("video/dolby-vision") == true
+        return hdr to dolbyVision
+    }
+
     /**
      * Passthrough is checked on every call, not cached: it follows the audio
      * output, so turning a receiver off or switching inputs changes it.
@@ -63,11 +95,10 @@ object DeviceCaps {
         }
         audio -= exclude
 
-        @Suppress("DEPRECATION")
-        val hdrTypes = context.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)
-            ?.hdrCapabilities?.supportedHdrTypes?.toSet().orEmpty()
-        val hdr = hdrTypes.any { it == Display.HdrCapabilities.HDR_TYPE_HDR10 || it == Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS }
-        val dolbyVision = Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION in hdrTypes && "video/dolby-vision" in types
+        val mode = hdrMode(context)
+        val (detectedHdr, detectedDv) = displayHdr(context, types)
+        val hdr = mode == "on" || (mode != "off" && detectedHdr)
+        val dolbyVision = mode != "off" && detectedDv
 
         return ClientCaps(
             engines = listOf("avplayer"),

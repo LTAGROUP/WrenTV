@@ -541,6 +541,7 @@ a.person:focus-visible .face { border-color: var(--accent); transform: scale(1.0
 [data-lt-errors] { margin: 0 0 10px; padding-left: 18px; }
 .quality-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 18px; margin-bottom: 10px; }
 .quality-grid .q { background: var(--bg-3); border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px 12px; }
+.quality-grid .q .unit-input + .unit-input { margin-top: 8px; }
 .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .seg label { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; background: var(--bg-3); transition: border-color .15s; }
 .seg label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }

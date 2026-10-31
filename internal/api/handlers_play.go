@@ -277,6 +277,11 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 			if contains(req.Caps.Engines, "mpv") {
 				dec = media.Decision{Engine: "mpv", Method: media.MethodDirect, VideoCopy: true, AudioCopy: true, AudioIndex: dec.AudioIndex,
 					Reasons: []string{"no keyframe index for remux; direct play in mpv"}}
+			} else if dec.VideoCopy && dec.AudioCopy && !dec.StripDolbyVision && contains(req.Caps.NativeContainers, info.Container) {
+				// The player reads the container itself (ExoPlayer and mkv):
+				// the remux was only for a track choice, so play the file as it is.
+				dec.Method = media.MethodDirect
+				dec.Reasons = append(dec.Reasons, "no keyframe index; direct play instead of remux")
 			} else {
 				dec.Method = media.MethodTranscode
 				dec.AudioCodec = "aac"
@@ -347,7 +352,9 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 // where several exist.
 func (s *Server) markersFor(ctx context.Context, it *db.Item, f *db.MediaFile, info *media.Info) media.Markers {
 	m := media.MarkersFromChapters(info.Chapters, info.Duration)
-	if m.Intro != nil && m.Credits != nil {
+	// Only episodes have recaps; a movie is complete without one.
+	complete := func() bool { return m.Intro != nil && m.Credits != nil && (m.Recap != nil || it.Kind != "episode") }
+	if complete() {
 		return m
 	}
 	if fm, err := s.DB.GetFileMarkers(ctx, f.ID); err == nil && fm.Mtime == f.MTime {
@@ -362,7 +369,7 @@ func (s *Server) markersFor(ctx context.Context, it *db.Item, f *db.MediaFile, i
 			m.Source = joinSource(m.Source, "fingerprint")
 		}
 	}
-	if m.Intro != nil && m.Credits != nil {
+	if complete() {
 		return m
 	}
 	// Playback doesn't wait long on a third party; a slow answer is still
@@ -371,6 +378,9 @@ func (s *Server) markersFor(ctx context.Context, it *db.Item, f *db.MediaFile, i
 	defer cancel()
 	cm := markers.Fit(s.communityMarkers(cctx, it), info.Duration)
 	used := false
+	if m.Recap == nil && cm.Recap != nil && it.Kind == "episode" {
+		m.Recap, used = cm.Recap, true
+	}
 	if m.Intro == nil && cm.Intro != nil {
 		m.Intro, used = cm.Intro, true
 	}
@@ -486,7 +496,7 @@ func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 					rk.conv = 1 // its sound would be converted for this player
 				}
 			}
-		} else if !fits {
+		} else if !fits || guessTranscodes(f, req.Caps) {
 			rk.tier = 2
 		}
 		if f.StreamID != "" {
@@ -533,6 +543,20 @@ func chooseFile(files []*db.MediaFile, req playRequest) *db.MediaFile {
 		}
 	}
 	return best
+}
+
+// guessTranscodes says, from the HDR its name was tagged with, whether a
+// file not yet probed would have to be transcoded for this player: HDR on a
+// player that needs SDR, or Dolby Vision with no HDR10 base on one without
+// Dolby Vision. It only lowers the file's place; probing settles it.
+func guessTranscodes(f *db.MediaFile, caps media.ClientCaps) bool {
+	switch f.HDR {
+	case "":
+		return false
+	case "DV":
+		return !caps.DolbyVision
+	}
+	return caps.NeedsSDR
 }
 
 // preferredAudio is the typeIndex of the best track in the user's language

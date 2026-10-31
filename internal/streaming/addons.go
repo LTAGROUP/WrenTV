@@ -325,6 +325,11 @@ func releaseFrom(s addonStream, addon string) (Release, bool) {
 	return r, true
 }
 
+// uncachedRE matches how addons without streamData mark a link that would
+// start a debrid download: Torrentio's "[RD download]", Comet's "[RD⬇️]",
+// MediaFusion's "⏳" and plain "uncached".
+var uncachedRE = regexp.MustCompile(`(?i)\[[a-z]{0,4}\s*(download|⬇)|⏳|\buncached\b`)
+
 var usenetRE = regexp.MustCompile(`(?i)\b(usenet|nzb|easynews)\b|📰`)
 
 // playLink returns the link of a stream an addon serves from a debrid
@@ -344,7 +349,7 @@ func playLink(s addonStream, text string) (string, bool) {
 		if d.Service != nil && !d.Service.Cached {
 			return "", false
 		}
-	} else if strings.Contains(text, "⏳") || strings.Contains(strings.ToLower(text), "uncached") {
+	} else if uncachedRE.MatchString(text) {
 		return "", false
 	}
 	return u.String(), true
