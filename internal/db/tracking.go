@@ -80,6 +80,24 @@ func (d *DB) SetTrackerImport(ctx context.Context, tracker, userID, status strin
 	return err
 }
 
+// TrackerUsers lists the users who linked a tracker.
+func (d *DB) TrackerUsers(ctx context.Context, tracker string) ([]string, error) {
+	rows, err := d.QueryContext(ctx, `SELECT user_id FROM `+trackerTable(tracker))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (d *DB) UnlinkTracker(ctx context.Context, tracker, userID string) error {
 	_, err := d.ExecContext(ctx, `DELETE FROM `+trackerTable(tracker)+` WHERE user_id=?`, userID)
 	return err

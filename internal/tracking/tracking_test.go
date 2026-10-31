@@ -26,6 +26,11 @@ type fakeSimkl struct {
 	calls    []call
 	polls    int
 	approved bool
+	// playback replaces the paused list; activity is /sync/activities'
+	// time; histories counts reads of the watch history.
+	playback  string
+	activity  string
+	histories int
 }
 
 func (f *fakeSimkl) handler(t *testing.T) http.HandlerFunc {
@@ -57,7 +62,11 @@ func (f *fakeSimkl) handler(t *testing.T) http.HandlerFunc {
 		case "/users/settings":
 			io.WriteString(w, `{"user":{"name":"sam"}}`)
 			return
+		case "/sync/activities":
+			json.NewEncoder(w).Encode(map[string]string{"all": f.activity})
+			return
 		case "/sync/all-items/movies/completed":
+			f.histories++
 			io.WriteString(w, `{"movies":[{"status":"completed","last_watched_at":"2024-01-02T03:04:05Z","movie":{"title":"Heat","year":1995,"ids":{"simkl":1,"tmdb":"949"}}},
 				{"status":"completed","movie":{"title":"Not Here","year":2001,"ids":{"tmdb":"5"}}}]}`)
 			return
@@ -66,6 +75,10 @@ func (f *fakeSimkl) handler(t *testing.T) http.HandlerFunc {
 				"seasons":[{"number":1,"episodes":[{"number":1,"watched_at":"2024-02-01T00:00:00Z"},{"number":2}]}]}]}`)
 			return
 		case "/sync/playback":
+			if f.playback != "" {
+				io.WriteString(w, f.playback)
+				return
+			}
 			io.WriteString(w, `[{"progress":40,"paused_at":"2024-03-01T00:00:00Z","type":"episode","episode":{"season":1,"episode":3},
 				"show":{"title":"Severance","year":2022,"ids":{"imdb":"tt11280740"}}},
 				{"progress":25,"paused_at":"2024-03-02T00:00:00Z","type":"movie","movie":{"title":"Not Here","year":2001,"ids":{"tmdb":"5"}}},
@@ -338,5 +351,44 @@ func TestImportPausedAndMissingTitles(t *testing.T) {
 	_ = d.QueryRowContext(ctx, `SELECT COUNT(*) FROM external_progress`).Scan(&left)
 	if left != 0 {
 		t.Fatalf("%d pauses left", left)
+	}
+}
+
+func TestSyncBringsInLaterPauses(t *testing.T) {
+	s, f, d, u, items := setup(t)
+	ctx := context.Background()
+	if _, err := s.LinkSimkl(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		a, _ := d.GetSimkl(ctx, u.ID)
+		return a != nil && a.ImportStatus == "done"
+	})
+	sk := simklTracker{s.Simkl}
+	f.mu.Lock()
+	f.activity = "2024-05-01T00:00:00Z"
+	f.mu.Unlock()
+	s.syncOne(ctx, sk, u.ID)
+	// Another app got further into episode 3 later on.
+	f.mu.Lock()
+	f.playback = `[{"progress":60,"paused_at":"2024-05-02T00:00:00Z","type":"episode","episode":{"season":1,"episode":3},
+		"show":{"title":"Severance","year":2022,"ids":{"imdb":"tt11280740"}}}]`
+	before := f.histories
+	f.mu.Unlock()
+	s.syncOne(ctx, sk, u.ID)
+	if ws, _ := d.GetWatchState(ctx, u.ID, items["e3"].ID); ws == nil || ws.Position != 1800 {
+		t.Fatalf("e3 after sync %+v", ws)
+	}
+	f.mu.Lock()
+	if f.histories != before {
+		t.Errorf("history read again with no new activity")
+	}
+	f.activity = "2024-05-03T00:00:00Z"
+	f.mu.Unlock()
+	s.syncOne(ctx, sk, u.ID)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.histories != before+1 {
+		t.Errorf("history not read after new activity (%d reads)", f.histories-before)
 	}
 }

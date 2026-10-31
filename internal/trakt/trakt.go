@@ -340,6 +340,15 @@ func (c *Client) Chart(ctx context.Context, kind, chart string, limit int) ([]Li
 	return out, nil
 }
 
+// LastActivity is when anything on the account last changed.
+func (c *Client) LastActivity(ctx context.Context, access string) (string, error) {
+	var out struct {
+		All string `json:"all"`
+	}
+	err := c.call(ctx, access, http.MethodGet, "/sync/last_activities", nil, nil, &out)
+	return out.All, err
+}
+
 // Username returns the Trakt account's display name.
 func (c *Client) Username(ctx context.Context, access string) (string, error) {
 	var out struct {

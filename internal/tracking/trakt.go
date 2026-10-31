@@ -83,6 +83,14 @@ func (t traktTracker) history(ctx context.Context, call caller) (history, error)
 	return h, nil
 }
 
+func (t traktTracker) activity(ctx context.Context, call caller) (at string, err error) {
+	err = call(func(access string) (err error) {
+		at, err = t.c.LastActivity(ctx, access)
+		return err
+	})
+	return at, err
+}
+
 func (t traktTracker) paused(ctx context.Context, call caller) ([]pausedTitle, error) {
 	var got []trakt.Playback
 	if err := call(func(access string) (err error) {

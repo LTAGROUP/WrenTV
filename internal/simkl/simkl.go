@@ -301,6 +301,16 @@ func (c *Client) Playbacks(ctx context.Context, access string) ([]Playback, erro
 	return out, err
 }
 
+// LastActivity is when anything on the account last changed (watched,
+// rated, listed), as Simkl's activities report it.
+func (c *Client) LastActivity(ctx context.Context, access string) (string, error) {
+	var out struct {
+		All string `json:"all"`
+	}
+	err := c.call(ctx, access, http.MethodGet, "/sync/activities", nil, nil, &out)
+	return out.All, err
+}
+
 // Username returns the Simkl account's display name.
 func (c *Client) Username(ctx context.Context, access string) (string, error) {
 	var out struct {

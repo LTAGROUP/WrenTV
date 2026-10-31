@@ -57,17 +57,18 @@ type Service struct {
 	links   map[string]*pendingLink
 	imports map[string]bool
 	queues  map[string]chan func()
-	now     func() time.Time
+	// synced is what the last sync saw of each linked account (linkKey).
+	synced map[string]syncState
+	now    func() time.Time
 	// pollEvery overrides the trackers' sign-in poll interval (tests).
 	pollEvery time.Duration
 }
 
 func New(d *db.DB, sk *simkl.Client, hooks *webhook.Sender, server func() webhook.Server) *Service {
 	return &Service{DB: d, Simkl: sk, Hooks: hooks, Server: server, plays: map[string]*play{},
-		links: map[string]*pendingLink{}, imports: map[string]bool{}, queues: map[string]chan func(){}, now: time.Now}
+		links: map[string]*pendingLink{}, imports: map[string]bool{}, queues: map[string]chan func(){}, synced: map[string]syncState{}, now: time.Now}
 }
 
-// Start runs the watchdog that pauses and stops plays that went quiet.
 // ApplyMarksOn marks titles watched elsewhere once they're added: after a
 // scan or a title being added, a few seconds later so bursts run once.
 func (s *Service) ApplyMarksOn(ctx context.Context, events <-chan library.Event) {
@@ -103,7 +104,10 @@ func (s *Service) ApplyMarksOn(ctx context.Context, events <-chan library.Event)
 	}()
 }
 
+// Start runs the watchdog that pauses and stops plays that went quiet, and
+// the sync that brings in what linked trackers saw watched elsewhere.
 func (s *Service) Start(ctx context.Context) {
+	go s.syncLoop(ctx)
 	go func() {
 		t := time.NewTicker(10 * time.Second)
 		defer t.Stop()

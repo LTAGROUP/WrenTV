@@ -26,6 +26,8 @@ type tracker interface {
 	rejected(err error) bool
 	history(ctx context.Context, call caller) (history, error)
 	paused(ctx context.Context, call caller) ([]pausedTitle, error)
+	// activity is when the account last changed ("" if unknown).
+	activity(ctx context.Context, call caller) (string, error)
 }
 
 // caller runs a tracker call with the user's token, renewing it once if
@@ -387,16 +389,22 @@ func when(ts string) int64 {
 	return 0
 }
 
-func (s *Service) runImport(ctx context.Context, t tracker, userID string) (movies, episodes int, err error) {
-	var a *db.TrackerAccount
-	if a, err = s.DB.GetTracker(ctx, t.id(), userID); err != nil || a == nil {
-		return 0, 0, errors.New(t.label() + " isn't linked")
+// importRun is one pull from a tracker: the user's token and the library's
+// titles to match against.
+type importRun struct {
+	s        *Service
+	t        tracker
+	userID   string
+	call     caller
+	m        *matcher
+	episodes map[string]map[[2]int]string
+}
+
+func (s *Service) newRun(ctx context.Context, t tracker, userID string) (*importRun, error) {
+	a, err := s.DB.GetTracker(ctx, t.id(), userID)
+	if err != nil || a == nil {
+		return nil, errors.New(t.label() + " isn't linked")
 	}
-	items, err := s.DB.ExternalItems(ctx)
-	if err != nil {
-		return 0, 0, err
-	}
-	m := newMatcher(items)
 	call := func(fn func(access string) error) error {
 		err := fn(a.AccessToken)
 		if t.rejected(err) && a.RefreshToken != "" && s.renew(ctx, t, a) == nil {
@@ -404,24 +412,65 @@ func (s *Service) runImport(ctx context.Context, t tracker, userID string) (movi
 		}
 		return err
 	}
-	h, err := t.history(ctx, call)
+	return &importRun{s: s, t: t, userID: userID, call: call, episodes: map[string]map[[2]int]string{}}, nil
+}
+
+// matcher loads the library's titles the first time they're needed.
+func (r *importRun) matcher(ctx context.Context) (*matcher, error) {
+	if r.m == nil {
+		items, err := r.s.DB.ExternalItems(ctx)
+		if err != nil {
+			return nil, err
+		}
+		r.m = newMatcher(items)
+	}
+	return r.m, nil
+}
+
+func (r *importRun) episodeIDs(ctx context.Context, showID string) (map[[2]int]string, error) {
+	eps, ok := r.episodes[showID]
+	if !ok {
+		var err error
+		if eps, err = r.s.DB.EpisodeIDs(ctx, showID); err != nil {
+			return nil, err
+		}
+		r.episodes[showID] = eps
+	}
+	return eps, nil
+}
+
+func (s *Service) runImport(ctx context.Context, t tracker, userID string) (movies, episodes int, err error) {
+	r, err := s.newRun(ctx, t, userID)
+	if err != nil {
+		return 0, 0, err
+	}
+	if movies, episodes, err = r.history(ctx); err != nil {
+		return movies, episodes, err
+	}
+	// Where the user paused, for Continue Watching. A failure here doesn't
+	// fail the import.
+	paused, err := t.paused(ctx, r.call)
+	if err != nil {
+		slog.Warn(t.id()+" playback import", "user", userID, "err", err)
+		return movies, episodes, nil
+	}
+	return movies, episodes, r.paused(ctx, paused)
+}
+
+// history marks what the user watched on the tracker.
+func (r *importRun) history(ctx context.Context) (movies, episodes int, err error) {
+	s, t, userID := r.s, r.t, r.userID
+	m, err := r.matcher(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	h, err := t.history(ctx, r.call)
 	if err != nil {
 		return 0, 0, err
 	}
 	// Titles the server doesn't have are kept by TMDB id, so they show as
 	// watched and are marked once added.
 	var missing []db.ExternalMark
-	episodesOf := map[string]map[[2]int]string{}
-	episodeIDs := func(showID string) (map[[2]int]string, error) {
-		eps, ok := episodesOf[showID]
-		if !ok {
-			if eps, err = s.DB.EpisodeIDs(ctx, showID); err != nil {
-				return nil, err
-			}
-			episodesOf[showID] = eps
-		}
-		return eps, nil
-	}
 
 	// Movies the user finished.
 	marks := map[string]int64{}
@@ -452,7 +501,7 @@ func (s *Service) runImport(ctx context.Context, t tracker, userID string) (movi
 			}
 			continue
 		}
-		eps, err := episodeIDs(showID)
+		eps, err := r.episodeIDs(ctx, showID)
 		if err != nil {
 			return movies, 0, err
 		}
@@ -472,13 +521,15 @@ func (s *Service) runImport(ctx context.Context, t tracker, userID string) (movi
 	if err := s.DB.ApplyExternalWatched(ctx); err != nil {
 		return movies, episodes, err
 	}
+	return movies, episodes, nil
+}
 
-	// Where the user paused, for Continue Watching. A failure here doesn't
-	// fail the import.
-	paused, err := t.paused(ctx, call)
+// paused sets resume points from where the user paused on the tracker.
+func (r *importRun) paused(ctx context.Context, paused []pausedTitle) error {
+	s, t, userID := r.s, r.t, r.userID
+	m, err := r.matcher(ctx)
 	if err != nil {
-		slog.Warn(t.id()+" playback import", "user", userID, "err", err)
-		return movies, episodes, nil
+		return err
 	}
 	resumed, skipped := 0, 0
 	var elsewhere []db.ExternalProgress
@@ -492,9 +543,9 @@ func (s *Service) runImport(ctx context.Context, t tracker, userID string) (movi
 				elsewhere = append(elsewhere, db.ExternalProgress{Kind: "movie", TMDBID: pb.ref.tmdb, Season: -1, Episode: -1, Percent: pb.percent, PausedAt: pb.at})
 			}
 		} else if showID := m.find("show", pb.ref); showID != "" {
-			eps, err := episodeIDs(showID)
+			eps, err := r.episodeIDs(ctx, showID)
 			if err != nil {
-				return movies, episodes, err
+				return err
 			}
 			id = eps[[2]int{pb.season, pb.number}]
 		} else if pb.ref.tmdb > 0 && pb.number > 0 {
@@ -509,17 +560,17 @@ func (s *Service) runImport(ctx context.Context, t tracker, userID string) (movi
 			continue
 		}
 		if ok, err := s.DB.ImportProgress(ctx, userID, id, dur*pb.percent/100, dur, pb.at); err != nil {
-			return movies, episodes, err
+			return err
 		} else if ok {
 			resumed++
 		}
 	}
 	slog.Info(t.id()+" playback import", "user", userID, "paused", len(paused), "resumable", resumed, "not here", len(elsewhere), "no length", skipped)
 	if err := s.DB.ImportExternalProgress(ctx, userID, elsewhere); err != nil {
-		return movies, episodes, err
+		return err
 	}
 	s.addPaused(ctx, userID, elsewhere)
-	return movies, episodes, nil
+	return nil
 }
 
 // maxPausedAdds caps how many titles one import adds for Continue Watching.
