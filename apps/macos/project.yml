@@ -11,8 +11,8 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "1.6.8"
-    CURRENT_PROJECT_VERSION: "15"
+    MARKETING_VERSION: "1.6.9"
+    CURRENT_PROJECT_VERSION: "16"
 targets:
   WrenTV:
     type: application
