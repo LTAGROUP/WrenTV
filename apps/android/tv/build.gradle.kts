@@ -16,8 +16,8 @@ android {
         applicationId = "com.wrentv.tv"
         minSdk = 26
         targetSdk = 37
-        versionCode = 17
-        versionName = "1.6.9"
+        versionCode = 18
+        versionName = "1.6.10"
     }
 
     // The release key lives beside the project, uncommitted (see keystore.properties).
