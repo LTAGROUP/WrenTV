@@ -52,7 +52,7 @@ import java.util.Locale
 /** A track the viewer can pick in the audio or subtitle panel. */
 data class TrackOption(val key: String, val label: String)
 
-/** Seconds before an unmarked episode ends that the next-episode countdown starts. */
+/** Seconds before an unmarked episode ends that the next-episode popup appears. */
 private const val UP_NEXT_LEAD = 30.0
 
 /**
@@ -108,7 +108,6 @@ class PlayerController(
     /** Where the seek bar is headed while left/right are pressed; the jump happens once they let go. */
     var scrub by mutableStateOf<Double?>(null); private set
     var skip by mutableStateOf<Skip?>(null); private set
-    var countdown by mutableStateOf<Int?>(null); private set
     var upNext by mutableStateOf<Item?>(null); private set
     /** Set when playback is over and the screen should close. */
     var closeRequested by mutableStateOf(false); private set
@@ -141,10 +140,10 @@ class PlayerController(
     private var response: PlayResponse? = null
     private var sessionId: String? = null
     private var markers = Markers()
-    private var nextEpisode: Item? = null
+    /** The episode after this one, offered during the credits. */
+    var nextEpisode by mutableStateOf<Item?>(null); private set
     private var dismissed = mutableSetOf<Skip>()
     private var loadJob: Job? = null
-    private var countdownJob: Job? = null
     private var versionsJob: Job? = null
     private var subtitlePending = false
     private var sideJob: Job? = null
@@ -468,7 +467,6 @@ class PlayerController(
         if (pos > 5) report(pos)
         sessionId?.let { sid -> api?.let { a -> appScope.launch { runCatching { a.stopSession(sid) } } } }
         sessionId = null
-        cancelCountdown()
         scope.coroutineContext[Job]?.cancel()
         player.release()
     }
@@ -704,24 +702,20 @@ class PlayerController(
         val t = position
         val recap = markers.recap
         val intro = markers.intro
-        // An episode with no credits marker counts down over its last
-        // seconds instead, so it can still roll on to the next.
+        // An episode with no credits marker offers the next one over its last
+        // seconds instead. It only moves on when the viewer picks it.
         val credits = markers.credits
             ?: if (nextEpisode != null && duration >= 300) TimeRange(duration - UP_NEXT_LEAD, duration + 1) else null
         // Seeking back before a marker offers it again.
         if (recap != null && t < recap.start) dismissed.remove(Skip.Recap)
         if (intro != null && t < intro.start) dismissed.remove(Skip.Intro)
-        if (credits != null && t < credits.start - 1) {
-            dismissed.remove(Skip.Credits)
-            cancelCountdown()
-        }
+        if (credits != null && t < credits.start - 1) dismissed.remove(Skip.Credits)
         val next = when {
             recap != null && t >= recap.start && t < recap.end - 1 && Skip.Recap !in dismissed -> Skip.Recap
             intro != null && t >= intro.start && t < intro.end - 1 && Skip.Intro !in dismissed -> Skip.Intro
             credits != null && t >= credits.start && t < credits.end - 1 && Skip.Credits !in dismissed -> Skip.Credits
             else -> null
         }
-        if (next == Skip.Credits && nextEpisode != null && countdown == null && countdownJob == null && !paused) startCountdown()
         if (skip != next) skip = next
     }
 
@@ -743,7 +737,6 @@ class PlayerController(
     fun skipCredits() {
         dismissed += Skip.Credits
         skip = null
-        cancelCountdown()
         val next = nextEpisode
         if (next != null) {
             upNext = next
@@ -758,30 +751,6 @@ class PlayerController(
     fun dismissCredits() {
         dismissed += Skip.Credits
         skip = null
-        cancelCountdown()
-    }
-
-    private fun startCountdown() {
-        countdown = 10
-        countdownJob = scope.launch {
-            while (isActive) {
-                delay(1000)
-                val n = countdown ?: return@launch
-                if (paused) continue
-                if (n <= 1) {
-                    countdownJob = null
-                    skipCredits()
-                    return@launch
-                }
-                countdown = n - 1
-            }
-        }
-    }
-
-    private fun cancelCountdown() {
-        countdownJob?.cancel()
-        countdownJob = null
-        countdown = null
     }
 
     /** The episode after this one: next in its season, else the first of the next season. */
@@ -850,7 +819,6 @@ class PlayerController(
         upNext = null
         nextEpisode = null
         episode = null
-        cancelCountdown()
         dismissed.clear()
         skip = null
         chapters = emptyList()

@@ -334,6 +334,7 @@ func searchIndexer(ctx context.Context, ix usenet.Indexer, q usenet.Query) ([]us
 	} else {
 		slog.Info("indexer search", "indexer", ix.Name, "title", q.Title, "episode", q.Episode, "posts", len(res), "took", time.Since(t).Round(time.Millisecond))
 	}
+	res = likelyFor(res, q.Title, q.Season)
 	// New posts often aren't tagged with an IMDb ID yet, so a search
 	// by ID finds few: search by name too, keeping posts named for
 	// this title.
@@ -359,6 +360,84 @@ func searchIndexer(ctx context.Context, ix usenet.Indexer, q usenet.Query) ([]us
 		}
 	}
 	return res, err
+}
+
+// likelyFor drops posts an indexer returned that are named for another
+// title. Some indexers ignore the IMDb ID of a TV search and answer with
+// every show's S01E01, so a post is kept when its name starts with the
+// title's words, or, when none does, when most of the posts agree on another
+// name (the show is posted under a different one, as "Law.and.Order.SVU"). Names with no
+// season or year, as obfuscated ones, are kept when the rest look right.
+func likelyFor(res []usenet.Result, title string, season int) []usenet.Result {
+	want := titleWords(title)
+	if len(want) == 0 || len(res) == 0 {
+		return res
+	}
+	named := make([]string, len(res)) // the name each was posted under; "" when unknown
+	match := make([]bool, len(res))
+	counts := map[string]int{}
+	tagged := 0
+	for i, r := range res {
+		words := titleWords(r.Title)
+		match[i] = hasWords(words, want)
+		if n, ok := postedAs(words, season); ok {
+			named[i] = n
+			counts[n]++
+			tagged++
+		}
+	}
+	// Another name counts only when none of the posts uses the title's.
+	anyMatch := false
+	for i := range res {
+		anyMatch = anyMatch || named[i] != "" && match[i]
+	}
+	keptTagged := 0
+	keep := make([]bool, len(res))
+	for i := range res {
+		if named[i] == "" {
+			continue
+		}
+		n := counts[named[i]]
+		keep[i] = match[i] || !anyMatch && n >= 2 && n*2 > tagged
+		if keep[i] {
+			keptTagged++
+		}
+	}
+	trusted := keptTagged*2 >= tagged
+	var out []usenet.Result
+	for i, r := range res {
+		if keep[i] || named[i] == "" && (match[i] || trusted) {
+			out = append(out, r)
+		}
+	}
+	if dropped := len(res) - len(out); dropped > 0 {
+		slog.Info("indexer posts for other titles dropped", "title", title, "dropped", dropped, "kept", len(out))
+	}
+	return out
+}
+
+// hasWords reports whether words starts with want.
+func hasWords(words, want []string) bool {
+	if len(words) < len(want) {
+		return false
+	}
+	for i, w := range want {
+		if words[i] != w {
+			return false
+		}
+	}
+	return true
+}
+
+// postedAs is the title a post name gives, its words before the season (or
+// for a film the year); ok is false when it has neither.
+func postedAs(words []string, season int) (string, bool) {
+	for i := 1; i < len(words); i++ {
+		if season > 0 && seasonWordRE.MatchString(words[i]) || season <= 0 && yearWordRE.MatchString(words[i]) {
+			return strings.Join(words[:i], " "), true
+		}
+	}
+	return "", false
 }
 
 // byNameBelow is how few posts a search by IMDb ID may find before the

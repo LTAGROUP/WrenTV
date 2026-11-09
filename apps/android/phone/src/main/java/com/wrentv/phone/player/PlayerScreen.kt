@@ -182,9 +182,8 @@ fun PlayerScreen(target: PlayTarget) {
 
         // Skip intro / credits, and the next episode.
         if (!shelf && !pip) Box(Modifier.align(Alignment.BottomEnd).safeDrawingPadding().padding(end = 24.dp, bottom = if (controls) 96.dp else 32.dp)) {
-            val next = c.upNext
             when {
-                next != null && c.skip == PlayerController.Skip.Credits || next != null && c.countdown != null -> UpNext(c)
+                c.upNext != null || c.skip == PlayerController.Skip.Credits && c.nextEpisode != null -> UpNext(c)
                 c.skip == PlayerController.Skip.Recap -> GlassButton("Skip Recap", Icons.Rounded.SkipNext, { c.skipRecap() })
                 c.skip == PlayerController.Skip.Intro -> GlassButton("Skip Intro", Icons.Rounded.SkipNext, { c.skipIntro() })
                 c.skip == PlayerController.Skip.Credits -> GlassButton("Skip Credits", Icons.Rounded.SkipNext, { c.skipCredits() })
@@ -196,7 +195,17 @@ fun PlayerScreen(target: PlayTarget) {
 @Composable
 private fun UpNext(c: PlayerController) {
     val state = LocalAppState.current
-    val next = c.upNext ?: return
+    val next = c.upNext ?: c.nextEpisode ?: return
+    // Once the episode is over the next one starts by itself after a countdown.
+    val ended = c.upNext != null
+    var left by remember(next.id, ended) { mutableIntStateOf(10) }
+    if (ended) LaunchedEffect(next.id) {
+        while (left > 0) {
+            delay(1000)
+            left--
+        }
+        c.playNext()
+    }
     Row(Modifier.clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.75f)).padding(10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically) {
         RemoteImage(state.api?.imageUrl(next.stillPath, "w300"), Modifier.width(120.dp).size(120.dp, 68.dp).clip(RoundedCornerShape(6.dp)))
@@ -204,7 +213,7 @@ private fun UpNext(c: PlayerController) {
             Text("UP NEXT", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
             Text("${next.episodeLabel} — ${next.title}", color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 14.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PrimaryButton(c.countdown?.let { "Play in $it" } ?: "Play", Icons.Rounded.PlayArrow, { c.playNext() })
+                PrimaryButton(if (ended) "Play in $left" else "Play", Icons.Rounded.PlayArrow, { if (c.upNext != null) c.playNext() else c.skipCredits() })
                 if (c.skip == PlayerController.Skip.Credits) Text("Watch Credits", Modifier.clip(CircleShape).clickable { c.dismissCredits() }.padding(8.dp),
                     color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)
             }

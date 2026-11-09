@@ -36,10 +36,10 @@ public sealed class PlayerModel
     Markers markers = new();
     /// What the skip button offers right now.
     public SkipKind? Skip { get; private set; }
-    /// Seconds left before the next episode starts, while the credits roll.
-    public int? Countdown { get; private set; }
     public Item? UpNext { get; private set; }
     Item? nextEpisode;
+    /// There's a next episode for the credits popup to offer.
+    public bool HasNext => nextEpisode != null;
     /// This episode, for the episode list; null for a movie.
     public Item? Episode { get; private set; }
     /// The server can search the subtitle sites for this title.
@@ -58,8 +58,8 @@ public sealed class PlayerModel
     public event Action? Changed;
     /// Only the position moved.
     public event Action? Ticked;
-    /// No credits marker: the countdown starts this long before the end of an
-    /// episode that has a next one.
+    /// No credits marker: the next-episode popup appears this long before the
+    /// end of an episode that has a next one.
     const double UpNextLead = 30;
 
     /// Playback is done and the window should close.
@@ -67,7 +67,7 @@ public sealed class PlayerModel
 
     string? sessionId;
     DateTime? lastAutoRetry;
-    CancellationTokenSource? load, progress, countdown, versionsWatch;
+    CancellationTokenSource? load, progress, versionsWatch;
     readonly HashSet<SkipKind> dismissed = [];
     bool stopped;
 
@@ -213,7 +213,6 @@ public sealed class PlayerModel
         load?.Cancel();
         versionsWatch?.Cancel();
         progress?.Cancel();
-        CancelCountdown();
         var (pos, dur, sid, item) = (Position, Duration, sessionId, ItemId);
         _ = Task.Run(async () =>
         {
@@ -323,17 +322,16 @@ public sealed class PlayerModel
         var t = Position;
         if (markers.Recap is { } r && t < r.Start) dismissed.Remove(SkipKind.Recap);
         if (markers.Intro is { } i && t < i.Start) dismissed.Remove(SkipKind.Intro);
-        // No credits marker: count down over the last seconds of an episode
-        // that has a next one, so it still moves on before the end.
+        // No credits marker: offer the next episode over the last seconds of an
+        // episode that has one. It only moves on when the viewer picks it.
         var credits = markers.Credits ?? (nextEpisode != null && Duration >= 300
             ? new TimeRange { Start = Duration - UpNextLead, End = Duration + 1 } : null);
-        if (credits is { } c0 && t < c0.Start - 1) { dismissed.Remove(SkipKind.Credits); CancelCountdown(); }
+        if (credits is { } c0 && t < c0.Start - 1) dismissed.Remove(SkipKind.Credits);
 
         SkipKind? next = null;
         if (markers.Recap is { } recap && t >= recap.Start && t < recap.End - 1 && !dismissed.Contains(SkipKind.Recap)) next = SkipKind.Recap;
         else if (markers.Intro is { } intro && t >= intro.Start && t < intro.End - 1 && !dismissed.Contains(SkipKind.Intro)) next = SkipKind.Intro;
         else if (credits is { } c && t >= c.Start && t < c.End - 1 && !dismissed.Contains(SkipKind.Credits)) next = SkipKind.Credits;
-        if (next == SkipKind.Credits && nextEpisode != null && Countdown == null && countdown == null && !Paused) StartCountdown();
         if (Skip != next)
         {
             Skip = next;
@@ -364,7 +362,6 @@ public sealed class PlayerModel
     {
         dismissed.Add(SkipKind.Credits);
         Skip = null;
-        CancelCountdown();
         if (nextEpisode != null)
         {
             UpNext = nextEpisode;
@@ -382,38 +379,7 @@ public sealed class PlayerModel
     {
         dismissed.Add(SkipKind.Credits);
         Skip = null;
-        CancelCountdown();
         Changed?.Invoke();
-    }
-
-    void StartCountdown()
-    {
-        Countdown = 10;
-        var cts = countdown = new CancellationTokenSource();
-        App.OnUi(async () =>
-        {
-            while (!cts.IsCancellationRequested)
-            {
-                try { await Task.Delay(1000, cts.Token); } catch { return; }
-                if (Countdown is not { } n) return;
-                if (Paused) continue;
-                if (n <= 1)
-                {
-                    countdown = null;
-                    SkipCredits();
-                    return;
-                }
-                Countdown = n - 1;
-                Changed?.Invoke();
-            }
-        });
-    }
-
-    void CancelCountdown()
-    {
-        countdown?.Cancel();
-        countdown = null;
-        Countdown = null;
     }
 
     /// The episode after this one: the next in its season, else the first of the next season.
@@ -521,7 +487,6 @@ public sealed class PlayerModel
         failedFile = null;
         Episode = null;
         SideTracks = [];
-        CancelCountdown();
         var old = sessionId;
         sessionId = null;
         if (old != null) _ = api.StopSession(old);

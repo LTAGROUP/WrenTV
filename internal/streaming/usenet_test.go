@@ -265,6 +265,52 @@ func TestNamedFor(t *testing.T) {
 	}
 }
 
+func TestLikelyFor(t *testing.T) {
+	names := func(rs []usenet.Result) []string {
+		var out []string
+		for _, r := range rs {
+			out = append(out, r.Title)
+		}
+		return out
+	}
+	posts := func(ns ...string) []usenet.Result {
+		var out []usenet.Result
+		for _, n := range ns {
+			out = append(out, usenet.Result{Title: n})
+		}
+		return out
+	}
+	for _, c := range []struct {
+		title  string
+		season int
+		in     []usenet.Result
+		want   []string
+	}{
+		// An indexer that ignored the ID: every show's S01E01.
+		{"Silo", 1, posts(
+			"Entourage.S01E01.Entourage.1080p.BluRay.REMUX-EPSiLON",
+			"Blindspot.S01E01.Woe.Has.Joined.1080p.BluRay.REMUX-EPSiLON",
+			"Silo.S01E01.Freedom.Day.1080p.ATVP.WEB-DL",
+			"The.Wire.S01E01.720p",
+			"a8f3c2e1d0",
+		), []string{"Silo.S01E01.Freedom.Day.1080p.ATVP.WEB-DL"}},
+		// Posted under another name, consistently.
+		{"Law & Order: Special Victims Unit", 1, posts(
+			"Law.and.Order.SVU.S01E01.1080p", "Law.and.Order.SVU.S01E01.720p", "Law.and.Order.SVU.S01.1080p", "a8f3c2e1d0",
+		), []string{"Law.and.Order.SVU.S01E01.1080p", "Law.and.Order.SVU.S01E01.720p", "Law.and.Order.SVU.S01.1080p", "a8f3c2e1d0"}},
+		// Country and year after the title are fine.
+		{"The Office", 1, posts("The.Office.US.S01E01.1080p", "The.Office.2005.S01E01.720p"),
+			[]string{"The.Office.US.S01E01.1080p", "The.Office.2005.S01E01.720p"}},
+		// Films by year; a title that is a year.
+		{"1917", 0, posts("1917.2019.2160p.UHD", "Oppenheimer.2023.1080p", "Barbie.2023.1080p"), []string{"1917.2019.2160p.UHD"}},
+	} {
+		got := names(likelyFor(c.in, c.title, c.season))
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("likelyFor(%q) = %q, want %q", c.title, got, c.want)
+		}
+	}
+}
+
 // A post found with articles gone isn't read again by later lookups, until
 // the news servers change.
 func TestMissingPostRemembered(t *testing.T) {

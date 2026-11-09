@@ -309,7 +309,7 @@ fun PlayerScreen(target: PlayTarget) {
         // The skip pill shows on its own while the controls are hidden; OK takes it.
         val skip = c.skip
         AnimatedVisibility(skip != null && !controls && c.upNext == null, Modifier.align(Alignment.BottomEnd).padding(48.dp), enter = fadeIn(), exit = fadeOut()) {
-            SkipPill(skip, c.countdown, hint = true)
+            SkipPill(skip, c.nextEpisode != null, hint = true)
         }
 
         AnimatedVisibility(controls && c.upNext == null, enter = fadeIn(), exit = fadeOut()) {
@@ -377,7 +377,7 @@ private fun Controls(
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 28.dp).animateContentSize().padding(top = 36.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             if (c.skip != null) {
                 Box(Modifier.width(PanelWidth).padding(bottom = 14.dp), contentAlignment = Alignment.CenterEnd) {
-                    PillButton(skipText(c.skip, c.countdown), onSkip, icon = Icons.Rounded.SkipNext, primary = true)
+                    PillButton(skipText(c.skip, c.nextEpisode != null), onSkip, icon = Icons.Rounded.SkipNext, primary = true)
                 }
             }
             // One floating panel, like the Mac player's: the buttons, then the timeline.
@@ -698,20 +698,20 @@ private fun ScrubPreview(url: String?, seconds: Double, modifier: Modifier = Mod
     }
 }
 
-private fun skipText(skip: PlayerController.Skip?, countdown: Int?): String = when (skip) {
+private fun skipText(skip: PlayerController.Skip?, hasNext: Boolean): String = when (skip) {
     PlayerController.Skip.Recap -> "Skip Recap"
     PlayerController.Skip.Intro -> "Skip Intro"
-    PlayerController.Skip.Credits -> if (countdown != null) "Next Episode in $countdown" else "Skip Credits"
+    PlayerController.Skip.Credits -> if (hasNext) "Next Episode" else "Skip Credits"
     null -> ""
 }
 
 @Composable
-private fun SkipPill(skip: PlayerController.Skip?, countdown: Int?, hint: Boolean) {
+private fun SkipPill(skip: PlayerController.Skip?, hasNext: Boolean, hint: Boolean) {
     Row(
         Modifier.background(Color.White, RoundedCornerShape(50)).padding(horizontal = 24.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(skipText(skip, countdown), style = MaterialTheme.typography.titleMedium, color = Color.Black)
+        Text(skipText(skip, hasNext), style = MaterialTheme.typography.titleMedium, color = Color.Black)
         if (hint) Text("  ·  OK", style = MaterialTheme.typography.labelLarge, color = Color.Black.copy(alpha = 0.55f))
     }
 }
@@ -722,6 +722,15 @@ private fun UpNext(c: PlayerController, back: () -> Unit) {
     val state = LocalAppState.current
     val play = remember { FocusRequester() }
     LaunchedEffect(next.id) { awaitFrame(); runCatching { play.requestFocus() } }
+    // The episode is over: the next one starts by itself after a countdown.
+    var left by remember(next.id) { mutableIntStateOf(10) }
+    LaunchedEffect(next.id) {
+        while (left > 0) {
+            delay(1000)
+            left--
+        }
+        c.playNext()
+    }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.7f))) {
         Row(
             Modifier.align(Alignment.BottomStart).padding(56.dp),
@@ -738,7 +747,7 @@ private fun UpNext(c: PlayerController, back: () -> Unit) {
                 Text(next.title, style = MaterialTheme.typography.headlineSmall, color = Wren.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 next.overview?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Wren.secondary, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp)) }
                 Row(Modifier.padding(top = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    PillButton("Play Next", { c.playNext() }, Modifier.focusRequester(play), icon = Icons.Rounded.PlayArrow, primary = true)
+                    PillButton("Play in $left", { c.playNext() }, Modifier.focusRequester(play), icon = Icons.Rounded.PlayArrow, primary = true)
                     PillButton("Close", back, icon = Icons.Rounded.Close)
                 }
             }

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/LTAGROUP/wrentv/internal/config"
 )
 
 // ExcludeMatcher compiles the owner's exclude list. Each entry is a whole
@@ -107,5 +109,22 @@ func (s *Service) rank(rels []Release, quality string, maxSize int64, season int
 		rels = kept
 	}
 	prefer, _ := PreferMatcher(cfg.PreferWords)
-	return RankWith(rels, quality, RankOptions{MaxSize: maxSize, MinSize: int64(cfg.MinSizeGB[quality] * (1 << 30)), Season: season, Prefer: prefer})
+	return RankWith(rels, quality, RankOptions{MaxSize: maxSize, MinSize: int64(cfg.MinSizeGB[quality] * (1 << 30)), Season: season,
+		Prefer: prefer, Indexer: indexerOrder(cfg.Indexers)})
+}
+
+// indexerOrder ranks indexers as the owner listed them: the first is tried
+// first. A name it doesn't know comes last.
+func indexerOrder(ixs []config.IndexerConfig) func(string) int {
+	if len(ixs) < 2 {
+		return nil
+	}
+	return func(name string) int {
+		for i, ix := range ixs {
+			if ix.Name == name {
+				return i
+			}
+		}
+		return len(ixs)
+	}
 }

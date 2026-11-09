@@ -162,6 +162,9 @@ type RankOptions struct {
 	Season           int
 	// Prefer scores a release name by the owner's preferred words (0 = none).
 	Prefer func(string) int
+	// Indexer ranks a Usenet post by the indexer it came from, 0 first; nil
+	// or 0 for every release when the owner has no order.
+	Indexer func(name string) int
 }
 
 // Rank orders an addon's releases for one quality: matching quality only,
@@ -173,9 +176,9 @@ func Rank(rels []Release, quality string, maxSize int64, season int) []Release {
 	return RankWith(rels, quality, RankOptions{MaxSize: maxSize, Season: season})
 }
 
-// RankWith is Rank with the owner's size floor and preferred words: a
-// release with preferred words goes ahead of others in the same language
-// and pack standing.
+// RankWith is Rank with the owner's size floor, indexer order and preferred
+// words: posts from a higher indexer, then releases with preferred words, go
+// ahead of others in the same language and pack standing.
 func RankWith(rels []Release, quality string, o RankOptions) []Release {
 	maxSize, season := o.MaxSize, o.Season
 	type scored struct {
@@ -183,6 +186,7 @@ func RankWith(rels []Release, quality string, o RankOptions) []Release {
 		foreign int
 		pack    bool
 		prefer  int
+		indexer int
 		score   int
 	}
 	var list []scored
@@ -215,7 +219,11 @@ func RankWith(rels []Release, quality string, o RankOptions) []Release {
 		if o.Prefer != nil {
 			prefer = max(o.Prefer(r.Name), o.Prefer(r.FileName), o.Prefer(r.Text))
 		}
-		list = append(list, scored{r, foreignPenalty(r.Text), pack, prefer, score})
+		indexer := 0
+		if o.Indexer != nil && r.Indexer != "" {
+			indexer = o.Indexer(r.Indexer)
+		}
+		list = append(list, scored{r, foreignPenalty(r.Text), pack, prefer, indexer, score})
 	}
 	sort.SliceStable(list, func(i, j int) bool {
 		a, b := list[i], list[j]
@@ -224,6 +232,9 @@ func RankWith(rels []Release, quality string, o RankOptions) []Release {
 		}
 		if a.pack != b.pack {
 			return a.pack
+		}
+		if a.indexer != b.indexer {
+			return a.indexer < b.indexer
 		}
 		if a.prefer != b.prefer {
 			return a.prefer > b.prefer

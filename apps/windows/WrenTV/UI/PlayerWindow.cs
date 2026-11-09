@@ -216,7 +216,7 @@ sealed class PlayerWindow : VideoWindow
                 break;
         }
 
-        var skipKey = model.Phase == PhaseKind.Playing ? $"{model.Skip}|{model.Countdown}" : "";
+        var skipKey = model.Phase == PhaseKind.Playing ? $"{model.Skip}|{model.HasNext}" : "";
         if (!Unchanged(skipPanel, skipKey)) RenderSkip();
 
         episodes.Visibility = model.Episode != null ? Visibility.Visible : Visibility.Collapsed;
@@ -238,7 +238,7 @@ sealed class PlayerWindow : VideoWindow
                 skipPanel.Children.Add(Ui.Button("Skip Intro", model.SkipIntro, "", accent: true));
             else if (model.Skip == SkipKind.Credits)
             {
-                skipPanel.Children.Add(Ui.Button(model.Countdown is { } n ? $"Next Episode in {n}" : "Skip Credits", model.SkipCredits, "", accent: true));
+                skipPanel.Children.Add(Ui.Button(model.HasNext ? "Next Episode" : "Skip Credits", model.SkipCredits, "", accent: true));
                 skipPanel.Children.Add(Ui.Button("Watch Credits", model.DismissCredits));
             }
         }
@@ -270,6 +270,7 @@ sealed class PlayerWindow : VideoWindow
         panel.HorizontalAlignment = HorizontalAlignment.Center;
         panel.VerticalAlignment = VerticalAlignment.Center;
         ShowStatus(panel);
+        // The episode is over: the next one starts by itself unless closed.
         App.OnUi(async () =>
         {
             for (var n = 10; n > 0; n--)

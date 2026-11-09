@@ -28,7 +28,7 @@ const ico = {
 };
 
 // UPNEXT_LEAD is how many seconds before an unmarked episode ends the
-// next-episode countdown starts.
+// next-episode popup appears.
 const UPNEXT_LEAD = 30;
 
 let current = null;
@@ -388,8 +388,8 @@ class Player {
   }
 
   // updateSkip shows "Skip Recap" or "Skip Intro" inside those, and at the
-  // credits either the next-episode countdown or "Skip Credits". An episode
-  // with no credits marker gets the countdown over its last seconds instead.
+  // credits either the next-episode popup or "Skip Credits". An episode
+  // with no credits marker gets the popup over its last seconds instead.
   updateSkip(t) {
     const credits = this.markers.credits || this.closingStretch();
     const inCredits = credits && t >= credits.start && t < credits.end - 1 && !this.dismissed.has('credits');
@@ -424,8 +424,8 @@ class Player {
     }
   }
 
-  // closingStretch stands in for unmarked credits on an episode: long enough
-  // before the end that the countdown finishes before the picture does.
+  // closingStretch stands in for unmarked credits on an episode: the last
+  // stretch, when the next-episode popup is offered.
   closingStretch() {
     const d = this.dur();
     if (this.item?.kind !== 'episode' || d < 300) return null;
@@ -611,30 +611,43 @@ class Player {
 
   async ended() {
     this.report(true);
-    if (this.item?.kind !== 'episode' || $('.upnext', this.root)) return;
+    this.ended_ = true;
+    if (this.item?.kind !== 'episode') return;
+    // A credits popup still up gives way to the end screen's countdown.
+    $('.upnext', this.root)?.remove();
     const next = await this.nextEpisode();
     if (next && !this.closed) this.showUpNext(next, { atCredits: false });
   }
 
+  // showUpNext pops up the next episode. At the credits it waits for the
+  // viewer (credit markers can land early); once the video is over it
+  // starts the next one after a short countdown.
   showUpNext(next, { atCredits }) {
     if (this.closed || $('.upnext', this.root)) return;
     $('.skip', this.root)?.remove();
-    const total = 10;
-    let n = total;
     const card = el(`<div class="upnext"><div class="thumb">${next.stillPath ? `<img src="${img(next.stillPath, 'w300')}" alt="">` : ''}</div>
-      <div style="min-width:0"><div class="small muted">Next episode in <b data-n>${n}</b></div>
+      <div style="min-width:0"><div class="small muted">${atCredits || !this.ended_ ? 'Up next' : 'Next episode in <b data-n>10</b>'}</div>
       <div style="font-weight:650">S${next.seasonNumber} · E${next.episodeNumber} — ${esc(next.title)}</div>
-      <div class="ring"><i style="width:100%"></i></div>
       <div class="actions" style="margin-top:10px"><button class="btn primary small" data-go>Next Episode</button>
-      <button class="btn small" data-x>${atCredits ? 'Watch Credits' : 'Cancel'}</button></div></div></div>`);
+      <button class="btn small" data-x>${atCredits ? 'Watch Credits' : 'Dismiss'}</button></div></div></div>`);
     this.root.append(card);
-    requestAnimationFrame(() => ($('.ring i', card).style.width = `${((n - 1) / total) * 100}%`));
-    const timer = setInterval(() => {
-      n--;
-      $('[data-n]', card).textContent = n;
-      $('.ring i', card).style.width = `${(Math.max(0, n - 1) / total) * 100}%`;
-      if (n <= 0) go();
-    }, 1000);
+    let timer;
+    if (!atCredits && this.ended_) {
+      let n = 10;
+      timer = setInterval(() => {
+        // Closed, dismissed, or seeked back into the episode: stop.
+        if (this.closed || !card.isConnected || !this.video.ended) {
+          clearInterval(timer);
+          if (!this.closed && card.isConnected) card.remove();
+          this.ended_ = false;
+          return;
+        }
+        n--;
+        const b = $('[data-n]', card);
+        if (b) b.textContent = n;
+        if (n <= 0) go();
+      }, 1000);
+    }
     const go = () => {
       clearInterval(timer);
       // Moving on counts as finishing this episode.

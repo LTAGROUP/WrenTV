@@ -309,8 +309,6 @@ a.person:focus-visible .face { border-color: var(--accent); transform: scale(1.0
 .upnext { position: absolute; right: 32px; bottom: 110px; background: #121016f0; border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: flex; gap: 14px;
   align-items: center; max-width: 460px; box-shadow: 0 20px 50px #000c; animation: fade-up .3s var(--ease) both; }
 .upnext .thumb { width: 160px; flex: none; }
-.upnext .ring { height: 3px; border-radius: 2px; background: #f7f1e833; margin-top: 8px; overflow: hidden; }
-.upnext .ring i { display: block; height: 100%; background: var(--accent); transition: width 1s linear; }
 
 /* ---------- dropdowns ---------- */
 .dd-native { position: absolute !important; width: 1px !important; height: 1px !important; opacity: 0; pointer-events: none; overflow: hidden; }
@@ -530,7 +528,8 @@ a.person:focus-visible .face { border-color: var(--accent); transform: scale(1.0
 .addon .name, .debrid .name { min-width: 0; } .addon .mono { font-size: 11.5px; }
 .usenet-row { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .usenet-row:last-child { border-bottom: 0; } .usenet-row > .check { margin-top: 30px; }
-.usenet-row .acts { display: flex; margin-top: 24px; }
+.usenet-row .acts { display: flex; gap: 6px; align-items: center; margin-top: 24px; }
+.usenet-row .acts .rank { min-width: 22px; text-align: right; }
 .addon-add { display: flex; gap: 8px; margin-top: 12px; } .addon-add input { flex: 1; min-width: 0; }
 .lt-source { background: var(--bg-3); border: 1px solid var(--line); border-radius: 8px; padding: 4px 14px 12px; margin-bottom: 12px; }
 .lt-source details { margin: 2px 0 6px; } .lt-source summary { cursor: pointer; }

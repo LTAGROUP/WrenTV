@@ -1,6 +1,8 @@
 package streaming
 
 import (
+	"github.com/LTAGROUP/wrentv/internal/config"
+
 	"encoding/json"
 	"slices"
 	"strings"
@@ -259,5 +261,22 @@ func TestRankWithSizeFloorAndPreferWords(t *testing.T) {
 	}
 	if _, err := PreferMatcher([]string{"/(/"}); err == nil {
 		t.Error("bad regexp accepted")
+	}
+}
+
+// Posts from the owner's first indexer go ahead of better-scored posts from
+// later ones; torrents aren't moved by it.
+func TestRankIndexerOrder(t *testing.T) {
+	rels := []Release{
+		{Name: "Silo.S01E01.1080p.BluRay.REMUX", Text: "Silo.S01E01.1080p.BluRay.REMUX", Indexer: "Second", Usenet: true},
+		{Name: "Silo.S01E01.1080p.WEBRip", Text: "Silo.S01E01.1080p.WEBRip", Indexer: "First", Usenet: true},
+	}
+	order := indexerOrder([]config.IndexerConfig{{Name: "First"}, {Name: "Second"}})
+	got := RankWith(rels, "1080p", RankOptions{Season: 1, Indexer: order})
+	if len(got) != 2 || got[0].Indexer != "First" {
+		t.Fatalf("got %+v, want First's post first", got)
+	}
+	if got := RankWith(rels, "1080p", RankOptions{Season: 1}); got[0].Indexer != "Second" {
+		t.Fatalf("without an order the better post should lead, got %+v", got)
 	}
 }

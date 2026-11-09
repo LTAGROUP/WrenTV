@@ -20,7 +20,7 @@ extension ClientCaps {
     }
 }
 
-/// Seconds before an unmarked episode ends that the next-episode countdown starts.
+/// Seconds before an unmarked episode ends that the next-episode popup appears.
 private let upNextLead = 30.0
 
 /// A subtitle file drawn over the video by the app, for the subtitle-site
@@ -123,8 +123,6 @@ final class PlayerModel {
     var markers = Markers()
     /// What the skip button offers right now.
     var skip: Skip?
-    /// Seconds left before the next episode starts, while the credits roll.
-    var countdown: Int?
     /// Set when playback is done and the window should close.
     var closeRequested = false
     /// The episode after this one, looked up when playback starts.
@@ -161,7 +159,6 @@ final class PlayerModel {
     @ObservationIgnored private var pendingMPVLoad: (URL, Double)?
     @ObservationIgnored private var stopped = false
     @ObservationIgnored private var dismissed: Set<Skip> = []
-    @ObservationIgnored private var countdownTask: Task<Void, Never>?
     @ObservationIgnored private var versionsTask: Task<Void, Never>?
     @ObservationIgnored private var cueObserver: Any?
     @ObservationIgnored private var sideRefresh: Task<Void, Never>?
@@ -307,7 +304,6 @@ final class PlayerModel {
 
     private func teardownEngines() {
         progressTask?.cancel()
-        cancelCountdown()
         statusSub = nil
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         endObserver = nil
@@ -559,11 +555,11 @@ final class PlayerModel {
         // Seeking back before a marker offers it again.
         if let r = markers.recap, t < r.start { dismissed.remove(.recap) }
         if let i = markers.intro, t < i.start { dismissed.remove(.intro) }
-        // No credits marker: count down over the last seconds of an episode
-        // that has a next one, so it still moves on before the end.
+        // No credits marker: offer the next episode over the last seconds of an
+        // episode that has one. It only moves on when the viewer picks it.
         let credits = markers.credits ?? (nextEpisode != nil && duration >= 300
             ? TimeRange(start: duration - upNextLead, end: duration + 1) : nil)
-        if let c = credits, t < c.start - 1 { dismissed.remove(.credits); cancelCountdown() }
+        if let c = credits, t < c.start - 1 { dismissed.remove(.credits) }
 
         var next: Skip?
         if let r = markers.recap, t >= r.start, t < r.end - 1, !dismissed.contains(.recap) {
@@ -572,9 +568,6 @@ final class PlayerModel {
             next = .intro
         } else if let c = credits, t >= c.start, t < c.end - 1, !dismissed.contains(.credits) {
             next = .credits
-        }
-        if next == .credits, nextEpisode != nil, countdown == nil, countdownTask == nil, !paused {
-            startCountdown()
         }
         if skip != next { skip = next }
     }
@@ -597,7 +590,6 @@ final class PlayerModel {
     func skipCredits() {
         dismissed.insert(.credits)
         skip = nil
-        cancelCountdown()
         if nextEpisode != nil {
             upNext = nextEpisode
             playNext()
@@ -611,30 +603,6 @@ final class PlayerModel {
     func dismissCredits() {
         dismissed.insert(.credits)
         skip = nil
-        cancelCountdown()
-    }
-
-    private func startCountdown() {
-        countdown = 10
-        countdownTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                guard let self, !Task.isCancelled, let n = self.countdown else { return }
-                if self.paused { continue }
-                if n <= 1 {
-                    self.countdownTask = nil
-                    self.skipCredits()
-                    return
-                }
-                self.countdown = n - 1
-            }
-        }
-    }
-
-    private func cancelCountdown() {
-        countdownTask?.cancel()
-        countdownTask = nil
-        countdown = nil
     }
 
     /// The episode after this one: the next in its season, else the first of
@@ -713,7 +681,6 @@ final class PlayerModel {
         sideRefresh?.cancel()
         sideSubtitle = nil
         sideCue = nil
-        cancelCountdown()
         localFile = nil // the next episode streams from the server
         localPosition = nil
         let old = sessionId

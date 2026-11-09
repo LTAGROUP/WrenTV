@@ -611,7 +611,7 @@ private struct ChapterTicks: View {
     }
 }
 
-/// Skip Intro / Skip Credits, and the next-episode countdown during credits.
+/// Skip Intro / Skip Credits, and the next-episode popup during credits.
 private struct SkipOverlay: View {
     @Environment(AppState.self) private var state
     @Bindable var model: PlayerModel
@@ -628,18 +628,17 @@ private struct SkipOverlay: View {
         .padding(.trailing, 20)
         .padding(.bottom, raised ? 76 : 28)
         .animation(.easeOut(duration: 0.25), value: model.skip)
-        .animation(.easeOut(duration: 0.25), value: model.countdown == nil)
     }
 
     @ViewBuilder
     private var content: some View {
-        if model.skip == .credits, let n = model.countdown, let next = model.nextEpisode {
+        if model.skip == .credits, let next = model.nextEpisode {
             HStack(spacing: 12) {
                 RemoteImage(url: state.api?.imageURL(next.stillPath, size: "w300"))
                     .frame(width: 120, height: 68)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Next episode in \(n)").font(.caption.bold()).foregroundStyle(Color.wrenEmber)
+                    Text("Up Next").font(.caption.bold()).foregroundStyle(Color.wrenEmber)
                     Text("\(next.episodeLabel) — \(next.title)").font(.subheadline.bold()).lineLimit(1)
                     HStack {
                         Button("Next Episode") { model.skipCredits() }
@@ -671,10 +670,13 @@ private struct SkipOverlay: View {
     }
 }
 
+/// Shown once an episode is over: the next one starts by itself after a
+/// short countdown.
 private struct UpNextCard: View {
     @Environment(AppState.self) private var state
     let next: Item
     let play: () -> Void
+    @State private var left = 10
 
     var body: some View {
         VStack {
@@ -688,7 +690,7 @@ private struct UpNextCard: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Up Next").font(.caption.bold()).foregroundStyle(Color.wrenEmber)
                         Text("\(next.episodeLabel) — \(next.title)").font(.headline).lineLimit(2)
-                        Button(action: play) { Label("Play", systemImage: "play.fill") }
+                        Button(action: play) { Label("Play in \(left)", systemImage: "play.fill") }
                             .buttonStyle(.borderedProminent)
                             .tint(Color.wrenEmber)
                     }
@@ -697,6 +699,15 @@ private struct UpNextCard: View {
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                 .padding(24)
             }
+        }
+        .task(id: next.id) {
+            left = 10
+            while left > 0 {
+                try? await Task.sleep(for: .seconds(1))
+                if Task.isCancelled { return }
+                left -= 1
+            }
+            play()
         }
     }
 }

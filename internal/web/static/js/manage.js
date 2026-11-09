@@ -442,6 +442,7 @@ function streamingTab(s, libs) {
       <div class="nserver-list"></div>
       <button type="button" class="btn small" data-ns-add>Add news server</button>
       <h3 class="sub-h">Indexers</h3>
+      <p class="small muted">Posts from indexers higher in the list are tried first. Use the arrows to change the order.</p>
       <div class="indexer-list"></div>
       <button type="button" class="btn small" data-ix-add>Add indexer</button>
       <div style="margin-top:14px"><button type="button" class="btn" data-usenet-check>Check Usenet</button> <span class="small" data-usenet-res></span></div>
@@ -828,11 +829,18 @@ export async function viewSettings() {
         <div class="field"><label>Address</label><input type="text" data-f="url" value="${esc(x.url || '')}" placeholder="https://api.nzbgeek.info" autocomplete="off"></div>
         <div class="field"><label>API key</label><input type="password" data-f="apiKey" placeholder="${x.keySet ? `Saved ${esc(x.keyHint || '')}; type to replace` : 'Needed to search'}" autocomplete="off"></div>
       </div>
-      <div class="acts"><button type="button" class="btn small danger" data-del>Remove</button></div></div>`).join('')
+      <div class="acts">${indexers.length > 1 ? `<span class="rank small muted" title="Posts from higher indexers are tried first">#${i + 1}</span>
+        <button type="button" class="btn small" data-up ${i === 0 ? 'disabled' : ''} aria-label="Move up" title="Try this indexer earlier">↑</button>
+        <button type="button" class="btn small" data-down ${i === indexers.length - 1 ? 'disabled' : ''} aria-label="Move down" title="Try this indexer later">↓</button>` : ''}
+        <button type="button" class="btn small danger" data-del>Remove</button></div></div>`).join('')
       : '<p class="muted small">No indexer.</p>';
+    const move = (i, j) => { [indexers[i], indexers[j]] = [indexers[j], indexers[i]]; drawIndexers(); };
     for (const r of $$('.usenet-row', ixList)) {
       const i = Number(r.dataset.i);
       bind(r, indexers[i], () => { indexers.splice(i, 1); drawIndexers(); });
+      const up = $('[data-up]', r), down = $('[data-down]', r);
+      if (up) up.onclick = () => move(i, i - 1);
+      if (down) down.onclick = () => move(i, i + 1);
     }
   };
   drawServers();

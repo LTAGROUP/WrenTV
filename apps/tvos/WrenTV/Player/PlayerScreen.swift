@@ -40,7 +40,7 @@ private struct PlayerBody: View {
     var body: some View {
         ZStack {
             if let player = model.avPlayer, model.phase == .playing {
-                SystemPlayer(model: model, player: player, skip: model.skip, countdown: model.countdown,
+                SystemPlayer(model: model, player: player, skip: model.skip, hasNext: model.nextEpisode != nil,
                              menuKey: menuKey, chapterCount: model.chapters.count, cue: model.sideCue,
                              infoKey: model.episode?.id ?? "")
                     .ignoresSafeArea()
@@ -81,7 +81,8 @@ private struct SystemPlayer: UIViewControllerRepresentable {
     let model: PlayerModel
     let player: AVPlayer
     let skip: PlayerModel.Skip?
-    let countdown: Int?
+    /// There's a next episode for the credits action to play.
+    let hasNext: Bool
     let menuKey: String
     let chapterCount: Int
     /// The subtitle-site download's line showing now.
@@ -142,7 +143,7 @@ private struct SystemPlayer: UIViewControllerRepresentable {
             c.menuKey = menuKey
             vc.transportBarCustomMenuItems = menus()
         }
-        let actionKey = "\(String(describing: skip))|\(countdown ?? -1)"
+        let actionKey = "\(String(describing: skip))|\(hasNext)"
         if c.actionKey != actionKey {
             c.actionKey = actionKey
             vc.contextualActions = actions()
@@ -273,10 +274,10 @@ private struct SystemPlayer: UIViewControllerRepresentable {
                 MainActor.assumeIsolated { model.skipIntro() }
             }]
         case .credits:
-            let next = UIAction(title: countdown.map { "Next Episode in \($0)" } ?? "Skip Credits", image: UIImage(systemName: "forward.end.fill")) { _ in
+            let next = UIAction(title: hasNext ? "Next Episode" : "Skip Credits", image: UIImage(systemName: "forward.end.fill")) { _ in
                 MainActor.assumeIsolated { model.skipCredits() }
             }
-            guard countdown != nil else { return [next] }
+            guard hasNext else { return [next] }
             let stay = UIAction(title: "Watch Credits") { _ in MainActor.assumeIsolated { model.dismissCredits() } }
             return [stay, next]
         case nil:
