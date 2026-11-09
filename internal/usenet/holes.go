@@ -34,7 +34,9 @@ type hole struct {
 // filled: filling is off, it holds the video's first bytes, or the file
 // has too many holes.
 func (f *File) fillHole(k segKey) ([]byte, bool) {
-	if !f.Fill {
+	// Zeros decrypt to noise, and the patch is worked out on the
+	// decrypted video, so encrypted files aren't filled.
+	if !f.Fill || f.lay.AES != nil {
 		return nil, false
 	}
 	f.mu.Lock()

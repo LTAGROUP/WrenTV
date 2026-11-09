@@ -19,6 +19,9 @@ type Layout struct {
 	Size   int64        `json:"size"`
 	Files  []FileLayout `json:"files"`
 	Pieces []Piece      `json:"pieces"`
+	// AES is set when the pieces are encrypted (a stored file in a
+	// password-protected 7z); they then hold more than Size bytes.
+	AES *AES `json:"aes,omitempty"`
 }
 
 // FileLayout is one NZB file: its decoded size and the size of every
@@ -116,7 +119,7 @@ type span struct {
 // spans lists the article runs covering [off, off+n).
 func (f *File) spans(off, n int64) ([]span, error) {
 	var out []span
-	end := min(off+n, f.lay.Size)
+	end := min(off+n, f.rawSize())
 	pos := int64(0)
 	for _, pc := range f.lay.Pieces {
 		if pos >= end {
@@ -345,13 +348,16 @@ func (f *File) fetch(ctx context.Context, k segKey, fill bool) ([]byte, error) {
 
 // ReadAtContext reads len(p) bytes at off, fetching the articles together.
 func (f *File) ReadAtContext(ctx context.Context, p []byte, off int64) (int, error) {
+	if f.lay.AES != nil {
+		return f.readAES(ctx, p, off)
+	}
 	return f.read(ctx, p, off, true)
 }
 
 // read is ReadAtContext; patch false leaves filled holes as plain zeros,
 // for working out the patches themselves.
 func (f *File) read(ctx context.Context, p []byte, off int64, patch bool) (int, error) {
-	if off >= f.lay.Size {
+	if off >= f.rawSize() {
 		return 0, io.EOF
 	}
 	sp, err := f.spans(off, int64(len(p)))
@@ -390,6 +396,14 @@ func (f *File) ReadAt(p []byte, off int64) (int, error) {
 
 // WriteRange writes n bytes from off to w, keeping Ahead articles in flight.
 func (f *File) WriteRange(ctx context.Context, w io.Writer, off, n int64) (int64, error) {
+	if f.lay.AES != nil {
+		return f.writeAES(ctx, w, off, n)
+	}
+	return f.writeRaw(ctx, w, off, n)
+}
+
+// writeRaw is WriteRange over the layout's bytes as they are stored.
+func (f *File) writeRaw(ctx context.Context, w io.Writer, off, n int64) (int64, error) {
 	var written int64
 	// Read-ahead starts small and doubles as the read goes on: players
 	// probe with many short reads, and a seek shouldn't queue tens of

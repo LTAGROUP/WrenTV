@@ -12,6 +12,7 @@ require (
 	github.com/jackpal/gateway v1.2.0
 	github.com/jackpal/go-nat-pmp v1.0.2
 	github.com/kardianos/service v1.3.0
+	github.com/ulikunitz/xz v0.5.15
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0

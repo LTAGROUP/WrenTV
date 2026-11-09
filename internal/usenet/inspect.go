@@ -40,10 +40,17 @@ var ErrUnplayable = errors.New("no streamable video in this post")
 // files whose posted name says they aren't wanted (other episodes of a
 // season pack), so only what might play is read.
 func Inspect(ctx context.Context, pool *Pool, nzb *NZB, keep func(name string) bool) ([]Video, error) {
-	var idx []int
+	var idx, sz []int
 	for i, f := range nzb.Files {
 		name := f.Name()
-		if junkExtRE.MatchString(name) || archive7zRE.MatchString(name) {
+		if junkExtRE.MatchString(name) {
+			continue
+		}
+		if archive7zRE.MatchString(name) {
+			// 7z volumes stream when the files in them are stored.
+			if _, _, ok := sevenZipVolume(name); ok {
+				sz = append(sz, i)
+			}
 			continue
 		}
 		if _, rar := rarVolume(name); keep != nil && (rar || isVideo(name)) && !keep(name) {
@@ -52,8 +59,25 @@ func Inspect(ctx context.Context, pool *Pool, nzb *NZB, keep func(name string) b
 		idx = append(idx, i)
 	}
 	// A 60 GB remux in 100 MB volumes is over 600 files.
-	if len(idx) == 0 || len(idx) > 2000 {
+	if len(idx) > 2000 || len(sz) > 2000 || len(idx)+len(sz) == 0 {
 		return nil, ErrUnplayable
+	}
+	var szVideos []Video
+	var szErr error
+	if len(sz) > 0 {
+		szVideos, szErr = sevenZipVideos(ctx, pool, nzb, sz)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if len(idx) == 0 {
+			if szErr != nil {
+				return nil, szErr
+			}
+			if len(szVideos) == 0 {
+				return nil, ErrUnplayable
+			}
+			return szVideos, nil
+		}
 	}
 	heads := make([]head, len(nzb.Files))
 	read := func(files []int) {
@@ -192,9 +216,13 @@ func Inspect(ctx context.Context, pool *Pool, nzb *NZB, keep func(name string) b
 		}
 		videos = append(videos, vs...)
 	}
+	videos = append(videos, szVideos...)
 	if len(videos) == 0 {
 		if firstErr != nil {
 			return nil, firstErr
+		}
+		if szErr != nil {
+			return nil, szErr
 		}
 		return nil, ErrUnplayable
 	}

@@ -17,6 +17,8 @@ import (
 // NZB lists the files of a post and the articles each is split into.
 type NZB struct {
 	Files []NZBFile
+	// Password opens the post's archives, when the NZB gives one.
+	Password string
 }
 
 type NZBFile struct {
@@ -52,6 +54,10 @@ func (f NZBFile) Name() string {
 
 func ParseNZB(data []byte) (*NZB, error) {
 	var doc struct {
+		Meta []struct {
+			Type  string `xml:"type,attr"`
+			Value string `xml:",chardata"`
+		} `xml:"head>meta"`
 		Files []struct {
 			Subject  string   `xml:"subject,attr"`
 			Groups   []string `xml:"groups>group"`
@@ -69,6 +75,11 @@ func ParseNZB(data []byte) (*NZB, error) {
 		return nil, fmt.Errorf("NZB: %w", err)
 	}
 	n := &NZB{}
+	for _, m := range doc.Meta {
+		if strings.EqualFold(m.Type, "password") && n.Password == "" {
+			n.Password = strings.TrimSpace(m.Value)
+		}
+	}
 	for _, f := range doc.Files {
 		nf := NZBFile{Subject: f.Subject, Groups: f.Groups}
 		seen := map[int]bool{}
