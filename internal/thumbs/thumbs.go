@@ -185,6 +185,33 @@ func order(count int) []int {
 	return out
 }
 
+// Sweep removes the frames of files that no longer exist (keep says which
+// do), leaving anything made in the last day or being made now. It reports
+// how many sets went.
+func (m *Manager) Sweep(keep map[string]bool) int {
+	entries, err := os.ReadDir(m.Dir)
+	if err != nil {
+		return 0
+	}
+	removed := 0
+	for _, e := range entries {
+		id := e.Name()
+		if !e.IsDir() || keep[id] {
+			continue
+		}
+		m.mu.Lock()
+		busy := m.running[id]
+		m.mu.Unlock()
+		if info, err := e.Info(); busy || err != nil || time.Since(info.ModTime()) < 24*time.Hour {
+			continue
+		}
+		if os.RemoveAll(filepath.Join(m.Dir, id)) == nil {
+			removed++
+		}
+	}
+	return removed
+}
+
 func (m *Manager) dir(fileID string) string { return filepath.Join(m.Dir, filepath.Base(fileID)) }
 
 func (m *Manager) finish(fileID string) {

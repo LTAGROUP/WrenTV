@@ -78,6 +78,9 @@ type Server struct {
 	tickets     *tickets // device download links
 	ticketsOnce sync.Once
 
+	throttle     *loginThrottle // cooldowns after wrong local passwords
+	throttleOnce sync.Once
+
 	playLog   *playLog // streamed files each viewer was handed, for failure reports
 	playsOnce sync.Once
 }
@@ -102,6 +105,7 @@ func (s *Server) Router() http.Handler {
 	r.Get("/api/server", s.handleServerInfo)
 	r.Post("/api/setup/claim", s.handleClaim)
 	r.Post("/api/auth/login", s.handleLogin)
+	r.Post("/api/auth/exchange", s.handleExchange)
 	r.Get("/api/images/{size}/{file}", func(w http.ResponseWriter, r *http.Request) {
 		s.Images.ServeTMDB(w, r, chi.URLParam(r, "size"), "/"+chi.URLParam(r, "file"))
 	})
@@ -158,6 +162,7 @@ func (s *Server) Router() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.authenticate, interactive)
 		r.Get("/api/me", s.handleMe)
+		r.Post("/api/me/signout-everywhere", s.handleRevokeMine)
 		r.Post("/api/pair/{code}/approve", s.handleApprovePair)
 		r.Get("/api/events", s.handleEvents)
 		r.Get("/api/home", s.handleHome)
@@ -243,6 +248,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/api/users", s.handleCreateUser)
 			r.Patch("/api/users/{id}", s.handleUpdateUser)
 			r.Delete("/api/users/{id}", s.handleDeleteUser)
+			r.Post("/api/users/{id}/signout", s.handleRevokeUser)
 			r.Get("/api/admin/status", s.handleAdminStatus)
 			r.Get("/api/admin/settings", s.handleGetSettings)
 			r.Get("/api/admin/browse", s.handleBrowse)
@@ -307,6 +313,10 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			return
 		case errors.Is(err, auth.ErrForbidden):
 			writeErr(w, http.StatusForbidden, "your account doesn't have access to this server")
+			return
+		case errors.Is(err, auth.ErrBusy):
+			w.Header().Set("Retry-After", "5")
+			writeErr(w, http.StatusServiceUnavailable, "the server is busy checking sign-ins; try again in a moment")
 			return
 		case err != nil:
 			writeErr(w, http.StatusUnauthorized, "invalid or expired sign-in")

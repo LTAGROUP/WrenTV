@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -37,12 +38,12 @@ import (
 	"github.com/LTAGROUP/wrentv/internal/metadata/tmdb"
 	"github.com/LTAGROUP/wrentv/internal/onlinesubs"
 	"github.com/LTAGROUP/wrentv/internal/simkl"
-	"github.com/LTAGROUP/wrentv/internal/trakt"
 	"github.com/LTAGROUP/wrentv/internal/stream"
 	"github.com/LTAGROUP/wrentv/internal/streaming"
 	"github.com/LTAGROUP/wrentv/internal/sysstat"
 	"github.com/LTAGROUP/wrentv/internal/thumbs"
 	"github.com/LTAGROUP/wrentv/internal/tracking"
+	"github.com/LTAGROUP/wrentv/internal/trakt"
 	"github.com/LTAGROUP/wrentv/internal/webhook"
 )
 
@@ -180,7 +181,7 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	scanner := library.NewScanner(d, tm, hub, library.Options{
 		FFprobe: cfg.Transcode.FFprobePath, MatchWorkers: cfg.Metadata.Workers, ProbeWorkers: cfg.Scanner.ProbeWorkers,
 	})
-	analyzer := markers.New(d, cfg.Transcode.FFmpegPath, func() bool { return cfg.Markers.Fingerprint })
+	analyzer := markers.New(d, cfg.Transcode.FFmpegPath, func() bool { return cfg.Snapshot().Markers.Fingerprint })
 	scanner.OnProbed = analyzer.Kick
 	go analyzer.Run(ctx)
 	scanner.Start(ctx)
@@ -202,19 +203,20 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	_, portStr, _ := net.SplitHostPort(cfg.Listen)
 	port, _ := strconv.Atoi(portStr)
 	serverInfo := func() webhook.Server {
-		url := cfg.PublicURL
+		snap := cfg.Snapshot()
+		url := snap.PublicURL
 		if url == "" {
 			if urls := api.LocalURLs(cfg); len(urls) > 0 {
 				url = urls[0]
 			}
 		}
-		return webhook.Server{ID: cfg.MachineID, Name: cfg.ServerName, URL: url}
+		return webhook.Server{ID: cfg.MachineID, Name: snap.ServerName, URL: url}
 	}
-	hooks := webhook.New(func() []config.WebhookConfig { return cfg.Webhooks })
+	hooks := webhook.New(func() []config.WebhookConfig { return cfg.Snapshot().Webhooks })
 	streamer := streaming.New(streaming.Deps{Cfg: cfg, DB: d, TMDB: tm, Scanner: scanner, Hub: hub, Hooks: hooks, Server: serverInfo, HTTPPort: port})
 	streamer.Start(ctx)
-	tracker := tracking.New(d, simkl.New(func() string { return cfg.Simkl.ClientID }, version), hooks, serverInfo)
-	tracker.Trakt = trakt.New(func() string { return cfg.Trakt.ClientID }, func() string { return cfg.Trakt.ClientSecret }, version)
+	tracker := tracking.New(d, simkl.New(func() string { return cfg.Snapshot().Simkl.ClientID }, version), hooks, serverInfo)
+	tracker.Trakt = trakt.New(func() string { return cfg.Snapshot().Trakt.ClientID }, func() string { return cfg.Snapshot().Trakt.ClientSecret }, version)
 	tracker.AddTitle = func(ctx context.Context, userID, kind string, tmdbID int) error {
 		if u, err := d.UserByID(ctx, userID); err != nil || !u.AllowStreaming || !streamer.Active() {
 			return err
@@ -235,9 +237,9 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 
 	srv := &api.Server{
 		Version: version, Cfg: cfg, DB: d, Scanner: scanner, Watcher: watcher, TMDB: tm, Streams: streams,
-		OMDb: omdb.New(func() string { return cfg.Metadata.OMDbAPIKey }, d), Markers: analyzer,
-		Community: markers.NewCommunity(d, func() bool { return cfg.Markers.Community }),
-		Subtitles: onlinesubs.New(func() config.SubtitlesConfig { return cfg.Subtitles }, "WrenTV v"+version),
+		OMDb: omdb.New(func() string { return cfg.Snapshot().Metadata.OMDbAPIKey }, d), Markers: analyzer,
+		Community: markers.NewCommunity(d, func() bool { return cfg.Snapshot().Markers.Community }),
+		Subtitles: onlinesubs.New(func() config.SubtitlesConfig { return cfg.Snapshot().Subtitles }, "WrenTV v"+version),
 		Streaming: streamer, LiveTV: live, Hub: hub, Hooks: hooks, Tracking: tracker, Images: images.New(filepath.Join(dataDir, "images")),
 		Thumbs: thumbs.New(filepath.Join(cfg.DataDir, "cache", "thumbs"), cfg.Transcode.FFmpegPath),
 		Sys:    sysstat.Start(),
@@ -248,17 +250,22 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	srv.Local = auth.NewLocal(d, cfg.Auth.SigningKey)
 	srv.Auth = auth.Either(srv.Local, srv.Supa)
 	if !srv.Supa.Claimed() {
-		if cfg.Auth.Supabase.ClaimCode == "" {
-			cfg.Auth.Supabase.ClaimCode = auth.NewClaimCode()
-			_ = cfg.Save()
+		if cfg.Snapshot().Auth.Supabase.ClaimCode == "" {
+			if err := cfg.Update(func(c *config.Config) error {
+				c.Auth.Supabase.ClaimCode = auth.NewClaimCode()
+				return nil
+			}); err != nil {
+				slog.Warn("couldn't save the claim code", "err", err)
+			}
 		}
 		slog.Warn("server is not claimed yet: open the web app, sign in and enter this claim code",
-			"claim_code", cfg.Auth.Supabase.ClaimCode)
+			"claim_code", cfg.Snapshot().Auth.Supabase.ClaimCode)
 	}
 	srv.Direct = direct.New(cfg, func() []string { return api.LocalURLs(cfg) }, func() { go srv.HeartbeatNow() })
 	go srv.Direct.Run(ctx)
 	go srv.RunHeartbeat(ctx)
 	go srv.RunOnlineSubtitleSweep(ctx)
+	go srv.RunMaintenance(ctx)
 	// TVs and other devices linked by code or QR code from a signed-in device.
 	srv.Devices = auth.NewDevices(d, cfg.Auth.SigningKey, srv.Local, srv.Supa)
 	srv.Auth = auth.WithDevices(srv.Auth, srv.Devices)
@@ -277,6 +284,9 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 		Addr:              cfg.Listen,
 		Handler:           srv.Router(),
 		ReadHeaderTimeout: 15 * time.Second,
+		// Only for connections sitting idle between requests; a stream or a
+		// download in progress is never cut.
+		IdleTimeout: 2 * time.Minute,
 	}
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
@@ -294,7 +304,7 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 		// wrentv.net certificate arrives. HTTPS needs its own http.Server:
 		// one server running both Serve and ServeTLS breaks HTTP/2.
 		plain, secure := direct.Split(ln)
-		tlsSrv = &http.Server{Handler: httpSrv.Handler, ReadHeaderTimeout: httpSrv.ReadHeaderTimeout, TLSConfig: srv.Direct.TLSConfig()}
+		tlsSrv = &http.Server{Handler: httpSrv.Handler, ReadHeaderTimeout: httpSrv.ReadHeaderTimeout, IdleTimeout: httpSrv.IdleTimeout, TLSConfig: srv.Direct.TLSConfig()}
 		go func() { errc <- tlsSrv.ServeTLS(secure, "", "") }()
 		ln = plain
 	}
@@ -303,10 +313,29 @@ func run(ctx context.Context, dataDir string, ready chan<- error) error {
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if tlsSrv != nil {
-			go tlsSrv.Shutdown(shutdown)
+		// Ending the playback sessions stops their ffmpeg runs (which would
+		// otherwise outlive the server where nothing cleans up after it) and
+		// lets the requests they hold finish.
+		streams.Close()
+		live.Close()
+		tlsDone := make(chan struct{})
+		go func() {
+			defer close(tlsDone)
+			if tlsSrv != nil {
+				_ = tlsSrv.Shutdown(shutdown)
+			}
+		}()
+		err := httpSrv.Shutdown(shutdown)
+		<-tlsDone
+		if errors.Is(err, context.DeadlineExceeded) {
+			// A long transfer was still going: close it rather than fail.
+			_ = httpSrv.Close()
+			if tlsSrv != nil {
+				_ = tlsSrv.Close()
+			}
+			return nil
 		}
-		return httpSrv.Shutdown(shutdown)
+		return err
 	case err := <-errc:
 		return err
 	}

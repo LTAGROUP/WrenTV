@@ -115,7 +115,12 @@ func New(d Deps) *Service {
 	}
 }
 
-func (s *Service) cfg() *config.StreamingConfig { return &s.Cfg.Streaming }
+// cfg is the streaming settings as they are right now. Nothing may be
+// changed through it: its slices and maps are shared.
+func (s *Service) cfg() *config.StreamingConfig {
+	c := s.Cfg.Snapshot().Streaming
+	return &c
+}
 
 // Start runs the prefetch workers and the download queue.
 func (s *Service) Start(ctx context.Context) {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -141,8 +142,7 @@ type debridView struct {
 
 var debridNames = map[string]string{"torbox": "TorBox", "alldebrid": "AllDebrid", "realdebrid": "Real-Debrid"}
 
-func (s *Server) debridKeys() map[string]*string {
-	c := &s.Cfg.Streaming
+func debridKeys(c *config.StreamingConfig) map[string]*string {
 	return map[string]*string{"torbox": &c.TorBoxKey, "alldebrid": &c.AllDebridKey, "realdebrid": &c.RealDebridKey}
 }
 
@@ -158,7 +158,8 @@ func providerOrder(order []string) []string {
 }
 
 func (s *Server) settings() settingsView {
-	c := s.Cfg
+	snap := s.Cfg.Snapshot()
+	c := &snap
 	hooks := make([]config.WebhookConfig, len(c.Webhooks))
 	for i, h := range c.Webhooks {
 		hooks[i] = config.WebhookConfig{URL: h.URL, Events: h.Events}
@@ -175,7 +176,7 @@ func (s *Server) settings() settingsView {
 	if sv.MaxSizeGB == nil {
 		sv.MaxSizeGB = map[string]float64{}
 	}
-	keys := s.debridKeys()
+	keys := debridKeys(&st)
 	for _, p := range providerOrder(st.ProviderOrder) {
 		k := *keys[p]
 		v := debridView{Provider: p, Name: debridNames[p], KeySet: k != ""}
@@ -217,7 +218,7 @@ func (s *Server) remoteAccess() *remoteAccessView {
 	if s.Direct == nil {
 		return nil
 	}
-	rc := s.Cfg.RemoteAccess
+	rc := s.Cfg.Snapshot().RemoteAccess
 	return &remoteAccessView{Enabled: rc.Enabled, UPnP: rc.UPnP, PublicPort: rc.PublicPort, Status: s.Direct.Status()}
 }
 
@@ -336,15 +337,14 @@ func usenetFromPatch(c *config.StreamingConfig, ixs *[]indexerPatch, nss *[]news
 	return indexers, servers, nil
 }
 
-// apply validates and applies a streaming patch.
-func (s *Server) applyStreaming(r *http.Request, p *streamingPatch) error {
-	c := &s.Cfg.Streaming
+// applyStreaming validates a streaming patch and applies it to c.
+func (s *Server) applyStreaming(r *http.Request, c *config.StreamingConfig, p *streamingPatch) error {
 	if p.Enabled != nil {
 		c.Enabled = *p.Enabled
 	}
 	for name, v := range map[string]*string{"torbox": p.TorBoxKey, "alldebrid": p.AllDebridKey, "realdebrid": p.RealDebridKey} {
 		if v != nil {
-			*s.debridKeys()[name] = strings.TrimSpace(*v)
+			*debridKeys(c)[name] = strings.TrimSpace(*v)
 		}
 	}
 	if p.ProviderOrder != nil {
@@ -541,116 +541,116 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	c := s.Cfg
-	restart := false
-	if req.ServerName != nil && strings.TrimSpace(*req.ServerName) != "" {
-		c.ServerName = strings.TrimSpace(*req.ServerName)
-	}
-	if req.PublicURL != nil {
-		c.PublicURL = strings.TrimSpace(*req.PublicURL)
-	}
-	if req.HWAccel != nil {
-		c.Transcode.HWAccel = *req.HWAccel
-		restart = true
-	}
-	if req.TMDBAPIKey != nil {
-		c.Metadata.TMDBAPIKey = strings.TrimSpace(*req.TMDBAPIKey)
-		restart = true
-	}
-	if req.OMDbAPIKey != nil {
-		c.Metadata.OMDbAPIKey = strings.TrimSpace(*req.OMDbAPIKey) // read per request: no restart
-	}
-	if req.Fingerprint != nil {
-		c.Markers.Fingerprint = *req.Fingerprint
-		if c.Markers.Fingerprint && s.Markers != nil {
-			s.Markers.Kick()
+	// The patch is made on a copy and takes effect all at once, or (when
+	// something in it is invalid) not at all.
+	var restart, kickMarkers, liveRefetch, liveRegroup bool
+	err := s.Cfg.Update(func(c *config.Config) error {
+		if req.ServerName != nil && strings.TrimSpace(*req.ServerName) != "" {
+			c.ServerName = strings.TrimSpace(*req.ServerName)
 		}
-	}
-	if req.Community != nil {
-		c.Markers.Community = *req.Community
-	}
-	if p := req.Subtitles; p != nil {
-		oc := &c.Subtitles.OpenSubtitles
-		for _, f := range []struct {
-			from *string
-			to   *string
-		}{{p.OpenSubtitlesAPIKey, &oc.APIKey}, {p.OpenSubtitlesUsername, &oc.Username}, {p.SubDLAPIKey, &c.Subtitles.SubDL.APIKey}} {
-			if f.from != nil {
-				*f.to = strings.TrimSpace(*f.from)
+		if req.PublicURL != nil {
+			c.PublicURL = strings.TrimSpace(*req.PublicURL)
+		}
+		if req.HWAccel != nil {
+			c.Transcode.HWAccel = *req.HWAccel
+			restart = true
+		}
+		if req.TMDBAPIKey != nil {
+			c.Metadata.TMDBAPIKey = strings.TrimSpace(*req.TMDBAPIKey)
+			restart = true
+		}
+		if req.OMDbAPIKey != nil {
+			c.Metadata.OMDbAPIKey = strings.TrimSpace(*req.OMDbAPIKey) // read per request: no restart
+		}
+		if req.Fingerprint != nil {
+			c.Markers.Fingerprint = *req.Fingerprint
+			kickMarkers = c.Markers.Fingerprint
+		}
+		if req.Community != nil {
+			c.Markers.Community = *req.Community
+		}
+		if p := req.Subtitles; p != nil {
+			oc := &c.Subtitles.OpenSubtitles
+			for _, f := range []struct {
+				from *string
+				to   *string
+			}{{p.OpenSubtitlesAPIKey, &oc.APIKey}, {p.OpenSubtitlesUsername, &oc.Username}, {p.SubDLAPIKey, &c.Subtitles.SubDL.APIKey}} {
+				if f.from != nil {
+					*f.to = strings.TrimSpace(*f.from)
+				}
+			}
+			if p.OpenSubtitlesPassword != nil {
+				oc.Password = *p.OpenSubtitlesPassword
 			}
 		}
-		if p.OpenSubtitlesPassword != nil {
-			oc.Password = *p.OpenSubtitlesPassword
-		}
-	}
-	if req.Streaming != nil {
-		if err := s.applyStreaming(r, req.Streaming); err != nil {
-			writeErr(w, 400, err.Error())
-			return
-		}
-		if s.Streaming.Active() {
-			_, _ = s.Streaming.Libraries(r.Context())
-		}
-	}
-	var liveRefetch, liveRegroup bool
-	if req.LiveTV != nil {
-		var err error
-		if liveRefetch, liveRegroup, err = s.applyLiveTV(req.LiveTV); err != nil {
-			writeErr(w, 400, err.Error())
-			return
-		}
-	}
-	if u := req.UserDefaults; u != nil {
-		if u.MaxStreams < 0 || u.MaxDownloads < 0 {
-			writeErr(w, 400, "limits can't be negative")
-			return
-		}
-		c.Users = *u
-	}
-	if req.Webhooks != nil {
-		// Keep existing secrets when the client sends the masked placeholder.
-		old := map[string]string{}
-		for _, h := range c.Webhooks {
-			old[h.URL] = h.Secret
-		}
-		hooks := *req.Webhooks
-		for i := range hooks {
-			if hooks[i].Secret == "••••••" {
-				hooks[i].Secret = old[hooks[i].URL]
+		if req.Streaming != nil {
+			if err := s.applyStreaming(r, &c.Streaming, req.Streaming); err != nil {
+				return err
 			}
 		}
-		c.Webhooks = hooks
-	}
-	if req.SimklID != nil {
-		c.Simkl.ClientID = strings.TrimSpace(*req.SimklID)
-	}
-	if req.TraktID != nil {
-		c.Trakt.ClientID = strings.TrimSpace(*req.TraktID)
-	}
-	if req.TraktSecret != nil && *req.TraktSecret != maskedPassword {
-		c.Trakt.ClientSecret = strings.TrimSpace(*req.TraktSecret)
-	}
-	if ra := req.RemoteAccess; ra != nil {
-		if ra.Enabled != nil {
-			c.RemoteAccess.Enabled = *ra.Enabled
-		}
-		if ra.UPnP != nil {
-			c.RemoteAccess.UPnP = *ra.UPnP
-		}
-		if ra.PublicPort != nil {
-			if *ra.PublicPort < 0 || *ra.PublicPort > 65535 {
-				writeErr(w, 400, "public port must be between 1 and 65535 (0 for automatic)")
-				return
+		if req.LiveTV != nil {
+			var err error
+			if liveRefetch, liveRegroup, err = applyLiveTV(&c.LiveTV, req.LiveTV); err != nil {
+				return err
 			}
-			c.RemoteAccess.PublicPort = *ra.PublicPort
 		}
-		if s.Direct != nil {
-			s.Direct.Refresh()
+		if u := req.UserDefaults; u != nil {
+			if u.MaxStreams < 0 || u.MaxDownloads < 0 {
+				return errors.New("limits can't be negative")
+			}
+			c.Users = *u
 		}
-	}
-	if err := c.Save(); err != nil {
-		writeErr(w, 500, err.Error())
+		if req.Webhooks != nil {
+			// Keep existing secrets when the client sends the masked placeholder.
+			old := map[string]string{}
+			for _, h := range c.Webhooks {
+				old[h.URL] = h.Secret
+			}
+			hooks := *req.Webhooks
+			for i := range hooks {
+				if hooks[i].Secret == "••••••" {
+					hooks[i].Secret = old[hooks[i].URL]
+				}
+			}
+			c.Webhooks = hooks
+		}
+		if req.SimklID != nil {
+			c.Simkl.ClientID = strings.TrimSpace(*req.SimklID)
+		}
+		if req.TraktID != nil {
+			c.Trakt.ClientID = strings.TrimSpace(*req.TraktID)
+		}
+		if req.TraktSecret != nil && *req.TraktSecret != maskedPassword {
+			c.Trakt.ClientSecret = strings.TrimSpace(*req.TraktSecret)
+		}
+		if ra := req.RemoteAccess; ra != nil {
+			if ra.Enabled != nil {
+				c.RemoteAccess.Enabled = *ra.Enabled
+			}
+			if ra.UPnP != nil {
+				c.RemoteAccess.UPnP = *ra.UPnP
+			}
+			if ra.PublicPort != nil {
+				if *ra.PublicPort < 0 || *ra.PublicPort > 65535 {
+					return errors.New("public port must be between 1 and 65535 (0 for automatic)")
+				}
+				c.RemoteAccess.PublicPort = *ra.PublicPort
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		writeErr(w, 400, err.Error())
 		return
+	}
+	if kickMarkers && s.Markers != nil {
+		s.Markers.Kick()
+	}
+	if req.Streaming != nil && s.Streaming.Active() {
+		_, _ = s.Streaming.Libraries(r.Context())
+	}
+	if req.RemoteAccess != nil && s.Direct != nil {
+		s.Direct.Refresh()
 	}
 	if liveRefetch {
 		s.LiveTV.Refresh(true)

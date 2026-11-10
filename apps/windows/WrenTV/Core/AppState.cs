@@ -85,9 +85,8 @@ public sealed class AppState
             }
             else if (info.UsesAccounts)
             {
-                var client = new AccountClient(info.Supabase!);
-                if (Store.Session(client.StoreKey) is { } session)
-                    await FinishSignIn(baseUrl, new TokenSource(client, session), session.Email);
+                if (Store.Session(accountClient.StoreKey) is { } session)
+                    await ServerSignIn(baseUrl, Store.GetString("serverId") ?? info.ServerId, session);
                 else
                     await RestoreAccount();
             }
@@ -177,9 +176,7 @@ public sealed class AppState
         Store.Set("serverURL", url.AbsoluteUri);
         Store.Set("serverId", server.Id);
         Store.Set("serverAddresses", server.Candidates.Select(c => c.AbsoluteUri).ToList());
-        var client = new AccountClient(info.Supabase ?? SupabaseInfo.WrenTV);
-        if (client.StoreKey != accountClient.StoreKey) Store.SetSession(client.StoreKey, session);
-        await FinishSignIn(url, new TokenSource(client, session), session.Email);
+        await ServerSignIn(url, server.Id, session);
         Notify();
     }
 
@@ -225,10 +222,9 @@ public sealed class AppState
         // Already signed in to this server's account service?
         if (info.UsesAccounts)
         {
-            var client = new AccountClient(info.Supabase!);
-            if (Store.Session(client.StoreKey) is { } session)
+            if (Store.Session(accountClient.StoreKey) is { } session)
             {
-                await FinishSignIn(url, new TokenSource(client, session), session.Email);
+                await ServerSignIn(url, info.ServerId, session);
                 Notify();
             }
         }
@@ -251,8 +247,9 @@ public sealed class AppState
     /// Account servers reached by address. False when the new account must confirm its email.
     public async Task<bool> AccountSignIn(string email, string password, string? name)
     {
-        if (ServerUrl is not { } url || Server?.Supabase is not { } supa) return false;
-        var client = new AccountClient(supa);
+        // The account service's address is the app's own, never one a server names.
+        if (ServerUrl is not { } url || Server?.UsesAccounts != true) return false;
+        var client = accountClient;
         AccountSession session;
         if (name != null)
         {
@@ -262,7 +259,7 @@ public sealed class AppState
         }
         else session = await client.SignIn(email, password);
         Store.SetSession(client.StoreKey, session);
-        await FinishSignIn(url, new TokenSource(client, session), session.Email);
+        await ServerSignIn(url, Server?.ServerId, session);
         Notify();
         return true;
     }
@@ -270,16 +267,83 @@ public sealed class AppState
     /// Re-checks access after the owner shares the server.
     public async Task RetryAccess()
     {
-        if (ServerUrl is not { } url || Server?.Supabase is not { } supa) return;
-        var client = new AccountClient(supa);
+        if (ServerUrl is not { } url || Server?.UsesAccounts != true) return;
+        var client = accountClient;
         if (Store.Session(client.StoreKey) is not { } session) return;
         await client.AcceptInvites(session);
         try { Server = await new WrenTVApi(url).ServerInfo(); } catch { }
-        await FinishSignIn(url, new TokenSource(client, session), session.Email);
+        await ServerSignIn(url, Server?.ServerId, session);
         Notify();
     }
 
-    async Task FinishSignIn(Uri url, TokenSource auth, string? email)
+    static string ServerTokenKey(string serverId) => "server-token:" + serverId;
+
+    /// Signs in to a media server with the Wren TV account, without showing
+    /// the server the account's token (which would work on the account
+    /// service and on every other server too). The app asks the account
+    /// service for a ticket for this one server and hands that over; the
+    /// server answers with a token of its own, kept for next time.
+    async Task ServerSignIn(Uri url, string? serverId, AccountSession session, bool retried = false)
+    {
+        AccountEmail = session.Email;
+        Account = session;
+        var name = Server?.Name ?? "This server";
+        if (string.IsNullOrEmpty(serverId))
+        {
+            AccessIssue = $"{name} hasn't been set up yet. Open it in a web browser to claim it with your account.";
+            return;
+        }
+        var key = ServerTokenKey(serverId);
+        var saved = Store.GetSecret(key);
+        var auth = new TokenSource(accountClient, session, saved ?? "");
+        if (saved == null)
+        {
+            try
+            {
+                var ticket = await accountClient.ServerTicket(serverId, await auth.AccountToken());
+                var r = await new WrenTVApi(url).Exchange(ticket);
+                Store.SetSecret(key, r.Token);
+                auth.SetServerToken(r.Token);
+            }
+            catch (WrenTVException e) when (e.Status is 404 or 405)
+            {
+                AccessIssue = $"{name} needs to be updated before this version of the app can sign in to it.";
+                return;
+            }
+            catch (WrenTVException e) when (e.Status == 401 && e.Message == "Your sign-in expired")
+            {
+                ClearCredentials();
+                return;
+            }
+            catch (WrenTVException e) when (e.Status == 403 || e.Message.Contains("access", StringComparison.OrdinalIgnoreCase))
+            {
+                AccessIssue = $"{session.Email} doesn't have access to {name}. Ask the owner to share it with this email address.";
+                return;
+            }
+            catch (WrenTVException e) when (e.Status == 409)
+            {
+                AccessIssue = $"{name} hasn't been set up yet. Open it in a web browser to claim it with your account.";
+                return;
+            }
+            catch (Exception e)
+            {
+                AccessIssue = e.Message;
+                return;
+            }
+        }
+        var rejected = await FinishSignIn(url, auth, session.Email, keepAccountOn401: !retried);
+        if (rejected && !retried)
+        {
+            // The server no longer takes its old token (signed out there, or
+            // it was reset): ask for a new one, once.
+            Store.SetSecret(key, null);
+            await ServerSignIn(url, serverId, session, retried: true);
+        }
+    }
+
+    /// Returns true when the server turned the token down and
+    /// keepAccountOn401 left the sign-in alone for the caller to retry.
+    async Task<bool> FinishSignIn(Uri url, TokenSource auth, string? email, bool keepAccountOn401 = false)
     {
         var api = new WrenTVApi(url, auth);
         AccountEmail = email;
@@ -291,7 +355,11 @@ public sealed class AppState
             SignedIn(api, me.User);
             PickAddress();
         }
-        catch (WrenTVException e) when (e.Status == 401) { ClearCredentials(); }
+        catch (WrenTVException e) when (e.Status == 401)
+        {
+            if (keepAccountOn401) return true;
+            ClearCredentials();
+        }
         catch (WrenTVException e) when (e.Status == 403)
         {
             AccessIssue = $"{email ?? "This account"} doesn't have access to {Server?.Name ?? "this server"}. Ask the owner to share it with this email address.";
@@ -301,6 +369,7 @@ public sealed class AppState
             AccessIssue = $"{Server?.Name ?? "This server"} hasn't been set up yet. Open it in a web browser to claim it with your account.";
         }
         catch (Exception e) { AccessIssue = e.Message; }
+        return false;
     }
 
     void SignedIn(WrenTVApi api, User user)
@@ -326,12 +395,10 @@ public sealed class AppState
     void ClearCredentials()
     {
         if (ServerUrl is { } url) Store.SetSecret(url.AbsoluteUri, null);
-        foreach (var key in new[] { Server?.Supabase is { } s ? new AccountClient(s).StoreKey : null, accountClient.StoreKey })
-        {
-            if (key == null) continue;
-            if (Store.Session(key) is { } session) _ = new AccountClient(SupabaseInfo.WrenTV).SignOut(session);
-            Store.SetSession(key, null);
-        }
+        foreach (var id in new[] { Server?.ServerId, Store.GetString("serverId") })
+            if (!string.IsNullOrEmpty(id)) Store.SetSecret(ServerTokenKey(id), null);
+        if (Store.Session(accountClient.StoreKey) is { } session) _ = accountClient.SignOut(session);
+        Store.SetSession(accountClient.StoreKey, null);
         Account = null;
         AccountServers = null;
         AccountEmail = null;
@@ -372,8 +439,8 @@ public sealed class AppState
             var id = info.Identity;
             var local = info.LocalUrls ?? [];
             string? publicUrl = null, remoteUrl = null;
-            if (api.Auth?.AccountSession is { } session && info.Supabase is { } supa &&
-                await new AccountClient(supa).Addresses(id, session) is { } row)
+            if (api.Auth?.AccountSession is { } session &&
+                await accountClient.Addresses(id, session) is { } row)
             {
                 local = row.LocalUrls ?? local;
                 publicUrl = row.PublicUrl;

@@ -31,7 +31,7 @@ type limits struct {
 }
 
 func (s *Server) limitsFor(u *db.User) limits {
-	d := s.Cfg.Users
+	d := s.Cfg.Snapshot().Users
 	l := limits{CanStream: u.AllowStreaming && s.Streaming.Active(), CanDownload: d.DeviceDownloads,
 		MaxStreams: d.MaxStreams, MaxDownloads: d.MaxDownloads}
 	if u.AllowDownloads >= 0 {
@@ -272,8 +272,9 @@ func (s *Server) handleCheckDebrid(w http.ResponseWriter, r *http.Request) {
 	}
 	key := strings.TrimSpace(req.Key)
 	if key == "" {
-		key = map[string]string{"torbox": s.Cfg.Streaming.TorBoxKey, "alldebrid": s.Cfg.Streaming.AllDebridKey,
-			"realdebrid": s.Cfg.Streaming.RealDebridKey}[req.Provider]
+		st := s.Cfg.Snapshot().Streaming
+		key = map[string]string{"torbox": st.TorBoxKey, "alldebrid": st.AllDebridKey,
+			"realdebrid": st.RealDebridKey}[req.Provider]
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
@@ -291,7 +292,8 @@ func (s *Server) handleCheckUsenet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	ixs, nss, err := usenetFromPatch(&s.Cfg.Streaming, req.Indexers, req.NewsServers)
+	st := s.Cfg.Snapshot().Streaming
+	ixs, nss, err := usenetFromPatch(&st, req.Indexers, req.NewsServers)
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return

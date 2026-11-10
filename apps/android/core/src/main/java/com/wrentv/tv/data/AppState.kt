@@ -205,12 +205,10 @@ class AppState(context: Context) {
             val i = info ?: return restoreAccount()
             server = i
             // A TV linked from a phone keeps its device token, whatever the auth mode.
-            store.token(key(url))?.let { return finishSignIn(base, TokenSource(it), null) }
-            val supa = i.supabase
-            if (i.usesAccounts && supa != null) {
-                val client = AccountClient(supa)
-                val session = store.session(client.storeKey) ?: return
-                finishSignIn(base, TokenSource(client, session, store), session.email)
+            store.token(key(url))?.let { finishSignIn(base, TokenSource(it), null); return }
+            if (i.usesAccounts) {
+                val session = store.session(accounts.storeKey) ?: return
+                serverSignIn(base, store.serverId ?: i.serverId, session)
             }
         } finally {
             restoring = false
@@ -303,9 +301,7 @@ class AppState(context: Context) {
         store.serverUrl = url.toString()
         store.serverId = s.id
         store.serverAddresses = s.candidates.map { it.toString() }
-        val client = AccountClient(info.supabase ?: WrenAccounts)
-        if (client.storeKey != accounts.storeKey) store.setSession(client.storeKey, session)
-        finishSignIn(url, TokenSource(client, session, store), session.email)
+        serverSignIn(url, s.id, session)
     }
 
     /** Leaves this server but stays signed in to the account. */
@@ -341,10 +337,8 @@ class AppState(context: Context) {
         accessIssue = null
         store.serverUrl = url.toString()
         // Already signed in to this server's account service (e.g. from another server)?
-        val supa = info.supabase
-        if (info.usesAccounts && supa != null) {
-            val client = AccountClient(supa)
-            store.session(client.storeKey)?.let { finishSignIn(url, TokenSource(client, it, store), it.email) }
+        if (info.usesAccounts) {
+            store.session(accounts.storeKey)?.let { serverSignIn(url, info.serverId, it) }
         }
         return info
     }
@@ -363,11 +357,13 @@ class AppState(context: Context) {
     /** Wren TV account servers. Returns false when the new account must confirm its email before it can sign in. */
     suspend fun accountSignIn(email: String, password: String, name: String?): Boolean {
         val url = serverUrl ?: return false
-        val supa = server?.supabase ?: return false
-        val client = AccountClient(supa)
+        // The account service's address is the app's own, never one a server names.
+        if (server?.usesAccounts != true) return false
+        val client = accounts
         val session = if (name != null) client.signUp(email, password, name) ?: return false else client.signIn(email, password)
         store.setSession(client.storeKey, session)
-        finishSignIn(url, TokenSource(client, session, store), session.email)
+        account = session
+        serverSignIn(url, server?.serverId, session)
         return true
     }
 
@@ -406,7 +402,7 @@ class AppState(context: Context) {
         val auth = api.auth
         if (auth?.accountSession != null) {
             try {
-                val d = AccountClient(server?.supabase ?: WrenAccounts).linkDevice(code, true, auth.token())
+                val d = accounts.linkDevice(code, true, auth.accountToken())
                 return TvCode(code, d.deviceName.ifEmpty { "TV" }, true)
             } catch (e: Exception) {
                 accountError = e
@@ -422,7 +418,7 @@ class AppState(context: Context) {
         val api = api ?: throw WrenTVException("Not connected")
         if (c.account) {
             val auth = api.auth ?: throw WrenTVException("Not signed in")
-            AccountClient(server?.supabase ?: WrenAccounts).linkDevice(c.code, false, auth.token())
+            accounts.linkDevice(c.code, false, auth.accountToken())
         } else {
             api.approvePair(c.code)
         }
@@ -431,15 +427,67 @@ class AppState(context: Context) {
     /** Re-checks access after the owner shares the server. */
     suspend fun retryAccess() {
         val url = serverUrl ?: return
-        val supa = server?.supabase ?: return
-        val client = AccountClient(supa)
+        if (server?.usesAccounts != true) return
+        val client = accounts
         val session = store.session(client.storeKey) ?: return
         client.acceptInvites(session)
         server = runCatching { WrenTVApi(url).serverInfo() }.getOrNull() ?: server
-        finishSignIn(url, TokenSource(client, session, store), session.email)
+        serverSignIn(url, server?.serverId, session)
     }
 
-    private suspend fun finishSignIn(url: HttpUrl, auth: TokenSource, email: String?) {
+    private fun serverTokenKey(serverId: String) = "server:$serverId"
+
+    /**
+     * Signs in to a media server with the Wren TV account, without showing the
+     * server the account's token (which would work on the account service and
+     * on every other server too). The app asks the account service for a
+     * ticket for this one server and hands that over; the server answers with
+     * a token of its own, kept for next time.
+     */
+    private suspend fun serverSignIn(url: HttpUrl, serverId: String?, session: AccountSession, retried: Boolean = false) {
+        accountEmail = session.email
+        val name = server?.name ?: "This server"
+        if (serverId.isNullOrEmpty()) {
+            accessIssue = "$name hasn't been set up yet. Open it in a web browser to claim it with your account."
+            return
+        }
+        val key = serverTokenKey(serverId)
+        val saved = store.token(key)
+        val auth = TokenSource(accounts, session, store, saved ?: "")
+        if (saved == null) {
+            try {
+                val ticket = accounts.serverTicket(serverId, auth.accountToken())
+                val r = WrenTVApi(url).exchange(ticket, deviceName())
+                store.setToken(key, r.token)
+                auth.setServerToken(r.token)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: WrenTVException) {
+                when {
+                    e.status == 404 || e.status == 405 -> accessIssue = "$name needs to be updated before this version of the app can sign in to it."
+                    e.status == 401 && e.message == "Your sign-in expired" -> clearCredentials()
+                    e.status == 403 || e.message?.contains("access", ignoreCase = true) == true ->
+                        accessIssue = "${session.email} doesn't have access to $name. Ask the owner to share it with this email address."
+                    e.status == 409 -> accessIssue = "$name hasn't been set up yet. Open it in a web browser to claim it with your account."
+                    else -> accessIssue = e.message
+                }
+                return
+            } catch (e: Exception) {
+                accessIssue = e.message ?: "Couldn't reach the server"
+                return
+            }
+        }
+        val rejected = finishSignIn(url, auth, session.email, keepAccountOn401 = !retried)
+        if (rejected && !retried) {
+            // The server no longer takes its old token (signed out there, or
+            // it was reset): ask for a new one, once.
+            store.setToken(key, null)
+            serverSignIn(url, serverId, session, retried = true)
+        }
+    }
+
+    /** Returns true when the server turned the token down and [keepAccountOn401] left the sign-in alone for the caller to retry. */
+    private suspend fun finishSignIn(url: HttpUrl, auth: TokenSource, email: String?, keepAccountOn401: Boolean = false): Boolean {
         val api = WrenTVApi(url, auth)
         accountEmail = email
         try {
@@ -451,7 +499,7 @@ class AppState(context: Context) {
         } catch (e: WrenTVException) {
             val name = server?.name ?: "this server"
             when (e.status) {
-                401 -> clearCredentials()
+                401 -> if (keepAccountOn401) return true else clearCredentials()
                 403 -> accessIssue = "${email ?: "This account"} doesn't have access to $name. Ask the owner to share it with this email address."
                 409 -> accessIssue = "$name hasn't been set up yet. Open it in a web browser to claim it with your account."
                 else -> accessIssue = e.message
@@ -459,6 +507,7 @@ class AppState(context: Context) {
         } catch (e: Exception) {
             accessIssue = e.message ?: "Couldn't reach the server"
         }
+        return false
     }
 
     private fun signedIn(api: WrenTVApi, user: User) {
@@ -480,11 +529,7 @@ class AppState(context: Context) {
         store.setSession(accounts.storeKey, null)
         account = null
         accountServers = null
-        server?.supabase?.let { supa ->
-            val client = AccountClient(supa)
-            store.session(client.storeKey)?.let { s -> scope.launch { client.signOut(s) } }
-            store.setSession(client.storeKey, null)
-        }
+        listOfNotNull(server?.serverId, store.serverId).filter { it.isNotEmpty() }.forEach { store.setToken(serverTokenKey(it), null) }
         accountEmail = null
         accessIssue = null
     }
@@ -506,10 +551,10 @@ class AppState(context: Context) {
             var local = info.localUrls ?: emptyList()
             var publicUrl: String? = null
             var remoteUrl: String? = null
-            val session = api.auth?.accountSession
-            val supa = info.supabase
-            if (session != null && supa != null) {
-                AccountClient(supa).addresses(id, session)?.let { row ->
+            val auth = api.auth
+            val accountToken = if (auth?.accountSession != null) runCatching { auth.accountToken() }.getOrNull() else null
+            if (accountToken != null) {
+                accounts.addresses(id, accountToken)?.let { row ->
                     local = row.local_urls ?: local
                     publicUrl = row.public_url
                     remoteUrl = row.remote_url

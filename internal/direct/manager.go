@@ -154,8 +154,8 @@ func (m *Manager) sync(ctx context.Context) {
 }
 
 func (m *Manager) check(ctx context.Context) Status {
-	rc := m.cfg.RemoteAccess
-	sb := m.cfg.Auth.Supabase
+	rc := m.cfg.Snapshot().RemoteAccess
+	sb := m.cfg.Snapshot().Auth.Supabase
 	if !rc.Enabled || sb.ServerID == "" {
 		return Status{Enabled: rc.Enabled, LocalURLs: []string{}}
 	}
@@ -288,7 +288,7 @@ func (m *Manager) useStoredCert(domain string) *tls.Certificate {
 }
 
 func (m *Manager) acmeDirectory() string {
-	if d := m.cfg.RemoteAccess.ACMEDirectory; d != "" {
+	if d := m.cfg.Snapshot().RemoteAccess.ACMEDirectory; d != "" {
 		return d
 	}
 	return "https://acme-v02.api.letsencrypt.org/directory"
@@ -338,10 +338,10 @@ func (a *apiClient) setACME(ctx context.Context, values []string) ([]string, err
 }
 
 func (a *apiClient) post(ctx context.Context, path string, body map[string]any, out any) error {
-	body["serverId"] = a.cfg.Auth.Supabase.ServerID
-	body["secret"] = a.cfg.Auth.Supabase.ServerSecret
+	body["serverId"] = a.cfg.Snapshot().Auth.Supabase.ServerID
+	body["secret"] = a.cfg.Snapshot().Auth.Supabase.ServerSecret
 	b, _ := json.Marshal(body)
-	base := strings.TrimSuffix(a.cfg.RemoteAccess.API, "/")
+	base := strings.TrimSuffix(a.cfg.Snapshot().RemoteAccess.API, "/")
 	if base == "" {
 		base = defaultAPI
 	}

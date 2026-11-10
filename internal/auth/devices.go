@@ -42,15 +42,25 @@ func (d *Devices) Issue(u *db.User, device string) (string, error) {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(d.key)
 }
 
-// parse returns the user id of a valid device token, or "".
-func (d *Devices) parse(token string) string {
+// parse returns the claims of a valid device token, or nil.
+func (d *Devices) parse(token string) *claims {
 	var c claims
 	_, err := jwt.ParseWithClaims(token, &c, func(t *jwt.Token) (any, error) { return d.key, nil },
 		jwt.WithValidMethods([]string{"HS256"}), jwt.WithIssuer(deviceIssuer))
-	if err != nil {
-		return ""
+	if err != nil || c.Subject == "" {
+		return nil
 	}
-	return c.Subject
+	return &c
+}
+
+// Owns reports whether a token is a linked-device token this server issued,
+// and the device it was issued to.
+func (d *Devices) Owns(token string) (device string, ok bool) {
+	c := d.parse(token)
+	if c == nil {
+		return "", false
+	}
+	return c.Device, true
 }
 
 // WithDevices accepts device tokens in front of another provider.
@@ -64,12 +74,12 @@ type withDevices struct {
 func (w *withDevices) Mode() string { return w.next.Mode() }
 
 func (w *withDevices) Authenticate(ctx context.Context, token string) (*Principal, error) {
-	id := w.d.parse(token)
-	if id == "" {
+	c := w.d.parse(token)
+	if c == nil {
 		return w.next.Authenticate(ctx, token)
 	}
-	u, err := w.d.db.UserByID(ctx, id)
-	if err != nil {
+	u, err := w.d.db.UserByID(ctx, c.Subject)
+	if err != nil || revoked(c, u) {
 		return nil, ErrUnauthorized
 	}
 	if w.d.supa != nil && u.ExternalID != "" {

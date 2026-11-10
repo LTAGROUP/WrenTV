@@ -169,11 +169,11 @@ class AccountClient(info: SupabaseInfo) {
     data class ServerAddresses(val local_urls: List<String>? = null, val public_url: String? = null, val remote_url: String? = null)
 
     /** The addresses a server published in its heartbeat (visible to its owner and the accounts it's shared with). */
-    suspend fun addresses(serverId: String, s: AccountSession): ServerAddresses? = runCatching {
+    suspend fun addresses(serverId: String, accessToken: String): ServerAddresses? = runCatching {
         val u = "$url/rest/v1/servers".toHttpUrl().newBuilder()
             .addQueryParameter("id", "eq.$serverId")
             .addQueryParameter("select", "local_urls,public_url,remote_url").build()
-        val req = Request.Builder().url(u).header("apikey", key).header("Authorization", "Bearer ${s.accessToken}").build()
+        val req = Request.Builder().url(u).header("apikey", key).header("Authorization", "Bearer $accessToken").build()
         Http.client.newCall(req).await().use { r ->
             if (r.code != 200) return null
             json.decodeFromString<List<ServerAddresses>>(withContext(Dispatchers.IO) { r.body!!.string() }).firstOrNull()
@@ -230,6 +230,18 @@ class AccountClient(info: SupabaseInfo) {
         return json.decodeFromString(text)
     }
 
+    /**
+     * A ticket that signs this account in to one media server. The server
+     * redeems it with the account service to learn who is signing in; it works
+     * once, for that server only, for two minutes. This is what a media server
+     * is given instead of the account's own token, which would work everywhere.
+     */
+    suspend fun serverTicket(serverId: String, accessToken: String): String {
+        val text = request("/rest/v1/rpc/issue_server_ticket", buildJsonObject { put("p_server_id", serverId) }, accessToken)
+        return runCatching { json.decodeFromString<String>(text) }.getOrNull()?.takeIf { it.isNotEmpty() }
+            ?: throw WrenTVException("Couldn't sign in to the server")
+    }
+
     /** Turns pending share invites for this email into access. */
     suspend fun acceptInvites(s: AccountSession) {
         runCatching { request("/rest/v1/rpc/accept_invites", buildJsonObject {}, s.accessToken) }
@@ -237,17 +249,23 @@ class AccountClient(info: SupabaseInfo) {
 }
 
 /**
- * Supplies the bearer token for server requests, refreshing account sessions
- * before they expire. Local-account and linked-device tokens never change.
+ * Supplies the bearer token for media-server requests.
+ *
+ * A server only ever gets a token it issued itself: a local sign-in, a linked
+ * device's token, or the token it gave in exchange for a server ticket. The
+ * Wren TV account's own token works on the account service and on every
+ * server the account can use, so it goes to the account service alone
+ * ([accountToken]), never to a media server.
  */
 class TokenSource private constructor(
-    private var local: String?,
+    @Volatile private var server: String,
     private val client: AccountClient?,
     private var session: AccountSession?,
     private val store: Store?,
 ) {
     constructor(localToken: String) : this(localToken, null, null, null)
-    constructor(client: AccountClient, session: AccountSession, store: Store) : this(null, client, session, store)
+    /** [serverToken] is the server's own token for this account ("" until it's exchanged). */
+    constructor(client: AccountClient, session: AccountSession, store: Store, serverToken: String) : this(serverToken, client, session, store)
 
     private val mutex = Mutex()
     /**
@@ -262,15 +280,22 @@ class TokenSource private constructor(
     val accountSession: AccountSession? get() = session
     val email: String? get() = session?.email
 
-    suspend fun token(): String {
-        local?.let { return it }
+    /** The bearer for the media server. */
+    @Suppress("RedundantSuspendModifier")
+    suspend fun token(): String = server
+
+    fun setServerToken(t: String) { server = t }
+
+    /** The account's own token, refreshed when it is about to expire. Only for requests to the account service. */
+    suspend fun accountToken(): String {
+        val client = client ?: throw WrenTVException("Not signed in to a Wren TV account", 401)
         return mutex.withLock {
-            val s = session!!
+            val s = session ?: throw WrenTVException("Not signed in to a Wren TV account", 401)
             if (s.expiresAt - 60 > System.currentTimeMillis() / 1000.0) return@withLock s.accessToken
             if (spent) throw WrenTVException("Your sign-in expired", 401)
             failure?.let { if (System.currentTimeMillis() - failedAt < 30_000) throw it }
             val fresh = try {
-                client!!.refresh(s)
+                client.refresh(s)
             } catch (e: WrenTVException) {
                 failure = e
                 failedAt = System.currentTimeMillis()

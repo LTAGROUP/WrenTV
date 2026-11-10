@@ -18,7 +18,7 @@ func TestStreamingMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := &DB{raw}
+	old := &DB{DB: raw}
 	if _, err := old.ExecContext(ctx, `CREATE TABLE schema_version (v INTEGER NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}

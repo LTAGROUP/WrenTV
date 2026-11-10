@@ -229,7 +229,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	}
 	if streamed {
 		s.Streaming.Prefetch(it)
-		if s.Cfg.Streaming.Mode == "download" && f.StreamID != "" {
+		if s.Cfg.Snapshot().Streaming.Mode == "download" && f.StreamID != "" {
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()

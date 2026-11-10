@@ -87,6 +87,12 @@ struct WrenTVAPI: Sendable {
 
     func serverInfo() async throws -> ServerInfo { try await get("/api/server") }
 
+    /// Signs in with a server ticket from the account service; the server
+    /// answers with a token of its own.
+    func exchange(ticket: String, device: String) async throws -> AuthResponse {
+        try await post("/api/auth/exchange", ["ticket": ticket, "device": device])
+    }
+
     func login(username: String, password: String) async throws -> AuthResponse {
         try await post("/api/auth/login", ["username": username, "password": password, "device": Host.current().localizedName ?? "Mac"])
     }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/time/rate"
 
 	"github.com/LTAGROUP/wrentv/internal/config"
 	"github.com/LTAGROUP/wrentv/internal/db"
@@ -27,7 +29,6 @@ import (
 type Supabase struct {
 	db   *db.DB
 	cfg  *config.Config
-	save func() error
 	http *http.Client
 
 	jwksOnce sync.Once
@@ -36,6 +37,10 @@ type Supabase struct {
 	mu     sync.Mutex
 	tokens map[string]cachedUser   // token -> verified user (for HS256 projects)
 	access map[string]cachedAccess // supabase user id -> access
+	// Tokens the account service turned down lately (by hash), and a cap on
+	// how often it's asked: made-up tokens can't make this server flood it.
+	rejected map[[32]byte]time.Time
+	asks     *rate.Limiter
 }
 
 type cachedUser struct {
@@ -50,15 +55,16 @@ type cachedAccess struct {
 }
 
 func NewSupabase(d *db.DB, cfg *config.Config) *Supabase {
-	return &Supabase{db: d, cfg: cfg, save: cfg.Save, http: &http.Client{Timeout: 15 * time.Second},
-		tokens: map[string]cachedUser{}, access: map[string]cachedAccess{}}
+	return &Supabase{db: d, cfg: cfg, http: &http.Client{Timeout: 15 * time.Second},
+		tokens: map[string]cachedUser{}, access: map[string]cachedAccess{},
+		rejected: map[[32]byte]time.Time{}, asks: rate.NewLimiter(2, 20)}
 }
 
 func (s *Supabase) Mode() string { return "supabase" }
 
 func (s *Supabase) base() string { return config.SupabaseURL }
 
-func (s *Supabase) Claimed() bool { return s.cfg.Auth.Supabase.ServerID != "" }
+func (s *Supabase) Claimed() bool { return s.cfg.Snapshot().Auth.Supabase.ServerID != "" }
 
 // verify returns the Supabase user behind an access token.
 func (s *Supabase) verify(ctx context.Context, token string) (id, email, name string, err error) {
@@ -87,12 +93,23 @@ func (s *Supabase) verify(ctx context.Context, token string) (id, email, name st
 		}
 	}
 	// Legacy HS256 projects: ask Supabase who this is (cached).
+	if strings.Count(token, ".") != 2 || len(token) > 8192 {
+		return "", "", "", ErrUnauthorized // not a JWT: nothing to ask about
+	}
+	sum := sha256.Sum256([]byte(token))
 	s.mu.Lock()
 	if cu, ok := s.tokens[token]; ok && time.Now().Before(cu.exp) {
 		s.mu.Unlock()
 		return cu.id, cu.email, cu.name, nil
 	}
+	if until, ok := s.rejected[sum]; ok && time.Now().Before(until) {
+		s.mu.Unlock()
+		return "", "", "", ErrUnauthorized
+	}
 	s.mu.Unlock()
+	if !s.asks.Allow() {
+		return "", "", "", ErrBusy
+	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.base()+"/auth/v1/user", nil)
 	req.Header.Set("apikey", config.SupabasePublishableKey)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -101,6 +118,15 @@ func (s *Supabase) verify(ctx context.Context, token string) (id, email, name st
 		return "", "", "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		s.mu.Lock()
+		if len(s.rejected) > 5000 {
+			s.rejected = map[[32]byte]time.Time{}
+		}
+		s.rejected[sum] = time.Now().Add(time.Minute)
+		s.mu.Unlock()
+		return "", "", "", ErrUnauthorized
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", "", "", ErrUnauthorized
 	}
@@ -129,6 +155,11 @@ func (s *Supabase) Identify(ctx context.Context, token string) (*db.User, error)
 	if err != nil {
 		return nil, err
 	}
+	return s.ensureUser(ctx, id, email, name)
+}
+
+// ensureUser is the local row for an account, created or brought up to date.
+func (s *Supabase) ensureUser(ctx context.Context, id, email, name string) (*db.User, error) {
 	u, err := s.db.UserByExternalID(ctx, id)
 	if errors.Is(err, db.ErrNotFound) {
 		if name == "" {
@@ -150,8 +181,45 @@ func (s *Supabase) Identify(ctx context.Context, token string) (*db.User, error)
 	return u, err
 }
 
+// ErrBadTicket: the ticket is unknown, used, expired, or for another server.
+var ErrBadTicket = errors.New("this sign-in ticket isn't valid")
+
+// Redeem turns a server ticket (which an app got from the account service
+// for this server only) into the user it was issued to and what they may
+// do here. The app never shows this server its account token.
+func (s *Supabase) Redeem(ctx context.Context, ticket string) (*Principal, error) {
+	if !s.Claimed() {
+		return nil, ErrUnclaimed
+	}
+	if len(ticket) < 32 || len(ticket) > 256 {
+		return nil, ErrBadTicket
+	}
+	sb := s.cfg.Snapshot().Auth.Supabase
+	var rows []struct {
+		UserID      string `json:"user_id"`
+		Email       string `json:"email"`
+		DisplayName string `json:"display_name"`
+	}
+	if err := s.rpc(ctx, "", "redeem_server_ticket", map[string]any{
+		"p_server_id": sb.ServerID, "p_secret": sb.ServerSecret, "p_ticket": ticket,
+	}, &rows); err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 || rows[0].UserID == "" {
+		return nil, ErrBadTicket
+	}
+	u, err := s.ensureUser(ctx, rows[0].UserID, rows[0].Email, rows[0].DisplayName)
+	if err != nil {
+		return nil, err
+	}
+	return s.principal(ctx, u)
+}
+
 func (s *Supabase) Authenticate(ctx context.Context, token string) (*Principal, error) {
 	u, err := s.Identify(ctx, token)
+	if errors.Is(err, ErrBusy) {
+		return nil, ErrBusy
+	}
 	if err != nil {
 		return nil, ErrUnauthorized
 	}
@@ -193,8 +261,9 @@ func (s *Supabase) accessFor(ctx context.Context, userID string) (string, []stri
 		Role       string   `json:"role"`
 		LibraryIDs []string `json:"library_ids"`
 	}
+	sb := s.cfg.Snapshot().Auth.Supabase
 	err := s.rpc(ctx, "", "server_access", map[string]any{
-		"p_server_id": s.cfg.Auth.Supabase.ServerID, "p_secret": s.cfg.Auth.Supabase.ServerSecret, "p_user_id": userID,
+		"p_server_id": sb.ServerID, "p_secret": sb.ServerSecret, "p_user_id": userID,
 	}, &rows)
 	if err != nil {
 		if ok {
@@ -239,7 +308,7 @@ func (s *Supabase) ClaimCodeOK(code string) bool {
 	norm := func(v string) string {
 		return strings.NewReplacer("-", "", " ", "").Replace(strings.ToUpper(strings.TrimSpace(v)))
 	}
-	want := norm(s.cfg.Auth.Supabase.ClaimCode)
+	want := norm(s.cfg.Snapshot().Auth.Supabase.ClaimCode)
 	return want != "" && subtle.ConstantTimeCompare([]byte(norm(code)), []byte(want)) == 1
 }
 
@@ -250,17 +319,20 @@ func (s *Supabase) Claim(ctx context.Context, userToken string) error {
 	sec := hex.EncodeToString(secret)
 	var serverID string
 	if err := s.rpc(ctx, userToken, "claim_server", map[string]any{
-		"p_machine_id": s.cfg.MachineID, "p_name": s.cfg.ServerName, "p_secret": sec,
+		"p_machine_id": s.cfg.MachineID, "p_name": s.cfg.Snapshot().ServerName, "p_secret": sec,
 	}, &serverID); err != nil {
 		return err
 	}
-	s.cfg.Auth.Supabase.ServerID = serverID
-	s.cfg.Auth.Supabase.ServerSecret = sec
-	s.cfg.Auth.Supabase.ClaimCode = ""
+	err := s.cfg.Update(func(c *config.Config) error {
+		c.Auth.Supabase.ServerID = serverID
+		c.Auth.Supabase.ServerSecret = sec
+		c.Auth.Supabase.ClaimCode = ""
+		return nil
+	})
 	s.mu.Lock()
 	s.access = map[string]cachedAccess{}
 	s.mu.Unlock()
-	return s.save()
+	return err
 }
 
 // Heartbeat publishes reachability and the library list (so owners can
@@ -278,9 +350,10 @@ func (s *Supabase) Heartbeat(ctx context.Context, urls []string, remoteURL, vers
 	for _, l := range libs {
 		ls = append(ls, lib{l.ID, l.Name, l.Type})
 	}
+	c := s.cfg.Snapshot()
 	return s.rpc(ctx, "", "server_heartbeat", map[string]any{
-		"p_server_id": s.cfg.Auth.Supabase.ServerID, "p_secret": s.cfg.Auth.Supabase.ServerSecret,
-		"p_name": s.cfg.ServerName, "p_local_urls": urls, "p_public_url": s.cfg.PublicURL, "p_version": version, "p_libraries": ls,
+		"p_server_id": c.Auth.Supabase.ServerID, "p_secret": c.Auth.Supabase.ServerSecret,
+		"p_name": c.ServerName, "p_local_urls": urls, "p_public_url": c.PublicURL, "p_version": version, "p_libraries": ls,
 		"p_remote_url": remoteURL,
 	}, nil)
 }

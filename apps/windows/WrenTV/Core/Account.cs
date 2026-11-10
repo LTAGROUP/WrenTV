@@ -118,6 +118,20 @@ public sealed class AccountClient(SupabaseInfo info)
         try { await Request("/auth/v1/logout", new { }, s.AccessToken); } catch { }
     }
 
+    /// A ticket that signs this account in to one media server. The server
+    /// redeems it with the account service to learn who is signing in; it
+    /// works once, for that server only, for two minutes. This is what a
+    /// media server is given instead of the account's own token, which would
+    /// work everywhere.
+    public async Task<string> ServerTicket(string serverId, string accessToken)
+    {
+        var text = await Request("/rest/v1/rpc/issue_server_ticket", new { p_server_id = serverId }, accessToken);
+        string? ticket = null;
+        try { ticket = JsonSerializer.Deserialize<string>(text); } catch { }
+        if (string.IsNullOrEmpty(ticket)) throw new WrenTVException("Couldn't sign in to the server");
+        return ticket;
+    }
+
     /// Turns pending share invites for this email into access.
     public async Task AcceptInvites(AccountSession s)
     {
@@ -159,11 +173,17 @@ public sealed class AccountClient(SupabaseInfo info)
     }
 }
 
-/// Supplies the bearer token for server requests, refreshing account sessions
-/// before they expire.
+/// Supplies the bearer token for media-server requests.
+///
+/// A server only ever gets a token it issued itself: a local sign-in, or the
+/// token it gave in exchange for a server ticket. The Wren TV account's own
+/// token works on the account service and on every server the account can
+/// use, so it goes to the account service alone (AccountToken), never to a
+/// media server.
 public sealed class TokenSource
 {
-    readonly string? localToken;
+    /// The media server's own token.
+    volatile string serverToken;
     readonly AccountClient? client;
     AccountSession? session;
     readonly SemaphoreSlim gate = new(1, 1);
@@ -172,12 +192,14 @@ public sealed class TokenSource
     /// account service.
     (Exception Error, DateTime At, bool Final)? failure;
 
-    public TokenSource(string localToken) => this.localToken = localToken;
+    public TokenSource(string localToken) => serverToken = localToken;
 
-    public TokenSource(AccountClient client, AccountSession session)
+    /// serverToken is the server's own token for this account ("" until it's exchanged).
+    public TokenSource(AccountClient client, AccountSession session, string serverToken)
     {
         this.client = client;
         this.session = session;
+        this.serverToken = serverToken;
     }
 
     public AccountSession? AccountSession => session;
@@ -185,10 +207,17 @@ public sealed class TokenSource
 
     static double Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
 
-    public async Task<string> Token()
+    /// The bearer for the media server.
+    public Task<string> Token() => Task.FromResult(serverToken);
+
+    public void SetServerToken(string token) => serverToken = token;
+
+    /// The account's own token, refreshed when it is about to expire. Only
+    /// for requests to the account service.
+    public async Task<string> AccountToken()
     {
-        if (localToken != null) return localToken;
-        if (session!.ExpiresAt - 60 > Now) return session.AccessToken;
+        if (client == null || session == null) throw new WrenTVException("Not signed in to a Wren TV account", 401);
+        if (session.ExpiresAt - 60 > Now) return session.AccessToken;
         await gate.WaitAsync();
         try
         {
@@ -200,7 +229,7 @@ public sealed class TokenSource
             }
             try
             {
-                var fresh = await client!.Refresh(session);
+                var fresh = await client.Refresh(session);
                 session = fresh;
                 failure = null;
                 Store.SetSession(client.StoreKey, fresh);

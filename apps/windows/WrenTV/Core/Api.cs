@@ -101,6 +101,11 @@ public sealed class WrenTVApi
 
     public Task<ServerInfo> ServerInfo() => Get<ServerInfo>("/api/server");
 
+    /// Signs in with a server ticket from the account service; the server
+    /// answers with a token of its own.
+    public Task<AuthResponse> Exchange(string ticket) =>
+        Post<AuthResponse>("/api/auth/exchange", new { ticket, device = Environment.MachineName });
+
     public Task<AuthResponse> Login(string username, string password) =>
         Post<AuthResponse>("/api/auth/login", new { username, password, device = Environment.MachineName });
 

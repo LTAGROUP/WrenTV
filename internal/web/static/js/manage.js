@@ -1,5 +1,5 @@
 // Server management: dashboard, libraries, users/sharing, downloads, settings.
-import { api, account, state, isSupabase, usingAccount } from './api.js';
+import { api, account, state, saveSession, isSupabase, usingAccount } from './api.js';
 import { esc, $, $$, el, toast, modal, confirmDialog, fmtSize, timeAgo } from './ui.js';
 import { setTitle, refreshLibraries, render, isAdmin } from './app.js';
 
@@ -224,6 +224,7 @@ async function viewLocalUsers(alongsideAccounts = false) {
       <td>${u.isAdmin ? 'Admin · all libraries' : u.libraryIds.length ? u.libraryIds.map((id) => esc(libs.find((l) => l.id === id)?.name || id)).join(', ') : '<span class="muted">No libraries</span>'}</td>
       <td>${limitsSummary(u.effective)}</td>
       <td style="text-align:right;white-space:nowrap"><button class="btn small" data-edit="${u.id}">Edit</button>
+      <button class="btn small" data-signout="${u.id}" title="Sign this person out on every device">Sign out</button>
       ${u.id !== state.user.id ? `<button class="btn small danger" data-del="${u.id}">Remove</button>` : ''}</td></tr>`).join('')}</table></div>`}
     ${alongsideAccounts ? '' : `<p class="small muted">Defaults for everyone are in <a href="/manage/settings#users" style="color:var(--accent)">Settings → Users</a>. Streamed titles are visible to anyone allowed to stream.</p>`}</div>`);
 
@@ -244,7 +245,10 @@ async function viewLocalUsers(alongsideAccounts = false) {
           const patch = { displayName: v.displayName, libraryIds, limits };
           if (isAdminBox) patch.isAdmin = isAdminBox.checked;
           if (v.password) patch.password = v.password;
-          await api('/api/users/' + u.id, { method: 'PATCH', body: patch });
+          const saved = await api('/api/users/' + u.id, { method: 'PATCH', body: patch });
+          // Changing your own password signs you out everywhere else; this
+          // browser gets a fresh sign-in.
+          if (saved?.token && state.session?.token) saveSession({ token: saved.token });
         } else {
           await api('/api/users', { method: 'POST', body: { username: v.username, password: v.password, displayName: v.displayName, isAdmin: !!isAdminBox?.checked, libraryIds, limits } });
         }
@@ -254,6 +258,7 @@ async function viewLocalUsers(alongsideAccounts = false) {
   };
   $('[data-add]', node).onclick = () => edit();
   for (const b of $$('[data-edit]', node)) b.onclick = () => edit(users.find((u) => u.id === b.dataset.edit));
+  for (const b of $$('[data-signout]', node)) b.onclick = () => signOutUser(users.find((x) => x.id === b.dataset.signout));
   for (const b of $$('[data-del]', node)) b.onclick = async () => {
     const u = users.find((x) => x.id === b.dataset.del);
     if (!(await confirmDialog(`Remove ${u.displayName}?`, 'They will be signed out and lose access to this server.'))) return;
@@ -261,6 +266,16 @@ async function viewLocalUsers(alongsideAccounts = false) {
     render();
   };
   return node;
+}
+
+// Ends every sign-in this server issued a user: local sign-ins and TVs
+// linked with a code. They sign in again to carry on.
+async function signOutUser(u) {
+  if (!u) return;
+  if (!(await confirmDialog(`Sign ${u.displayName || 'this person'} out everywhere?`, 'Every device signed in to this server with a password or a TV code has to sign in again.', 'Sign out'))) return;
+  const r = await api(`/api/users/${u.id}/signout`, { method: 'POST' });
+  if (r?.token && state.session?.token) saveSession({ token: r.token });
+  toast('Signed out on every device.');
 }
 
 async function viewSharing() {
@@ -285,7 +300,7 @@ async function viewSharing() {
       <tr><td><b>${esc(state.user.displayName || 'You')}</b></td><td>${esc(state.session?.user?.email || '')}</td><td>Owner · all libraries</td><td></td><td></td></tr>
       ${shares.map((s) => `<tr><td>${esc(prof(s.user_id).display_name || '—')}</td><td>${esc(prof(s.user_id).email || '')}</td><td>${access(s.library_ids)}</td>
         <td>${serverUser(s.user_id) ? limitsSummary(serverUser(s.user_id).effective) : '<span class="small muted">Defaults · not signed in yet</span>'}</td>
-        <td style="text-align:right;white-space:nowrap">${owner ? `<button class="btn small" data-edit="${s.user_id}">Edit</button><button class="btn small danger" data-del="${s.user_id}">Remove</button>` : ''}</td></tr>`).join('')}
+        <td style="text-align:right;white-space:nowrap">${owner ? `<button class="btn small" data-edit="${s.user_id}">Edit</button>${serverUser(s.user_id) ? `<button class="btn small" data-signout="${serverUser(s.user_id).id}" title="Sign out the TVs this person linked with a code">Sign out TVs</button>` : ''}<button class="btn small danger" data-del="${s.user_id}">Remove</button>` : ''}</td></tr>`).join('')}
     </table></div>
     <p class="small muted">Defaults for everyone are in <a href="/manage/settings#users" style="color:var(--accent)">Settings → Users</a>.</p>
     ${invites.length ? `<div class="panel"><h2>Pending invites</h2><table class="table"><tr><th>Email</th><th>Libraries</th><th>Sent</th><th></th></tr>
@@ -305,6 +320,7 @@ async function viewSharing() {
     bindLibraryChecks();
     if (await p) { toast('Invite saved. They get access when they sign in to Wren TV.'); render(); }
   });
+  for (const b of $$('[data-signout]', node)) b.onclick = () => signOutUser(serverUsers.find((x) => x.id === b.dataset.signout));
   for (const b of $$('[data-edit]', node)) b.onclick = async () => {
     const s = shares.find((x) => x.user_id === b.dataset.edit);
     const su = serverUser(s.user_id);

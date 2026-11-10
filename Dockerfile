@@ -1,12 +1,15 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.27-bookworm AS build
+# The Go build runs on the builder's own architecture and cross-compiles, so
+# the arm64 image doesn't compile under emulation.
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS build
+ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/wrentv ./cmd/wrentv
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/wrentv ./cmd/wrentv
 
 # jellyfin-ffmpeg ships zscale/tonemapping plus NVENC, QSV, VAAPI and AMF
 # support with the needed drivers bundled.

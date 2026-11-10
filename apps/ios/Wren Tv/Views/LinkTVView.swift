@@ -102,7 +102,7 @@ struct LinkTVView: View {
     /// The account's access token, when signed in with a Wren TV account.
     private func accountToken() async -> String? {
         guard let auth = state.api?.auth, await auth.accountSession != nil else { return nil }
-        return try? await auth.token()
+        return try? await auth.accountToken()
     }
 
     private func lookUp(_ raw: String) {

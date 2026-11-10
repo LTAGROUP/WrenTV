@@ -229,7 +229,7 @@ type liveTVView struct {
 }
 
 func (s *Server) liveTVView() liveTVView {
-	c := s.Cfg.LiveTV
+	c := s.Cfg.Snapshot().LiveTV
 	v := liveTVView{Enabled: c.Enabled, Active: s.LiveTV.Active(), Sources: []config.LiveTVSource{}, HiddenGroups: nonNil(c.HiddenGroups),
 		MaxStreams: c.MaxStreams, Status: s.LiveTV.Status(), Playing: s.LiveTV.Playing()}
 	for _, src := range c.Sources {
@@ -250,8 +250,7 @@ type liveTVPatch struct {
 
 // applyLiveTV validates and applies a live TV patch. It reports whether the
 // playlists need fetching again, and whether only the groups changed.
-func (s *Server) applyLiveTV(p *liveTVPatch) (refetch, regroup bool, err error) {
-	c := &s.Cfg.LiveTV
+func applyLiveTV(c *config.LiveTVConfig, p *liveTVPatch) (refetch, regroup bool, err error) {
 	if p.Enabled != nil && *p.Enabled != c.Enabled {
 		c.Enabled = *p.Enabled
 		refetch = true
@@ -340,7 +339,7 @@ func (s *Server) handleLiveTVCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var old config.LiveTVSource
-	for _, x := range s.Cfg.LiveTV.Sources {
+	for _, x := range s.Cfg.Snapshot().LiveTV.Sources {
 		if x.ID == src.ID {
 			old = x
 		}

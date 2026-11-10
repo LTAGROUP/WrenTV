@@ -41,7 +41,11 @@ android {
             optimization {
                 enable = true
             }
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            // Without keystore.properties a release build comes out unsigned
+            // (it can't be installed), not signed with the debug key: an
+            // APK signed that way could be shipped by mistake, and people
+            // who installed it could never update to a properly signed one.
+            signingConfig = signingConfigs.findByName("release")
         }
     }
     compileOptions {

@@ -2,6 +2,20 @@
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
+// What an image does once it loads or fails, named in data-load / data-error
+// (the page's content policy doesn't run inline onload/onerror handlers).
+// These events don't bubble, so they're caught on the way down.
+document.addEventListener('load', (e) => {
+  const t = e.target;
+  if (t instanceof HTMLImageElement && t.dataset.load === 'loaded') t.classList.remove('loading');
+}, true);
+document.addEventListener('error', (e) => {
+  const t = e.target;
+  if (!(t instanceof HTMLImageElement)) return;
+  if (t.dataset.error === 'remove') t.remove();
+  else if (t.dataset.error === 'broken') t.parentNode?.classList.add('broken');
+}, true);
+
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 

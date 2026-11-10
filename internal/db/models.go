@@ -29,6 +29,10 @@ type User struct {
 	PasswordHash string `json:"-"`
 	IsAdmin      bool   `json:"isAdmin"`
 	CreatedAt    int64  `json:"createdAt"`
+	// TokensValidAfter: sign-ins issued by this server before this time
+	// (Unix seconds) no longer work. Set when the password changes or the
+	// user's devices are signed out.
+	TokensValidAfter int64 `json:"-"`
 	UserLimits
 }
 
@@ -42,12 +46,12 @@ type UserLimits struct {
 }
 
 const userCols = `id, COALESCE(external_id,''), COALESCE(username,''), display_name, email, password_hash, is_admin, created_at,
-	allow_streaming, allow_downloads, max_streams, max_downloads`
+	allow_streaming, allow_downloads, max_streams, max_downloads, tokens_valid_after`
 
 func scanUser(r interface{ Scan(...any) error }) (*User, error) {
 	u := &User{}
 	err := r.Scan(&u.ID, &u.ExternalID, &u.Username, &u.DisplayName, &u.Email, &u.PasswordHash, &u.IsAdmin, &u.CreatedAt,
-		&u.AllowStreaming, &u.AllowDownloads, &u.MaxStreams, &u.MaxDownloads)
+		&u.AllowStreaming, &u.AllowDownloads, &u.MaxStreams, &u.MaxDownloads, &u.TokensValidAfter)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -124,6 +128,20 @@ func (d *DB) UpdateUserProfile(ctx context.Context, id, displayName, email strin
 func (d *DB) UpdateUserLimits(ctx context.Context, id string, l UserLimits) error {
 	_, err := d.ExecContext(ctx, `UPDATE users SET allow_streaming=?, allow_downloads=?, max_streams=?, max_downloads=? WHERE id=?`,
 		l.AllowStreaming, l.AllowDownloads, l.MaxStreams, l.MaxDownloads, id)
+	return err
+}
+
+// SetPassword stores a new password hash and ends every sign-in this server
+// issued the user before now.
+func (d *DB) SetPassword(ctx context.Context, id, hash string) error {
+	_, err := d.ExecContext(ctx, `UPDATE users SET password_hash=?, tokens_valid_after=? WHERE id=?`, hash, Now(), id)
+	return err
+}
+
+// RevokeTokens ends every sign-in this server issued the user before now
+// (local sign-ins and linked devices).
+func (d *DB) RevokeTokens(ctx context.Context, id string) error {
+	_, err := d.ExecContext(ctx, `UPDATE users SET tokens_valid_after=? WHERE id=?`, Now(), id)
 	return err
 }
 
@@ -968,6 +986,34 @@ func (d *DB) GetWatchState(ctx context.Context, userID, itemID string) (*WatchSt
 }
 
 // ---------- metadata cache ----------
+
+// PruneCache drops cached answers older than maxAge seconds (nothing reads
+// one that old) and reports how many went.
+func (d *DB) PruneCache(ctx context.Context, maxAge int64) (int64, error) {
+	res, err := d.ExecContext(ctx, `DELETE FROM metadata_cache WHERE fetched_at < ?`, Now()-maxAge)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// FileIDs is the id of every media file, local or streamed.
+func (d *DB) FileIDs(ctx context.Context) (map[string]bool, error) {
+	rows, err := d.QueryContext(ctx, `SELECT id FROM media_files`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
 
 func (d *DB) CacheGet(ctx context.Context, key string, maxAge int64) ([]byte, bool) {
 	var b []byte

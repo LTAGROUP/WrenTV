@@ -2,7 +2,9 @@ package api
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -16,7 +18,7 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 	// Every server uses Wren TV accounts; setupRequired means it's unclaimed.
 	setup := s.Supa != nil && !s.Supa.Claimed()
 	info := map[string]any{
-		"name":          s.Cfg.ServerName,
+		"name":          s.Cfg.Snapshot().ServerName,
 		"machineId":     s.Cfg.MachineID,
 		"version":       s.Version,
 		"authMode":      "supabase",
@@ -25,10 +27,13 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 		"streaming":     s.Streaming.Active(),
 		"liveTv":        s.LiveTV.Active(),
 		"localUrls":     s.advertisedLocalURLs(),
+		// Apps sign in with a server ticket (POST /api/auth/exchange), not
+		// by sending their account token.
+		"tokenExchange": s.Supa != nil && s.Devices != nil,
 	}
 	if s.Supa != nil {
 		info["supabase"] = map[string]string{"url": config.SupabaseURL, "publishableKey": config.SupabasePublishableKey}
-		info["serverId"] = s.Cfg.Auth.Supabase.ServerID
+		info["serverId"] = s.Cfg.Snapshot().Auth.Supabase.ServerID
 	}
 	writeJSON(w, 200, info)
 }
@@ -97,7 +102,7 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	if s.Direct != nil {
 		s.Direct.Refresh()
 	}
-	writeJSON(w, 200, map[string]any{"serverId": s.Cfg.Auth.Supabase.ServerID})
+	writeJSON(w, 200, map[string]any{"serverId": s.Cfg.Snapshot().Auth.Supabase.ServerID})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -114,11 +119,21 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	ip := clientIP(r)
+	th := s.loginThrottle()
+	if wait := th.wait(req.Username, ip); wait > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		writeErr(w, http.StatusTooManyRequests, waitMessage(wait))
+		return
+	}
 	u, err := s.Local.Login(r.Context(), req.Username, req.Password)
 	if err != nil {
+		th.failed(req.Username, ip)
+		slog.Warn("failed sign-in", "username", req.Username, "ip", ip)
 		writeErr(w, http.StatusUnauthorized, "wrong username or password")
 		return
 	}
+	th.succeeded(req.Username, ip)
 	tok, err := s.Local.Issue(u, req.Device)
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -129,6 +144,65 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		role = "admin"
 	}
 	writeJSON(w, 200, map[string]any{"token": tok, "user": userResponse{u, role}})
+}
+
+// handleExchange signs an app in with a server ticket. The app gets the
+// ticket from the account service, for this server only, and never sends
+// this server its account token; it gets back a token only this server
+// accepts. The account's access is still checked with the account service on
+// every request, so unsharing the server ends it.
+func (s *Server) handleExchange(w http.ResponseWriter, r *http.Request) {
+	if s.Supa == nil || s.Devices == nil {
+		writeErr(w, http.StatusBadRequest, "this server uses local accounts")
+		return
+	}
+	var req struct {
+		Ticket string `json:"ticket"`
+		Device string `json:"device"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	// A wrong ticket costs a call to the account service: slow guessing down
+	// the same way as wrong passwords.
+	ip := clientIP(r)
+	th := s.loginThrottle()
+	if wait := th.wait("ticket", ip); wait > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		writeErr(w, http.StatusTooManyRequests, waitMessage(wait))
+		return
+	}
+	p, err := s.Supa.Redeem(r.Context(), strings.TrimSpace(req.Ticket))
+	switch {
+	case errors.Is(err, auth.ErrBadTicket):
+		th.failed("ticket", ip)
+		writeErr(w, http.StatusUnauthorized, "that sign-in has expired; try again")
+		return
+	case errors.Is(err, auth.ErrUnclaimed):
+		writeErr(w, http.StatusConflict, "server not claimed yet")
+		return
+	case errors.Is(err, auth.ErrForbidden):
+		writeErr(w, http.StatusForbidden, "your account doesn't have access to this server")
+		return
+	case err != nil:
+		slog.Warn("sign-in ticket", "err", err)
+		writeErr(w, http.StatusBadGateway, "couldn't check the sign-in with the account service; try again")
+		return
+	}
+	device := strings.TrimSpace(req.Device)
+	if device == "" {
+		device = clientName(r)
+	}
+	if len(device) > 60 {
+		device = device[:60]
+	}
+	tok, err := s.Devices.Issue(p.User, device)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"token": tok, "user": userResponse{p.User, p.Role}})
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -188,10 +262,16 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		u.UserLimits = *req.Limits
-		_ = s.DB.UpdateUserLimits(r.Context(), u.ID, u.UserLimits)
+		if err := s.DB.UpdateUserLimits(r.Context(), u.ID, u.UserLimits); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
 	}
 	if !req.IsAdmin {
-		_ = s.DB.SetLibraryAccess(r.Context(), u.ID, req.LibraryIDs)
+		if err := s.DB.SetLibraryAccess(r.Context(), u.ID, req.LibraryIDs); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
 	}
 	writeJSON(w, 201, u)
 }
@@ -225,7 +305,10 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.LibraryIDs != nil {
-		_ = s.DB.SetLibraryAccess(r.Context(), u.ID, *req.LibraryIDs)
+		if err := s.DB.SetLibraryAccess(r.Context(), u.ID, *req.LibraryIDs); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
 	}
 	if req.Limits != nil {
 		if err := validLimits(*req.Limits); err != nil {
@@ -244,9 +327,78 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 400, err.Error())
 			return
 		}
-		_, _ = s.DB.ExecContext(r.Context(), `UPDATE users SET password_hash=? WHERE id=?`, hash, u.ID)
+		// A new password signs the user out everywhere on this server.
+		if err := s.DB.SetPassword(r.Context(), u.ID, hash); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		// Whoever changed their own password stays signed in on this device.
+		if u.ID == principal(r).User.ID {
+			if tok := s.reissue(r, u); tok != "" {
+				writeJSON(w, 200, struct {
+					*db.User
+					Token string `json:"token"`
+				}{u, tok})
+				return
+			}
+		}
 	}
 	writeJSON(w, 200, u)
+}
+
+// reissue gives the caller a fresh token of the kind they signed in with
+// (a local sign-in or a linked device), or "" for a Wren TV account sign-in,
+// which this server doesn't issue.
+func (s *Server) reissue(r *http.Request, u *db.User) string {
+	tok := auth.BearerToken(r)
+	if s.Devices != nil {
+		if device, ok := s.Devices.Owns(tok); ok {
+			t, _ := s.Devices.Issue(u, device)
+			return t
+		}
+	}
+	if s.Local != nil {
+		if device, ok := s.Local.Owns(tok); ok {
+			t, _ := s.Local.Issue(u, device)
+			return t
+		}
+	}
+	return ""
+}
+
+// handleRevokeMine signs the caller out everywhere on this server: every
+// local sign-in and linked device (TVs signed in with a code). The device
+// asking gets a fresh token and stays signed in.
+func (s *Server) handleRevokeMine(w http.ResponseWriter, r *http.Request) {
+	u := principal(r).User
+	if err := s.DB.RevokeTokens(r.Context(), u.ID); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"token": s.reissue(r, u)})
+}
+
+// handleRevokeUser signs a user out everywhere on this server (admin).
+func (s *Server) handleRevokeUser(w http.ResponseWriter, r *http.Request) {
+	u, err := s.DB.UserByID(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, 404, "user not found")
+		return
+	}
+	if err := s.DB.RevokeTokens(r.Context(), u.ID); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	out := map[string]any{}
+	if u.ID == principal(r).User.ID {
+		out["token"] = s.reissue(r, u)
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) loginThrottle() *loginThrottle {
+	s.throttleOnce.Do(func() { s.throttle = newLoginThrottle() })
+	return s.throttle
 }
 
 // validLimits checks per-user limits: -1 is the server default, 0 no limit.

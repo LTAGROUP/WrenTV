@@ -12,6 +12,7 @@ import (
 	"io"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf16"
@@ -781,13 +782,13 @@ func sevenZipSet(ctx context.Context, pool *Pool, nzb *NZB, vols map[int]int) ([
 			need = append(need, i)
 		}
 	}
+	// The volumes to read are settled before any goroutine starts: the map
+	// is only touched under mu once they run.
+	slices.Sort(need)
+	need = slices.Compact(need)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, i := range need {
-		if _, ok := heads[i]; ok {
-			continue
-		}
-		heads[i] = head{}
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

@@ -140,13 +140,13 @@ struct AccountClient: Sendable {
 
     /// The addresses a server published in its heartbeat (visible to its
     /// owner and the accounts it's shared with).
-    func addresses(server id: String, _ s: AccountSession) async -> ServerAddresses? {
+    func addresses(server id: String, accessToken: String) async -> ServerAddresses? {
         guard var c = URLComponents(url: URL(string: "/rest/v1/servers", relativeTo: url)!, resolvingAgainstBaseURL: true) else { return nil }
         c.queryItems = [.init(name: "id", value: "eq." + id), .init(name: "select", value: "local_urls,public_url,remote_url")]
         guard let u = c.url else { return nil }
         var req = URLRequest(url: u)
         req.setValue(publishableKey, forHTTPHeaderField: "apikey")
-        req.setValue("Bearer \(s.accessToken)", forHTTPHeaderField: "Authorization")
+        req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return (try? JSONDecoder().decode([ServerAddresses].self, from: data))?.first
@@ -218,18 +218,37 @@ struct AccountClient: Sendable {
         return s
     }
 
+    /// A ticket that signs this account in to one media server. The server
+    /// redeems it with the account service to learn who is signing in; it
+    /// works once, for that server only, for two minutes. This is what a
+    /// media server is given instead of the account's own token, which
+    /// would work everywhere.
+    func serverTicket(server id: String, accessToken: String) async throws -> String {
+        let data = try await request("/rest/v1/rpc/issue_server_ticket", body: ["p_server_id": id], bearer: accessToken)
+        guard let ticket = try? JSONDecoder().decode(String.self, from: data), !ticket.isEmpty else {
+            throw WrenTVError(message: "Couldn't sign in to the server")
+        }
+        return ticket
+    }
+
     /// Turns pending share invites for this email into access.
     func acceptInvites(_ s: AccountSession) async {
         _ = try? await request("/rest/v1/rpc/accept_invites", body: [:], bearer: s.accessToken)
     }
 }
 
-/// Supplies the bearer token for server requests, refreshing account sessions
-/// before they expire.
+/// Supplies the bearer token for media-server requests.
+///
+/// A server only ever gets a token it issued itself: a local sign-in, or the
+/// token it gave in exchange for a server ticket. The Wren TV account's own
+/// token works on the account service and on every server the account can
+/// use, so it goes to the account service alone (`accountToken`), never to a
+/// media server.
 actor TokenSource {
     private enum Kind {
         case local(String)
-        case account(AccountClient, AccountSession)
+        /// The server's own token, and the account it was issued to.
+        case account(AccountClient, AccountSession, serverToken: String)
     }
 
     private var kind: Kind
@@ -240,52 +259,69 @@ actor TokenSource {
     private var failure: (error: Error, at: Date, final: Bool)?
 
     init(localToken: String) { kind = .local(localToken) }
-    init(account: AccountClient, session: AccountSession) { kind = .account(account, session) }
+    init(account: AccountClient, session: AccountSession, serverToken: String) {
+        kind = .account(account, session, serverToken: serverToken)
+    }
 
     var email: String? {
-        if case .account(_, let s) = kind { return s.email }
+        if case .account(_, let s, _) = kind { return s.email }
         return nil
     }
 
     var accountSession: AccountSession? {
-        if case .account(_, let s) = kind { return s }
+        if case .account(_, let s, _) = kind { return s }
         return nil
     }
 
+    /// The bearer for the media server.
     func token() async throws -> String {
         switch kind {
-        case .local(let t):
-            return t
-        case .account(let client, var s):
+        case .local(let t): return t
+        case .account(_, _, let serverToken): return serverToken
+        }
+    }
+
+    func setServerToken(_ t: String) {
+        if case .account(let c, let s, _) = kind { kind = .account(c, s, serverToken: t) }
+    }
+
+    /// The account's own token, refreshed when it is about to expire. Only
+    /// for requests to the account service.
+    func accountToken() async throws -> String {
+        guard case .account(let client, var s, let serverToken) = kind else {
+            throw WrenTVError(message: "Not signed in to a Wren TV account", status: 401)
+        }
+        if s.expiresAt - 60 > Date().timeIntervalSince1970 { return s.accessToken }
+        // Another part of the app may have refreshed already; its refresh
+        // token replaced ours, which is now spent.
+        if let saved = Keychain.session(for: client.keychainKey), saved.refreshToken != s.refreshToken, saved.expiresAt > s.expiresAt {
+            s = saved
+            kind = .account(client, saved, serverToken: serverToken)
+            failure = nil
             if s.expiresAt - 60 > Date().timeIntervalSince1970 { return s.accessToken }
-            // Another part of the app may have refreshed already; its refresh
-            // token replaced ours, which is now spent.
-            if let saved = Keychain.session(for: client.keychainKey), saved.refreshToken != s.refreshToken, saved.expiresAt > s.expiresAt {
-                s = saved
-                kind = .account(client, saved)
-                failure = nil
-                if s.expiresAt - 60 > Date().timeIntervalSince1970 { return s.accessToken }
-            }
-            if let f = failure {
-                if f.final { throw WrenTVError(message: "Your sign-in expired", status: 401) }
-                if Date().timeIntervalSince(f.at) < 30 { throw f.error }
-            }
-            let task = refreshing ?? Task { [s] in try await client.refresh(s) }
-            refreshing = task
-            defer { refreshing = nil }
-            do {
-                let fresh = try await task.value
-                kind = .account(client, fresh)
-                failure = nil
-                Keychain.setSession(fresh, for: client.keychainKey)
-                return fresh.accessToken
-            } catch {
-                let status = (error as? WrenTVError)?.status ?? 0
-                let final = status == 400 || status == 401 || status == 403
-                failure = (error, Date(), final)
-                if final { throw WrenTVError(message: "Your sign-in expired", status: 401) }
-                throw error
-            }
+        }
+        if let f = failure {
+            if f.final { throw WrenTVError(message: "Your sign-in expired", status: 401) }
+            if Date().timeIntervalSince(f.at) < 30 { throw f.error }
+        }
+        let task = refreshing ?? Task { [s] in try await client.refresh(s) }
+        refreshing = task
+        defer { refreshing = nil }
+        do {
+            let fresh = try await task.value
+            // The server token may have been set while this waited.
+            var current = serverToken
+            if case .account(_, _, let t) = kind { current = t }
+            kind = .account(client, fresh, serverToken: current)
+            failure = nil
+            Keychain.setSession(fresh, for: client.keychainKey)
+            return fresh.accessToken
+        } catch {
+            let status = (error as? WrenTVError)?.status ?? 0
+            let final = status == 400 || status == 401 || status == 403
+            failure = (error, Date(), final)
+            if final { throw WrenTVError(message: "Your sign-in expired", status: 401) }
+            throw error
         }
     }
 }
@@ -295,6 +331,9 @@ extension Keychain {
         guard let s = get(key) else { return nil }
         return try? JSONDecoder().decode(AccountSession.self, from: Data(s.utf8))
     }
+
+    /// Where a media server's own token for this account is kept.
+    static func serverTokenKey(_ serverId: String) -> String { "server-token:" + serverId }
 
     static func setSession(_ s: AccountSession?, for key: String) {
         set(s.flatMap { (try? JSONEncoder().encode($0)).flatMap { String(data: $0, encoding: .utf8) } }, for: key)

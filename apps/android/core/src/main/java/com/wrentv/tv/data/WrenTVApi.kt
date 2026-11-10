@@ -114,6 +114,11 @@ class WrenTVApi(val baseUrl: HttpUrl, val auth: TokenSource? = null) {
 
     suspend fun serverInfo(): ServerInfo = get("/api/server")
 
+    /** Signs in with a server ticket from the account service; the server answers with a token of its own. */
+    suspend fun exchange(ticket: String, device: String): AuthResponse = post("/api/auth/exchange", buildJsonObject {
+        put("ticket", ticket); put("device", device)
+    })
+
     suspend fun login(username: String, password: String): AuthResponse = post("/api/auth/login", buildJsonObject {
         put("username", username); put("password", password); put("device", deviceName())
     })

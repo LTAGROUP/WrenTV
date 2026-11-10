@@ -25,6 +25,8 @@ var (
 	ErrUnauthorized = errors.New("unauthorized")
 	ErrForbidden    = errors.New("forbidden")
 	ErrUnclaimed    = errors.New("server has not been claimed")
+	// ErrBusy: the sign-in couldn't be checked right now; it may be fine.
+	ErrBusy = errors.New("sign-in check is busy")
 )
 
 // Principal is an authenticated user and what they can reach on this server.
@@ -139,10 +141,28 @@ func (l *Local) Authenticate(ctx context.Context, token string) (*Principal, err
 		return nil, ErrUnauthorized
 	}
 	u, err := l.db.UserByID(ctx, c.Subject)
-	if err != nil {
+	if err != nil || revoked(&c, u) {
 		return nil, ErrUnauthorized
 	}
 	return l.principal(ctx, u)
+}
+
+// Owns reports whether a token is a local sign-in this server issued, and
+// the device it was issued to.
+func (l *Local) Owns(token string) (device string, ok bool) {
+	var c claims
+	_, err := jwt.ParseWithClaims(token, &c, func(t *jwt.Token) (any, error) { return l.key, nil },
+		jwt.WithValidMethods([]string{"HS256"}), jwt.WithIssuer(issuer))
+	return c.Device, err == nil
+}
+
+// revoked reports whether a token was issued before the user's sign-ins
+// were ended (a password change, or "sign out everywhere").
+func revoked(c *claims, u *db.User) bool {
+	if u.TokensValidAfter == 0 {
+		return false
+	}
+	return c.IssuedAt == nil || c.IssuedAt.Unix() < u.TokensValidAfter
 }
 
 func (l *Local) principal(ctx context.Context, u *db.User) (*Principal, error) {

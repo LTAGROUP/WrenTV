@@ -174,6 +174,14 @@ func (m *Manager) Stop(id string) {
 	}
 }
 
+// Close ends every session: their ffmpeg runs stop and their scratch files
+// go. Called as the server shuts down.
+func (m *Manager) Close() {
+	for _, s := range m.List() {
+		m.Stop(s.ID)
+	}
+}
+
 // StopForFile ends every session reading a file (e.g. its stream was replaced).
 func (m *Manager) StopForFile(fileID string) {
 	for _, s := range m.List() {

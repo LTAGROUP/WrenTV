@@ -4,6 +4,7 @@ package images
 
 import (
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -60,8 +61,54 @@ func (c *Cache) ServeTMDB(w http.ResponseWriter, r *http.Request, size, path str
 			return
 		}
 	}
+	// The file's time is when it was last asked for (to the day), which is
+	// what Trim goes by.
+	if st, err := os.Stat(local); err == nil && time.Since(st.ModTime()) > 24*time.Hour {
+		now := time.Now()
+		_ = os.Chtimes(local, now, now)
+	}
 	w.Header().Set("Cache-Control", "public, max-age=2592000, immutable")
 	http.ServeFile(w, r, local)
+}
+
+// Trim keeps the cache under maxBytes by removing the artwork asked for
+// longest ago (it's fetched again if wanted). It reports the bytes freed.
+func (c *Cache) Trim(maxBytes int64) int64 {
+	if maxBytes <= 0 {
+		return 0
+	}
+	type file struct {
+		path string
+		size int64
+		at   time.Time
+	}
+	var files []file
+	var total int64
+	_ = filepath.WalkDir(c.dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, err := d.Info(); err == nil {
+			files = append(files, file{p, info.Size(), info.ModTime()})
+			total += info.Size()
+		}
+		return nil
+	})
+	if total <= maxBytes {
+		return 0
+	}
+	slices.SortFunc(files, func(a, b file) int { return a.at.Compare(b.at) })
+	// Go a little under, so it isn't trimmed again straight away.
+	target, freed := maxBytes*9/10, int64(0)
+	for _, f := range files {
+		if total-freed <= target {
+			break
+		}
+		if os.Remove(f.path) == nil {
+			freed += f.size
+		}
+	}
+	return freed
 }
 
 func (c *Cache) fetch(url, dst string) error {

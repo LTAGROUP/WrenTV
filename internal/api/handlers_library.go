@@ -417,7 +417,7 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 	}
 	streamed := s.isStreamLibrary(ctx, it.LibraryID)
 	// The owner can turn off looking streams up as soon as a page opens.
-	warm := streamed && s.Cfg.Streaming.LookupOnOpen
+	warm := streamed && s.Cfg.Snapshot().Streaming.LookupOnOpen
 	resp["streaming"] = streamed
 	resp["canDownload"] = s.limitsFor(p.User).CanDownload
 	switch it.Kind {

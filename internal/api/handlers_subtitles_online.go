@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/LTAGROUP/wrentv/internal/config"
 	"io"
 	"log/slog"
 	"math"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -389,6 +391,47 @@ func (s *Server) keepSynced(path string, sess *stream.Session, cues []onlinesubs
 
 // RunOnlineSubtitleSweep deletes fetched subtitle files no item lists any
 // more (their titles were removed), at start and then daily.
+// RunMaintenance keeps the caches from growing without end: once a day it
+// drops cached metadata nothing reads any more, the seek thumbnails of
+// files that are gone, and the least recently used artwork over the cap
+// (20 GB, or WRENTV_IMAGE_CACHE_GB; 0 turns the cap off).
+func (s *Server) RunMaintenance(ctx context.Context) {
+	capGB := 20.0
+	if v, err := strconv.ParseFloat(config.Getenv("IMAGE_CACHE_GB"), 64); err == nil && v >= 0 {
+		capGB = v
+	}
+	t := time.NewTicker(24 * time.Hour)
+	defer t.Stop()
+	// The first pass waits for startup's scan and probing to get going.
+	first := time.NewTimer(10 * time.Minute)
+	defer first.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-first.C:
+		case <-t.C:
+		}
+		if n, err := s.DB.PruneCache(ctx, 180*24*3600); err != nil {
+			slog.Warn("maintenance: metadata cache", "err", err)
+		} else if n > 0 {
+			slog.Info("maintenance: dropped old cached metadata", "rows", n)
+		}
+		if s.Thumbs != nil {
+			if keep, err := s.DB.FileIDs(ctx); err == nil {
+				if n := s.Thumbs.Sweep(keep); n > 0 {
+					slog.Info("maintenance: removed thumbnails of files that are gone", "sets", n)
+				}
+			}
+		}
+		if s.Images != nil {
+			if freed := s.Images.Trim(int64(capGB * (1 << 30))); freed > 0 {
+				slog.Info("maintenance: trimmed the artwork cache", "freedMB", freed>>20)
+			}
+		}
+	}
+}
+
 func (s *Server) RunOnlineSubtitleSweep(ctx context.Context) {
 	t := time.NewTicker(24 * time.Hour)
 	defer t.Stop()

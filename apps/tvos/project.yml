@@ -2,7 +2,7 @@ name: WrenTV
 options:
   deploymentTarget:
     tvOS: "18.0"
-  createIntermediateGroups: true
+  createIntermediateGroups: false
 settings:
   base:
     SWIFT_VERSION: "5.0"

@@ -81,7 +81,7 @@ func New(cfg *config.Config, dataDir string) *Service {
 
 // Active: turned on and has channels to show.
 func (s *Service) Active() bool {
-	if !s.cfg.LiveTV.Enabled {
+	if !s.cfg.Snapshot().LiveTV.Enabled {
 		return false
 	}
 	s.mu.RLock()
@@ -120,7 +120,7 @@ func (s *Service) run(ctx context.Context) {
 }
 
 func (s *Service) refresh(ctx context.Context, force bool) {
-	lc := s.cfg.LiveTV
+	lc := s.cfg.Snapshot().LiveTV
 	if !lc.Enabled || len(lc.Sources) == 0 {
 		s.mu.Lock()
 		s.all, s.visible, s.byID, s.guide = nil, nil, map[string]*Channel{}, Guide{}
@@ -243,7 +243,7 @@ func (s *Service) refresh(ctx context.Context, force bool) {
 // own numbers where it has them, the next free number otherwise.
 func (s *Service) number() {
 	hidden := map[string]bool{}
-	for _, g := range s.cfg.LiveTV.HiddenGroups {
+	for _, g := range s.cfg.Snapshot().LiveTV.HiddenGroups {
 		hidden[g] = true
 	}
 	var vis []*Channel
@@ -368,7 +368,7 @@ func (s *Service) Status() Status {
 // Groups lists every playlist group, in playlist order.
 func (s *Service) Groups() []Group {
 	hidden := map[string]bool{}
-	for _, g := range s.cfg.LiveTV.HiddenGroups {
+	for _, g := range s.cfg.Snapshot().LiveTV.HiddenGroups {
 		hidden[g] = true
 	}
 	s.mu.RLock()
@@ -405,7 +405,7 @@ func (s *Service) Providers() []Provider {
 	}
 	s.mu.RUnlock()
 	out := []Provider{}
-	for _, src := range s.cfg.LiveTV.Sources {
+	for _, src := range s.cfg.Snapshot().LiveTV.Sources {
 		if src.Enabled && has[src.ID] {
 			name := src.Name
 			if name == "" {

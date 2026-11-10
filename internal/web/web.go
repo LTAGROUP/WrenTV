@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"path"
 	"strings"
+
+	"github.com/LTAGROUP/wrentv/internal/config"
 )
 
 //go:embed static
@@ -18,6 +20,30 @@ func init() {
 	// Not in Go's built-in table, and slim images ship no /etc/mime.types.
 	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
 }
+
+// contentPolicy limits what the page may run and load, so that text from
+// outside (file and release names, channel and guide data, subtitles) that
+// ever got onto the page unescaped still couldn't run as script or send the
+// sign-in anywhere: scripts come only from this server, and requests go only
+// to it and the account service. Artwork and channel logos may come from
+// anywhere; styles are set inline throughout; hls.js runs a worker from a
+// blob; trailers play in a YouTube frame.
+var contentPolicy = strings.Join([]string{
+	"default-src 'self'",
+	"script-src 'self'",
+	"style-src 'self' 'unsafe-inline'",
+	"img-src 'self' data: blob: https: http:",
+	"media-src 'self' blob: https: http:",
+	"connect-src 'self' " + config.SupabaseURL,
+	"frame-src https://www.youtube-nocookie.com",
+	"worker-src 'self' blob:",
+	"font-src 'self' data:",
+	"manifest-src 'self'",
+	"object-src 'none'",
+	"base-uri 'self'",
+	"form-action 'self'",
+	"frame-ancestors 'none'",
+}, "; ")
 
 // Handler serves static files, falling back to index.html for app routes so
 // deep links like /item/123 work.
@@ -48,6 +74,7 @@ func Handler() http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy", contentPolicy)
 		_, _ = w.Write(index)
 	})
 }

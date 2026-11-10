@@ -18,16 +18,18 @@ import (
 // the iOS app's scanner) approves it, and the TV is signed in as them.
 
 const (
-	pairTTL     = 10 * time.Minute
-	pairMax     = 200 // codes waiting at once
-	pairAlpha   = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	pairCodeLen = 8
+	pairTTL      = 10 * time.Minute
+	pairMax      = 200 // codes waiting at once
+	pairMaxPerIP = 10  // codes one address may have waiting, so it can't use them all up
+	pairAlpha    = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	pairCodeLen  = 8
 )
 
 type pairing struct {
 	code    string
 	secret  string
 	device  string
+	ip      string // who asked for it
 	expires time.Time
 	// Set once approved; handed to the device on its next poll.
 	token string
@@ -97,11 +99,21 @@ func (s *Server) handleCreatePair(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusTooManyRequests, "too many sign-in codes waiting; try again in a few minutes")
 		return
 	}
+	ip, mine := clientIP(r), 0
+	for _, x := range p.m {
+		if x.ip == ip {
+			mine++
+		}
+	}
+	if mine >= pairMaxPerIP {
+		writeErr(w, http.StatusTooManyRequests, "too many sign-in codes waiting; try again in a few minutes")
+		return
+	}
 	code := newPairCode()
 	for p.m[code] != nil {
 		code = newPairCode()
 	}
-	pr := &pairing{code: code, secret: hex.EncodeToString(sec), device: device, expires: time.Now().Add(pairTTL)}
+	pr := &pairing{code: code, secret: hex.EncodeToString(sec), device: device, ip: ip, expires: time.Now().Add(pairTTL)}
 	p.m[code] = pr
 	writeJSON(w, 200, map[string]any{
 		"code": code, "secret": pr.secret, "expiresIn": int(pairTTL.Seconds()),

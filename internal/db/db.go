@@ -5,7 +5,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
+	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -13,6 +18,7 @@ import (
 
 type DB struct {
 	*sql.DB
+	path string
 }
 
 func Open(dataDir string) (*DB, error) {
@@ -28,7 +34,7 @@ func Open(dataDir string) (*DB, error) {
 	// SQLite allows one writer; a small pool keeps readers concurrent while
 	// busy_timeout serializes writers.
 	sqldb.SetMaxOpenConns(8)
-	d := &DB{sqldb}
+	d := &DB{DB: sqldb, path: path}
 	if err := d.migrate(context.Background()); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
@@ -496,6 +502,13 @@ var migrations = []string{
 		added_at INTEGER NOT NULL,
 		PRIMARY KEY (user_id, title)
 	);`,
+	// Sign-ins issued before tokens_valid_after stop working (password
+	// changes, signing a user's devices out). And indexes on the item side of
+	// per-user tables, so removing items doesn't scan them.
+	`ALTER TABLE users ADD COLUMN tokens_valid_after INTEGER NOT NULL DEFAULT 0;
+	CREATE INDEX IF NOT EXISTS watch_state_item ON watch_state(item_id);
+	CREATE INDEX IF NOT EXISTS watchlist_item ON watchlist(item_id);
+	CREATE INDEX IF NOT EXISTS collection_items_item ON collection_items(item_id);`,
 }
 
 // fkOff lists migrations (1-based) that rebuild tables. They run with
@@ -511,12 +524,50 @@ func (d *DB) migrate(ctx context.Context) error {
 	if err := d.QueryRowContext(ctx, `SELECT COALESCE(MAX(v),0) FROM schema_version`).Scan(&v); err != nil {
 		return err
 	}
+	if v > 0 && v < len(migrations) {
+		d.backup(ctx, v)
+	}
 	for i := v; i < len(migrations); i++ {
 		if err := d.apply(ctx, i+1, migrations[i]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// backup copies the database to wrentv.db.before-v<N> before an upgrade
+// changes it, keeping the two newest copies. A failed copy (a full disk,
+// say) is logged and the upgrade goes ahead: every migration runs in a
+// transaction of its own.
+func (d *DB) backup(ctx context.Context, version int) {
+	if d.path == "" {
+		return
+	}
+	dst := fmt.Sprintf("%s.before-v%d", d.path, version)
+	_ = os.Remove(dst) // VACUUM INTO won't overwrite; a leftover is from a failed try
+	if _, err := d.ExecContext(ctx, `VACUUM INTO ?`, dst); err != nil {
+		slog.Warn("couldn't back up the database before upgrading it", "err", err)
+		_ = os.Remove(dst)
+		return
+	}
+	slog.Info("backed up the database before upgrading it", "to", dst)
+	old, _ := filepath.Glob(d.path + ".before-v*")
+	type bak struct {
+		path string
+		v    int
+	}
+	var baks []bak
+	for _, p := range old {
+		if n, err := strconv.Atoi(p[strings.LastIndex(p, "-v")+2:]); err == nil {
+			baks = append(baks, bak{p, n})
+		}
+	}
+	sort.Slice(baks, func(i, j int) bool { return baks[i].v > baks[j].v })
+	for i, b := range baks {
+		if i >= 2 {
+			_ = os.Remove(b.path)
+		}
+	}
 }
 
 func (d *DB) apply(ctx context.Context, version int, stmt string) error {

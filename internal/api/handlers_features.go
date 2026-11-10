@@ -687,7 +687,10 @@ func (s *Server) handleCreateCollection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if len(req.ItemIDs) > 0 && c.Kind == "manual" {
-		_ = s.DB.AddToCollection(r.Context(), c.ID, req.ItemIDs)
+		if err := s.DB.AddToCollection(r.Context(), c.ID, req.ItemIDs); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
 	}
 	writeJSON(w, 201, c)
 }

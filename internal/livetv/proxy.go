@@ -70,7 +70,7 @@ func (s *Service) Play(ctx context.Context, userID, channelID string, wantHLS bo
 		return nil, errors.New("channel not found")
 	}
 	ss := &s.sessions
-	limit := s.cfg.LiveTV.MaxStreams
+	limit := s.cfg.Snapshot().LiveTV.MaxStreams
 	ss.mu.Lock()
 	if ss.byID == nil {
 		ss.byID = map[string]*Session{}
@@ -187,6 +187,17 @@ func (s *Service) Stop(id, userID string, admin bool) bool {
 	}
 	ss.stopLocked(id)
 	return true
+}
+
+// Close ends every session (and any ffmpeg repackaging one), as the server
+// shuts down.
+func (s *Service) Close() {
+	ss := &s.sessions
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	for id := range ss.byID {
+		ss.stopLocked(id)
+	}
 }
 
 // Sessions lists who is watching what, for the dashboard.

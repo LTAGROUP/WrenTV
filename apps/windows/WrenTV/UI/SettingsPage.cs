@@ -206,8 +206,9 @@ sealed class SettingsPage : Page
             try
             {
                 var api = state.Api!;
-                string? token = api.Auth?.AccountSession != null ? await api.Auth.Token() : null;
-                var client = new AccountClient(state.Server?.Supabase ?? SupabaseInfo.WrenTV);
+                // The account's own token, for the account service only.
+                string? token = api.Auth?.AccountSession != null ? await api.Auth.AccountToken() : null;
+                var client = new AccountClient(SupabaseInfo.WrenTV);
                 string? device = null;
                 var account = false;
                 Exception? accountError = null;

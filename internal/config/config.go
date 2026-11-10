@@ -9,11 +9,73 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
+
+// The settings below change while the server runs (the settings page, and
+// claiming the server). Everything that reads them after startup goes
+// through Snapshot, and every change through Update, so a change is never
+// seen half made. The rest of Config (DataDir, MachineID, Listen, the
+// signing and integration keys, the ffmpeg paths, LocalURLs) is fixed once
+// loaded and may be read directly.
+var (
+	mu     sync.RWMutex
+	saveMu sync.Mutex
+)
+
+// Snapshot is the configuration as it is right now. Its slices and maps are
+// shared with other snapshots and must not be changed.
+func (c *Config) Snapshot() Config {
+	mu.RLock()
+	defer mu.RUnlock()
+	return *c
+}
+
+// Update changes the configuration. fn edits a private copy; if it returns
+// nil the copy's settings replace the live ones and are saved, otherwise
+// nothing changes.
+func (c *Config) Update(fn func(next *Config) error) error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	next, err := c.clone()
+	if err != nil {
+		return err
+	}
+	if err := fn(next); err != nil {
+		return err
+	}
+	mu.Lock()
+	c.ServerName, c.PublicURL = next.ServerName, next.PublicURL
+	c.Auth.Supabase = next.Auth.Supabase
+	c.RemoteAccess, c.Metadata = next.RemoteAccess, next.Metadata
+	c.Transcode.HWAccel = next.Transcode.HWAccel
+	c.Streaming, c.LiveTV, c.Users = next.Streaming, next.LiveTV, next.Users
+	c.Webhooks, c.Simkl, c.Trakt = next.Webhooks, next.Simkl, next.Trakt
+	c.Markers, c.Subtitles = next.Markers, next.Subtitles
+	mu.Unlock()
+	return c.save()
+}
+
+// clone is a deep copy: nothing in it is shared with c.
+func (c *Config) clone() (*Config, error) {
+	mu.RLock()
+	b, err := yaml.Marshal(c)
+	mu.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+	var n Config
+	if err := yaml.Unmarshal(b, &n); err != nil {
+		return nil, err
+	}
+	n.DataDir, n.fromFile, n.fromEnv, n.defaultScratch = c.DataDir, c.fromFile, c.fromEnv, c.defaultScratch
+	return &n, nil
+}
 
 type Config struct {
 	// DataDir holds the database, caches and transcode scratch space.
@@ -49,6 +111,75 @@ type Config struct {
 	// LegacyTorrents is read from configs written before streaming replaced
 	// torrents, so a Real-Debrid key carries over. Never written back.
 	LegacyTorrents *legacyTorrents `yaml:"torrents,omitempty"`
+
+	// What the file said, and what the environment made of it, for the
+	// settings WRENTV_* variables override: Save writes the file's value
+	// back for any that still hold the environment's, so an override never
+	// ends up in the file.
+	fromFile, fromEnv *envSettings
+	defaultScratch    bool
+}
+
+// envSettings are the settings environment variables can override.
+type envSettings struct {
+	Listen, ServerName, TMDBKey, OMDbKey, FFmpeg, FFprobe, HWAccel     string
+	TorBoxKey, AllDebridKey, RealDebridKey, PublicURL, DirectAPI, ACME string
+	RemoteAccess, Streaming                                            bool
+	PublicPort, PollSec                                                int
+	LocalURLs                                                          []string
+}
+
+func (c *Config) envSettings() *envSettings {
+	return &envSettings{
+		Listen: c.Listen, ServerName: c.ServerName, TMDBKey: c.Metadata.TMDBAPIKey, OMDbKey: c.Metadata.OMDbAPIKey,
+		FFmpeg: c.Transcode.FFmpegPath, FFprobe: c.Transcode.FFprobePath, HWAccel: c.Transcode.HWAccel,
+		TorBoxKey: c.Streaming.TorBoxKey, AllDebridKey: c.Streaming.AllDebridKey, RealDebridKey: c.Streaming.RealDebridKey,
+		PublicURL: c.PublicURL, DirectAPI: c.RemoteAccess.API, ACME: c.RemoteAccess.ACMEDirectory,
+		RemoteAccess: c.RemoteAccess.Enabled, Streaming: c.Streaming.Enabled,
+		PublicPort: c.RemoteAccess.PublicPort, PollSec: c.Scanner.PollSec, LocalURLs: c.LocalURLs,
+	}
+}
+
+// withoutEnv puts the file's value back for every setting that still holds
+// what the environment set. One changed since (on the settings page) is kept.
+func (c *Config) withoutEnv() {
+	f, e := c.fromFile, c.fromEnv
+	if f == nil || e == nil {
+		return
+	}
+	str := func(dst *string, env, file string) {
+		if *dst == env {
+			*dst = file
+		}
+	}
+	str(&c.Listen, e.Listen, f.Listen)
+	str(&c.ServerName, e.ServerName, f.ServerName)
+	str(&c.Metadata.TMDBAPIKey, e.TMDBKey, f.TMDBKey)
+	str(&c.Metadata.OMDbAPIKey, e.OMDbKey, f.OMDbKey)
+	str(&c.Transcode.FFmpegPath, e.FFmpeg, f.FFmpeg)
+	str(&c.Transcode.FFprobePath, e.FFprobe, f.FFprobe)
+	str(&c.Transcode.HWAccel, e.HWAccel, f.HWAccel)
+	str(&c.Streaming.TorBoxKey, e.TorBoxKey, f.TorBoxKey)
+	str(&c.Streaming.AllDebridKey, e.AllDebridKey, f.AllDebridKey)
+	str(&c.Streaming.RealDebridKey, e.RealDebridKey, f.RealDebridKey)
+	str(&c.PublicURL, e.PublicURL, f.PublicURL)
+	str(&c.RemoteAccess.API, e.DirectAPI, f.DirectAPI)
+	str(&c.RemoteAccess.ACMEDirectory, e.ACME, f.ACME)
+	if c.RemoteAccess.Enabled == e.RemoteAccess {
+		c.RemoteAccess.Enabled = f.RemoteAccess
+	}
+	if c.Streaming.Enabled == e.Streaming {
+		c.Streaming.Enabled = f.Streaming
+	}
+	if c.RemoteAccess.PublicPort == e.PublicPort {
+		c.RemoteAccess.PublicPort = f.PublicPort
+	}
+	if c.Scanner.PollSec == e.PollSec {
+		c.Scanner.PollSec = f.PollSec
+	}
+	if slices.Equal(c.LocalURLs, e.LocalURLs) {
+		c.LocalURLs = f.LocalURLs
+	}
 }
 
 type legacyTorrents struct {
@@ -145,8 +276,6 @@ type TranscodeConfig struct {
 	ScratchDir string `yaml:"scratch_dir"`
 }
 
-// StreamingConfig turns the server into a shared Stremio-style client:
-// any movie or show can be searched and played, resolved through Stremio
 // LiveTVConfig sets up live TV from IPTV playlists (M3U, or an Xtream Codes
 // login). Channels, numbers and the guide are worked out from the playlist;
 // the owner only picks which groups to show.
@@ -177,6 +306,8 @@ type LiveTVSource struct {
 	UserAgent string `yaml:"user_agent,omitempty" json:"userAgent"`
 }
 
+// StreamingConfig turns the server into a shared Stremio-style client:
+// any movie or show can be searched and played, resolved through Stremio
 // addons to releases that are already cached on the owner's debrid accounts.
 // Only the stream (info hash and file) is stored; bytes are proxied on demand.
 // In download mode the file is also saved into a real library.
@@ -446,8 +577,12 @@ func Load(dataDir string) (*Config, error) {
 			return nil, err
 		}
 	}
+	c.fromFile = c.envSettings()
 	c.applyEnv()
-	if c.Transcode.ScratchDir == "" {
+	c.fromEnv = c.envSettings()
+	// Left blank in the file, the scratch folder follows the data directory.
+	c.defaultScratch = c.Transcode.ScratchDir == ""
+	if c.defaultScratch {
 		c.Transcode.ScratchDir = filepath.Join(dataDir, "transcode")
 	}
 	return &c, nil
@@ -496,7 +631,22 @@ func (c *Config) applyEnv() {
 
 // Save writes the config back to disk (used for generated secrets and claim state).
 func (c *Config) Save() error {
-	b, err := yaml.Marshal(c)
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	return c.save()
+}
+
+// save writes the file; the caller holds saveMu.
+func (c *Config) save() error {
+	out, err := c.clone()
+	if err != nil {
+		return err
+	}
+	out.withoutEnv()
+	if out.defaultScratch {
+		out.Transcode.ScratchDir = ""
+	}
+	b, err := yaml.Marshal(out)
 	if err != nil {
 		return err
 	}

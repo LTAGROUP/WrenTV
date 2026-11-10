@@ -23,7 +23,7 @@ const initials = (n) => n.split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('
 
 function logo(ch, cls = 'ch-logo') {
   const mark = `<b>${esc(initials(ch.name))}</b>`;
-  return ch.logo ? `<span class="${cls}"><img src="${esc(ch.logo)}" alt="" loading="lazy" onerror="this.parentNode.classList.add('broken')">${mark}</span>`
+  return ch.logo ? `<span class="${cls}"><img src="${esc(ch.logo)}" alt="" loading="lazy" data-error="broken">${mark}</span>`
     : `<span class="${cls} broken">${mark}</span>`;
 }
 
@@ -325,7 +325,7 @@ export async function viewLive() {
     if (!ch) return '';
     const p = tile.program, m = tile.matchup;
     const later = p && p.start > now();
-    const art = m ? matchup(m) : tile.art ? `<img class="lv-card-pic" src="${esc(tile.art)}" alt="" loading="lazy" onerror="this.remove()">${logo(ch, 'ch-logo huge')}` : logo(ch, 'ch-logo huge');
+    const art = m ? matchup(m) : tile.art ? `<img class="lv-card-pic" src="${esc(tile.art)}" alt="" loading="lazy" data-error="remove">${logo(ch, 'ch-logo huge')}` : logo(ch, 'ch-logo huge');
     const title = m ? gameTitle(m, true) : p?.title || ch.name;
     const sub = p && airing(p) ? `${ch.name} · ${left(p)} min left` : p ? ch.name : ch.group || '';
     const picked = s.pick?.tile === tile;

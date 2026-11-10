@@ -1,4 +1,5 @@
-# Builds the server image on every push to main and publishes it to
+# Tests the server on every push to main and every pull request; on main, a
+# passing run then builds the image (amd64 and arm64) and publishes it to
 # ghcr.io/ltagroup/wrentv (:latest and :<short sha>). Servers update with
 #   docker compose pull && docker compose up -d
 # Pushes that only touch the client apps (apps/) are skipped.
@@ -7,6 +8,10 @@ name: Docker image
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'apps/**'
+      - '.github/workflows/windows.yml'
+  pull_request:
     paths-ignore:
       - 'apps/**'
       - '.github/workflows/windows.yml'
@@ -21,7 +26,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Some tests cut real media with ffmpeg.
+      - name: ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Formatting
+        run: test -z "$(gofmt -l cmd internal)" || { gofmt -l cmd internal; exit 1; }
+
+      - run: go vet ./...
+
+      - name: Tests (with the race detector)
+        run: go test -race -count=1 ./...
+
+      # Known vulnerabilities in the code paths the server uses. It reports
+      # without failing the run: a new advisory shouldn't block a release
+      # that doesn't touch it.
+      - name: Vulnerability check
+        continue-on-error: true
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
   build:
+    needs: test
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,6 +64,10 @@ jobs:
       - name: Short commit
         id: v
         run: echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # arm64 (Raspberry Pi, ARM NAS boxes, Apple silicon) is put together
+      # under emulation; only the package install runs that way.
+      - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
@@ -41,7 +80,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           build-args: VERSION=${{ steps.v.outputs.sha }}
           tags: |

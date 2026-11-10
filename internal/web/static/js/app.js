@@ -441,7 +441,7 @@ export function progressBar(it) {
 }
 
 // Images fade in once loaded instead of popping.
-export const lazyImg = (src, alt = '') => `<img loading="lazy" class="loading" onload="this.classList.remove('loading')" onerror="this.remove()" src="${src}" alt="${esc(alt)}">`;
+export const lazyImg = (src, alt = '') => `<img loading="lazy" class="loading" data-load="loaded" data-error="remove" src="${src}" alt="${esc(alt)}">`;
 
 // setPosterSize scales posters and tiles: small, medium or large. The account
 // keeps the choice; localStorage remembers it for the next page load.
