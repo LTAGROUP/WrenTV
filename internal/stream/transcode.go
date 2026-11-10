@@ -155,9 +155,12 @@ func (t *transcoder) launch(n int) {
 	}
 	if v != nil {
 		hdr := v.HDR != ""
-		if dovi {
+		switch {
+		case dovi:
 			args = append(args, "-vf", hw.DoviFilter(v.Width, v.Height, s.MaxWidth))
-		} else {
+		case hdr && hw.Dovi:
+			args = append(args, "-vf", hw.HDRFilter(v.Width, v.Height, s.MaxWidth))
+		default:
 			args = append(args, "-vf", hw.VideoFilter(v.Width, v.Height, v.BitDepth, s.MaxWidth, hdr))
 		}
 		args = append(args, hw.EncodeArgs(s.KbpsTarget)...)

@@ -197,6 +197,46 @@ func (hw HW) VideoFilter(srcW, srcH, bitDepth, maxWidth int, hdr bool) string {
 	return strings.Join(f, ",")
 }
 
+// HDRFilter scales and tone-maps HDR10, HLG and Dolby Vision with an HDR10
+// base layer to SDR with tonemapx (BT.2390), for use when hw.Dovi says
+// ffmpeg has it. The GPU tone mappers (vpp_qsv, tonemap_vaapi, scale_vt)
+// crush shadows: Quick Sync maps everything below about 1 nit to black, so
+// dark scenes vanish while the same scene from an SDR or Dolby Vision
+// source stays visible. Decoding and scaling stay on the GPU; only the tone
+// mapping runs on the CPU (about 4x real time at 1080p and 1.6x at 4K on a
+// 12th-gen Core i5), then frames go back up for the hardware encoder.
+func (hw HW) HDRFilter(srcW, srcH, maxWidth int) string {
+	w, h := srcW, srcH
+	if maxWidth > 0 && srcW > maxWidth {
+		w = maxWidth
+		h = int(float64(srcH)*float64(maxWidth)/float64(srcW)/2+0.5) * 2
+	}
+	tm := "tonemapx=tonemap=bt2390:t=bt709:m=bt709:p=bt709:r=tv:format="
+	upload := "hwupload=extra_hw_frames=16"
+	if hw.Decode {
+		switch hw.Kind {
+		case "qsv":
+			return "vpp_qsv=w=" + itoa(w) + ":h=" + itoa(h) + ":format=p010,hwdownload,format=p010le," + tm + "nv12," + upload
+		case "vaapi":
+			return "scale_vaapi=w=" + itoa(w) + ":h=" + itoa(h) + ":format=p010,hwdownload,format=p010le," + tm + "nv12," + upload
+		case "videotoolbox":
+			return "scale_vt=w=" + itoa(w) + ":h=" + itoa(h) + ",hwdownload,format=p010le," + tm + "nv12"
+		}
+	}
+	// Frames are already in memory (software decode, or CUDA and D3D11
+	// decoders that hand frames back to the CPU).
+	var f []string
+	if w != srcW {
+		f = append(f, "scale="+itoa(w)+":"+itoa(h))
+	}
+	f = append(f, tm+"yuv420p")
+	switch hw.Kind {
+	case "qsv", "vaapi":
+		f = append(f, "format=nv12", upload)
+	}
+	return strings.Join(f, ",")
+}
+
 // DoviFilter scales and tone-maps Dolby Vision to SDR with its metadata
 // applied. Frames are decoded in software (DeviceArgs, not DecodeArgs), since
 // GPU decoders drop the metadata.

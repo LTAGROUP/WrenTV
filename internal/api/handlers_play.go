@@ -930,12 +930,17 @@ func (s *Server) startThumbs(f *db.MediaFile, src stream.Source, info *media.Inf
 	hdr := v.HDR != ""
 	// Profile 5 Dolby Vision has no HDR10 picture to fall back on, and HDR
 	// without tone mapping comes out grey; no thumbnails beats wrong colours.
-	if (v.HDR == "DV" && v.DVProfile == 5) || (hdr && hw.Tonemap != "zscale") {
+	if (v.HDR == "DV" && v.DVProfile == 5) || (hdr && hw.Tonemap != "zscale" && !hw.Dovi) {
 		return 0
 	}
 	sw := stream.HW{Kind: "software", Tonemap: hw.Tonemap}
+	filter := sw.VideoFilter(v.Width, v.Height, v.BitDepth, thumbs.Width, hdr)
+	if hdr && hw.Dovi {
+		// The same tone mapping as playback, so previews match the picture.
+		filter = sw.HDRFilter(v.Width, v.Height, thumbs.Width)
+	}
 	j := thumbs.Job{FileID: f.ID, Duration: info.Duration, Remote: f.StreamID != "",
-		Filter: sw.VideoFilter(v.Width, v.Height, v.BitDepth, thumbs.Width, hdr) + ",format=yuvj420p"}
+		Filter: filter + ",format=yuvj420p"}
 	if !j.Remote {
 		j.Input = f.Path
 		return s.Thumbs.Start(context.Background(), j)
