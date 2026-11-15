@@ -898,71 +898,87 @@ func (s *Service) resolve(ctx context.Context, it *db.Item, urgent bool, ready f
 				if q == best {
 					defer unlead()
 				}
-				order := packsFirst(s.rank(nzbs, q, maxSize, season), season)
-				go s.prefetchNZBs(ctx, order[:min(len(order), nzbsAhead)], season, episode)
-				for _, r := range order {
-					slots <- struct{}{}
+				// Each indexer's posts are read only once those of the
+				// indexers listed above it have been and fell short, so a
+				// backup indexer's NZB grabs (often capped a day) go
+				// unspent while the first finds enough. Each gets the
+				// full budget of tries and time.
+				tierAt := started
+				for _, order := range s.byIndexer(s.rank(nzbs, q, maxSize, season)) {
 					qmu.Lock()
-					stop := need <= 0 || ctx.Err() != nil || len(tried) >= need+postSpare || time.Since(started) > postTime
-					// Posts already found with articles gone are passed over
-					// without using up a try.
-					dup := !stop && (seen(r) || s.usenet.wasMissing(r, season, episode))
-					k := len(tried)
-					rush := solo && k < postsAtOnce && !settled
-					if !stop && !dup {
-						tried, picks, done, stored = append(tried, r), append(picks, nil), append(done, false), append(stored, false)
-					}
+					short := need > 0 && ctx.Err() == nil
+					from, since := len(tried), tierAt
 					qmu.Unlock()
-					if stop || dup {
-						<-slots
-						if stop {
-							break
-						}
-						continue
+					if !short {
+						break
 					}
-					pwg.Add(1)
-					go func(k int, r Release) {
-						defer pwg.Done()
-						defer func() { <-slots }()
-						actx := ctx
-						if rush {
-							actx = context.WithValue(ctx, urgentKey{}, true)
-						}
-						p, _ := s.add(actx, r, caches, season, episode, maxSize)
+					order = packsFirst(order, season)
+					go s.prefetchNZBs(ctx, order[:min(len(order), nzbsAhead)], season, episode)
+					for _, r := range order {
+						slots <- struct{}{}
 						qmu.Lock()
-						defer qmu.Unlock()
-						picks[k], done[k] = p, true
-						for ; next < len(done) && done[next]; next++ {
-							if p := picks[next]; p != nil && !stored[next] && need > 0 && !seen(tried[next]) {
-								stored[next] = true
-								keep(tried[next], p, false)
+						stop := need <= 0 || ctx.Err() != nil || len(tried)-from >= need+postSpare || time.Since(since) > postTime
+						// Posts already found with articles gone are passed over
+						// without using up a try.
+						dup := !stop && (seen(r) || s.usenet.wasMissing(r, season, episode))
+						k := len(tried)
+						rush := solo && k < postsAtOnce && !settled
+						if !stop && !dup {
+							tried, picks, done, stored = append(tried, r), append(picks, nil), append(done, false), append(stored, false)
+						}
+						qmu.Unlock()
+						if stop || dup {
+							<-slots
+							if stop {
+								break
 							}
+							continue
 						}
-						// A find waiting on a slow post ranked above it is stored
-						// after a moment anyway, so playback isn't held up; at
-						// once while someone waits on a quality with none yet,
-						// unless what's above it is a season pack, which is
-						// worth that moment.
-						packAbove := false
-						for i := next; i < k && !packAbove; i++ {
-							packAbove = !done[i] && isPack(tried[i].Name, season)
-						}
-						if p != nil && k >= next && solo && !settled && need > 0 && !seen(tried[k]) && !packAbove {
-							stored[k] = true
-							keep(tried[k], p, false)
-						} else if p != nil && k >= next {
-							time.AfterFunc(orderWait, func() {
-								qmu.Lock()
-								defer qmu.Unlock()
-								if !stored[k] && need > 0 && ctx.Err() == nil && !seen(tried[k]) {
-									stored[k] = true
-									keep(tried[k], p, false)
+						pwg.Add(1)
+						go func(k int, r Release) {
+							defer pwg.Done()
+							defer func() { <-slots }()
+							actx := ctx
+							if rush {
+								actx = context.WithValue(ctx, urgentKey{}, true)
+							}
+							p, _ := s.add(actx, r, caches, season, episode, maxSize)
+							qmu.Lock()
+							defer qmu.Unlock()
+							picks[k], done[k] = p, true
+							for ; next < len(done) && done[next]; next++ {
+								if p := picks[next]; p != nil && !stored[next] && need > 0 && !seen(tried[next]) {
+									stored[next] = true
+									keep(tried[next], p, false)
 								}
-							})
-						}
-					}(k, r)
+							}
+							// A find waiting on a slow post ranked above it is stored
+							// after a moment anyway, so playback isn't held up; at
+							// once while someone waits on a quality with none yet,
+							// unless what's above it is a season pack, which is
+							// worth that moment.
+							packAbove := false
+							for i := next; i < k && !packAbove; i++ {
+								packAbove = !done[i] && isPack(tried[i].Name, season)
+							}
+							if p != nil && k >= next && solo && !settled && need > 0 && !seen(tried[k]) && !packAbove {
+								stored[k] = true
+								keep(tried[k], p, false)
+							} else if p != nil && k >= next {
+								time.AfterFunc(orderWait, func() {
+									qmu.Lock()
+									defer qmu.Unlock()
+									if !stored[k] && need > 0 && ctx.Err() == nil && !seen(tried[k]) {
+										stored[k] = true
+										keep(tried[k], p, false)
+									}
+								})
+							}
+						}(k, r)
+					}
+					pwg.Wait()
+					tierAt = time.Now()
 				}
-				pwg.Wait()
 			}()
 			// Torrents wait for the posts, unless the posts have found
 			// nothing for a while: then both are tried at once, so the

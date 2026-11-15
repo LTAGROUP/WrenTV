@@ -458,7 +458,7 @@ function streamingTab(s, libs) {
       <div class="nserver-list"></div>
       <button type="button" class="btn small" data-ns-add>Add news server</button>
       <h3 class="sub-h">Indexers</h3>
-      <p class="small muted">Posts from indexers higher in the list are tried first. Use the arrows to change the order.</p>
+      <p class="small muted">Indexers are used in list order: a later one's posts are only fetched when the ones above it can't fill a quality. Use the arrows to change the order.</p>
       <div class="indexer-list"></div>
       <button type="button" class="btn small" data-ix-add>Add indexer</button>
       <div style="margin-top:14px"><button type="button" class="btn" data-usenet-check>Check Usenet</button> <span class="small" data-usenet-res></span></div>

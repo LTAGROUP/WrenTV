@@ -602,3 +602,66 @@ func TestMissingPackRememberedForSeason(t *testing.T) {
 		t.Fatal("an episode's missing articles ruled out another episode")
 	}
 }
+
+// A later indexer's NZBs aren't grabbed while the first finds enough, and
+// its posts are read once the first's fall short.
+func TestBackupIndexerOnlyWhenShort(t *testing.T) {
+	for _, firstPlays := range []bool{true, false} {
+		t.Run(fmt.Sprint("firstPlays=", firstPlays), func(t *testing.T) {
+			ctx := context.Background()
+			video := make([]byte, 120_000)
+			copy(video, []byte{0x1a, 0x45, 0xdf, 0xa3})
+			ns := usenettest.New(t)
+			mk := func(n int, prefix string, dead bool) (map[string][]byte, map[string]int64) {
+				posts, sizes := map[string][]byte{}, map[string]int64{}
+				for i := range n {
+					title := fmt.Sprintf("Movie.2024.1080p.WEB-DL-%s%d", prefix, i)
+					one := usenettest.New(t)
+					one.Post(title+".mkv", video, 40_000)
+					ns.Post(title+".mkv", video, 40_000)
+					if dead {
+						ns.Remove(title+".mkv", 2)
+					}
+					posts[title], sizes[title] = one.NZB(), int64(len(video))
+				}
+				return posts, sizes
+			}
+			var firstGrabs, secondGrabs atomic.Int32
+			p1, s1 := mk(3, "A", !firstPlays)
+			p2, s2 := mk(6, "B", false)
+			first, second := fakeIndexer(t, p1, s1, &firstGrabs), fakeIndexer(t, p2, s2, &secondGrabs)
+			d, err := db.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			cfg := &config.Config{DataDir: t.TempDir(), Streaming: config.StreamingConfig{Enabled: true, Qualities: []string{"1080p"}, PerQuality: 1, Usenet: true,
+				Indexers: []config.IndexerConfig{{Name: "First", URL: first.URL + "/api", APIKey: "ixkey", Enabled: true},
+					{Name: "Second", URL: second.URL + "/api", APIKey: "ixkey", Enabled: true}},
+				NewsServers: []config.NewsServerConfig{{Host: ns.Host, Port: ns.Port, Username: "me", Password: "secret", Connections: 4, Enabled: true}}}}
+			s := New(Deps{Cfg: cfg, DB: d, TMDB: tmdb.New("test", "en-US", d), Hub: library.NewHub()})
+			s.testProviders = []Provider{}
+			lib, _ := d.StreamLibrary(ctx, "movies")
+			it := &db.Item{LibraryID: lib.ID, Kind: "movie", MatchKey: "tmdb:2", Title: "Movie", Year: 2024, TMDBID: 2, IMDBID: "tt0000002", SeasonNumber: -1, EpisodeNumber: -1}
+			d.InsertItem(ctx, it)
+			if ready, err := s.Ensure(ctx, it, 20*time.Second); !ready || err != nil {
+				t.Fatalf("ensure = %v, %v", ready, err)
+			}
+			waitLookups(t, s)
+			sts, _ := d.StreamsForItem(ctx, it.ID)
+			want := "-A"
+			if !firstPlays {
+				want = "-B"
+			}
+			if len(sts) != 1 || !strings.Contains(sts[0].Release, want) {
+				t.Fatalf("streams = %+v, want one from %s", sts, want)
+			}
+			if firstPlays && secondGrabs.Load() != 0 {
+				t.Fatalf("grabbed %d NZBs from the backup indexer", secondGrabs.Load())
+			}
+			if !firstPlays && firstGrabs.Load() != 3 {
+				t.Fatalf("first indexer grabs = %d, want all 3 tried", firstGrabs.Load())
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package streaming
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/LTAGROUP/wrentv/internal/config"
@@ -111,6 +112,31 @@ func (s *Service) rank(rels []Release, quality string, maxSize int64, season int
 	prefer, _ := PreferMatcher(cfg.PreferWords)
 	return RankWith(rels, quality, RankOptions{MaxSize: maxSize, MinSize: int64(cfg.MinSizeGB[quality] * (1 << 30)), Season: season,
 		Prefer: prefer, Indexer: indexerOrder(cfg.Indexers)})
+}
+
+// byIndexer splits ranked posts by the indexer they came from, in the
+// owner's order, keeping their rank within each. With one indexer (or no
+// order) it's the one list.
+func (s *Service) byIndexer(ranked []Release) [][]Release {
+	order := indexerOrder(s.cfg().Indexers)
+	if order == nil || len(ranked) == 0 {
+		return [][]Release{ranked}
+	}
+	groups := map[int][]Release{}
+	var at []int
+	for _, r := range ranked {
+		i := order(r.Indexer)
+		if _, ok := groups[i]; !ok {
+			at = append(at, i)
+		}
+		groups[i] = append(groups[i], r)
+	}
+	slices.Sort(at)
+	out := make([][]Release, 0, len(at))
+	for _, i := range at {
+		out = append(out, groups[i])
+	}
+	return out
 }
 
 // indexerOrder ranks indexers as the owner listed them: the first is tried
