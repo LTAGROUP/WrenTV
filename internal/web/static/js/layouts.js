@@ -105,7 +105,7 @@ const moreCard = (label, href) => `<a class="card more-card" href="${href}"><div
 function hubTile(h, logos) {
   const href = `/hub/${encodeURIComponent(h.id)}`;
   if (logos && h.logoPath) {
-    return `<a class="card wide hub logo" href="${href}" title="${esc(h.name)}"${bd(h.backdropPath)}><div class="thumb" style="--tint:${esc(h.color || '#3a3640')}">
+    return `<a class="card wide hub svc" href="${href}" title="${esc(h.name)}"${bd(h.backdropPath)}><div class="thumb" style="--tint:${esc(h.color || '#3a3640')}">
       <img loading="lazy" src="${img(h.logoPath, 'w300')}" alt=""><span>${esc(h.name)}</span></div></a>`;
   }
   return `<a class="card wide hub" href="${href}" title="${esc(h.name)}"${bd(h.backdropPath)}><div class="thumb">${h.backdropPath ? lazyImg(img(h.backdropPath, 'w780')) : ''}
