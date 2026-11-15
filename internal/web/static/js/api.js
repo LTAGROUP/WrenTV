@@ -111,6 +111,38 @@ api.raw = async (path, opts) => {
   return fetch(path, { ...opts, headers: { ...(opts?.headers || {}), Authorization: 'Bearer ' + tok } });
 };
 
+// Server-sent events (streams found, library changes), read with fetch so
+// the sign-in goes in a header. Reconnects until the returned stop is called.
+export function listenEvents(onEvent) {
+  let stopped = false, ctrl = null;
+  (async () => {
+    while (!stopped) {
+      ctrl = new AbortController();
+      try {
+        const res = await api.raw('/api/events', { signal: ctrl.signal, headers: { Accept: 'text/event-stream' } });
+        if (res.status === 401 || res.status === 403) return;
+        if (!res.ok || !res.body) throw new Error('events');
+        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buf = '';
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += value.replace(/\r\n/g, '\n');
+          let i;
+          while ((i = buf.indexOf('\n\n')) >= 0) {
+            const block = buf.slice(0, i);
+            buf = buf.slice(i + 2);
+            const data = block.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim()).join('\n');
+            if (data) { try { onEvent(JSON.parse(data)); } catch {} }
+          }
+        }
+      } catch {}
+      if (!stopped) await new Promise((r) => setTimeout(r, 3000));
+    }
+  })();
+  return () => { stopped = true; ctrl?.abort(); };
+}
+
 export const img = (path, size = 'w342') => (path ? `/api/images/${size}/${path.replace(/^\//, '')}` : '');
 
 // ---------- local accounts ----------

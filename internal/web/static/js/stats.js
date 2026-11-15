@@ -4,7 +4,7 @@ import { api, img } from './api.js';
 import { esc, $, $$, el, toast, modal, fmtDuration, fmtSize, timeAgo } from './ui.js';
 import { setTitle, render } from './app.js';
 
-const tabs = [['activity', 'Activity'], ['overview', 'Overview'], ['graphs', 'Graphs'], ['history', 'History'], ['viewers', 'Viewers'], ['libraries', 'Libraries']];
+const tabs = [['activity', 'Activity'], ['overview', 'Overview'], ['graphs', 'Graphs'], ['sources', 'Sources'], ['history', 'History'], ['viewers', 'Viewers'], ['libraries', 'Libraries']];
 const periods = [[7, '7 days'], [30, '30 days'], [90, '90 days'], [365, '1 year']];
 const lsGet = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
@@ -26,7 +26,7 @@ export async function viewStats() {
   lsSet('wrentv.statsTab', tab);
   charts.clear();
   const body = await views[tab](qs);
-  const node = el(`<div class="stats"><div class="page-head"><h1>Stats</h1>${['overview', 'graphs'].includes(tab) ? periodSeg() : ''}</div>
+  const node = el(`<div class="stats"><div class="page-head"><h1>Stats</h1>${['overview', 'graphs', 'sources'].includes(tab) ? periodSeg() : ''}</div>
     <nav class="stat-tabs" aria-label="Stats sections">${tabs.map(([k, l]) => `<a href="/manage/stats?tab=${k}" class="${k === tab ? 'on' : ''}"${k === tab ? ' aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
     <div class="stat-body"></div></div>`);
   $('.stat-body', node).append(body);
@@ -43,7 +43,7 @@ const periodSeg = () => {
 };
 const loadStats = () => api(`/api/admin/stats?days=${statsDays()}&tz=${tz()}`);
 
-const views = { activity: viewActivity, overview: viewOverview, graphs: viewGraphs, history: viewHistory, viewers: viewViewers, libraries: viewLibraries };
+const views = { activity: viewActivity, overview: viewOverview, graphs: viewGraphs, sources: viewSources, history: viewHistory, viewers: viewViewers, libraries: viewLibraries };
 
 // ================================================================ activity
 
@@ -335,6 +335,53 @@ async function viewGraphs() {
     </div>
   </div>`);
   return node;
+}
+
+// ================================================================ sources
+
+const sourceLabel = { usenet: 'Usenet (news servers)', torbox: 'TorBox', realdebrid: 'Real-Debrid', alldebrid: 'AllDebrid',
+  files: 'Library files', unknown: 'Unknown stream', torrent: 'Addon link' };
+
+// sourceTable lists plays by source, indexer or addon with each one's share.
+function sourceTable(rows, label = (n) => n, empty = 'Nothing in this period yet.') {
+  if (!rows?.length) return emptyList(empty);
+  const total = rows.reduce((a, r) => a + r.plays, 0) || 1;
+  const max = Math.max(...rows.map((r) => r.plays), 1);
+  return `<div class="hbars">${rows.map((r) => `<div class="hbar" title="${esc(label(r.name))}: ${num(r.plays)} plays · ${fmtHours(r.hours)} h · ${num(r.users)} viewer${r.users === 1 ? '' : 's'}">
+    <span class="n">${esc(label(r.name))}</span><span class="t"><i style="width:${((r.plays / max) * 100).toFixed(1)}%"></i></span>
+    <span class="c">${num(r.plays)} <span class="muted">· ${Math.round((r.plays / total) * 100)}%</span></span></div>`).join('')}</div>`;
+}
+
+async function viewSources() {
+  const d = await loadStats();
+  const s = d.stats;
+  const sources = s.sources || [], indexers = s.indexers || [], addons = s.addons || [], news = s.newsServers || [];
+  const plays = sources.reduce((a, r) => a + r.plays, 0);
+  const usenet = indexers.reduce((a, r) => a + r.plays, 0);
+  const bytes = news.reduce((a, r) => a + r.bytes, 0);
+  const maxB = Math.max(...news.map((n) => n.bytes), 1);
+  const topIx = indexers[0], topNews = news[0];
+  const newsHtml = news.length ? `<div class="hbars">${news.map((n) => `<div class="hbar" title="${esc(n.server)}: ${fmtSize(n.bytes) || '0 B'} · ${num(n.articles)} articles">
+    <span class="n">${esc(n.server)}</span><span class="t"><i style="width:${((n.bytes / maxB) * 100).toFixed(1)}%"></i></span>
+    <span class="c">${fmtSize(n.bytes) || '0 B'} <span class="muted">· ${Math.round((n.bytes / (bytes || 1)) * 100)}%</span></span></div>`).join('')}</div>
+    <p class="small muted" style="margin:14px 0 0">Articles read straight from each server, including spot checks while looking for posts. Articles served from the cache aren't counted.</p>`
+    : emptyList('Nothing read from a news server in this period yet. Counting started with this version.');
+  return el(`<div>
+    <div class="kpis">
+      ${kpi(plays ? `${Math.round((usenet / plays) * 100)}%` : '—', 'Plays from Usenet', plays ? `${num(usenet)} of ${num(plays)} plays` : '')}
+      ${kpi(topIx ? esc(topIx.name) : '—', 'Top indexer', topIx && usenet ? `${Math.round((topIx.plays / usenet) * 100)}% of Usenet plays` : '')}
+      ${kpi(topNews ? esc(topNews.server) : '—', 'Top news server', topNews && bytes ? `${Math.round((topNews.bytes / bytes) * 100)}% of data` : '')}
+      ${kpi(bytes ? fmtSize(bytes) : '—', 'Read from news servers', news.length ? `${num(news.reduce((a, n) => a + n.articles, 0))} articles` : '')}
+    </div>
+    <div class="stat-grid">
+      <div class="panel"><h2>Indexers</h2>${sourceTable(indexers, (n) => n, 'No plays from Usenet posts in this period.')}</div>
+      <div class="panel"><h2>News servers</h2>${newsHtml}</div>
+    </div>
+    <div class="stat-grid">
+      <div class="panel"><h2>Played through</h2>${sourceTable(sources, (n) => sourceLabel[n] || n)}</div>
+      <div class="panel"><h2>Torrent addons</h2>${sourceTable(addons, (n) => n, 'No plays from torrents in this period.')}</div>
+    </div>
+  </div>`);
 }
 
 // ================================================================ history

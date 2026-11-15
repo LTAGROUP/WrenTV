@@ -509,6 +509,23 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS watch_state_item ON watch_state(item_id);
 	CREATE INDEX IF NOT EXISTS watchlist_item ON watchlist(item_id);
 	CREATE INDEX IF NOT EXISTS collection_items_item ON collection_items(item_id);`,
+	// Where each streamed play came from (the debrid service or "usenet" for
+	// the news servers, and the indexer or addon that found it), and how
+	// much each news server served per day.
+	`ALTER TABLE play_history ADD COLUMN source_kind TEXT NOT NULL DEFAULT '';
+	ALTER TABLE play_history ADD COLUMN source_provider TEXT NOT NULL DEFAULT '';
+	ALTER TABLE play_history ADD COLUMN source_addon TEXT NOT NULL DEFAULT '';
+	CREATE TABLE news_usage (
+		day TEXT NOT NULL,
+		server TEXT NOT NULL,
+		articles INTEGER NOT NULL DEFAULT 0,
+		bytes INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (day, server)
+	);
+	UPDATE play_history SET
+		source_kind = COALESCE((SELECT s.kind FROM media_files f JOIN streams s ON s.id=f.stream_id WHERE f.id=play_history.file_id), ''),
+		source_provider = COALESCE((SELECT s.provider FROM media_files f JOIN streams s ON s.id=f.stream_id WHERE f.id=play_history.file_id), ''),
+		source_addon = COALESCE((SELECT s.addon FROM media_files f JOIN streams s ON s.id=f.stream_id WHERE f.id=play_history.file_id), '');`,
 }
 
 // fkOff lists migrations (1-based) that rebuild tables. They run with

@@ -290,6 +290,8 @@ type Pool struct {
 	once    sync.Once
 	// cache keeps decoded articles for every stream; see Cache.
 	cache *Cache
+	// OnFetch, when set, is told each article a server sent and its size.
+	OnFetch func(server string, bytes int)
 }
 
 type server struct {
@@ -701,6 +703,9 @@ func (p *Pool) Body(ctx context.Context, id string) ([]byte, error) {
 			return err
 		})
 		if err == nil {
+			if p.OnFetch != nil {
+				p.OnFetch(s.Host, len(b))
+			}
 			return b, nil
 		}
 		if ctx.Err() != nil {

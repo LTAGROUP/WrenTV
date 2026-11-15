@@ -67,6 +67,7 @@ type Service struct {
 	sources   map[string]http.Handler // open sources, served to ffmpeg
 	streaming int                     // open debrid and Usenet sources
 	usenet    usenetState
+	newsUsage *newsTally
 	links     map[string]cachedLink
 	// pending holds where addon links led while a title was looked up, so
 	// the first play doesn't open the link a second time.
@@ -111,7 +112,7 @@ func New(d Deps) *Service {
 	return &Service{
 		Deps: d, sources: map[string]http.Handler{}, links: map[string]cachedLink{}, pending: map[string]cachedLink{}, cdnFails: map[string]int{}, lookups: map[string]*lookup{},
 		refreshed: map[string]time.Time{}, prefetchQ: make(chan string, 1000), queued: map[string]bool{},
-		dlKick: make(chan struct{}, 1), dlRunning: map[string]*runningDownload{},
+		dlKick: make(chan struct{}, 1), dlRunning: map[string]*runningDownload{}, newsUsage: &newsTally{db: d.DB},
 	}
 }
 
@@ -129,6 +130,10 @@ func (s *Service) Start(ctx context.Context) {
 	}
 	go s.downloadLoop(ctx)
 	go s.watchlistLoop(ctx)
+	go func() {
+		<-ctx.Done()
+		s.newsUsage.Flush()
+	}()
 	if s.Active() {
 		_, _ = s.Libraries(ctx)
 	}

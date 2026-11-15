@@ -28,11 +28,9 @@ func TestBackupBeforeUpgrade(t *testing.T) {
 	if _, err := d.ExecContext(ctx, `DELETE FROM schema_version WHERE v=?`, last); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.ExecContext(ctx, `ALTER TABLE users DROP COLUMN tokens_valid_after`); err != nil {
-		t.Fatal(err)
-	}
-	for _, ix := range []string{"watch_state_item", "watchlist_item", "collection_items_item"} {
-		if _, err := d.ExecContext(ctx, `DROP INDEX `+ix); err != nil {
+	for _, q := range []string{`ALTER TABLE play_history DROP COLUMN source_kind`, `ALTER TABLE play_history DROP COLUMN source_provider`,
+		`ALTER TABLE play_history DROP COLUMN source_addon`, `DROP TABLE news_usage`} {
+		if _, err := d.ExecContext(ctx, q); err != nil {
 			t.Fatal(err)
 		}
 	}

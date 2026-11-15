@@ -476,3 +476,85 @@ func (d *DB) RecentlyAdded(ctx context.Context, limit int) ([]Added, error) {
 	}
 	return out, rows.Err()
 }
+
+// ---------- sources ----------
+
+// SourceStat is plays from one streaming service, indexer or addon.
+type SourceStat struct {
+	Name  string  `json:"name"`
+	Plays int     `json:"plays"`
+	Users int     `json:"users"`
+	Hours float64 `json:"hours"`
+}
+
+// NewsUsage is what one news server sent.
+type NewsUsage struct {
+	Server   string `json:"server"`
+	Articles int64  `json:"articles"`
+	Bytes    int64  `json:"bytes"`
+}
+
+// sourceStats fills where a period's plays came from. Sources are named by
+// the service ("usenet" for the news servers, "torbox", ...), "files" for
+// a library's own files, or "unknown" for a stream played before sources
+// were recorded whose stream is gone.
+func (d *DB) sourceStats(ctx context.Context, s *PlayStats, since int64) error {
+	group := func(key, where string) ([]SourceStat, error) {
+		rows, err := d.QueryContext(ctx, `SELECT `+key+` k, COUNT(*), COUNT(DISTINCT h.user_id), COALESCE(SUM(h.played_seconds),0)/3600.0
+			FROM play_history h LEFT JOIN libraries l ON l.id=h.library_id WHERE h.started_at >= ? AND `+where+`
+			GROUP BY k ORDER BY 2 DESC, 4 DESC LIMIT 20`, since)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		out := []SourceStat{}
+		for rows.Next() {
+			var x SourceStat
+			if err := rows.Scan(&x.Name, &x.Plays, &x.Users, &x.Hours); err != nil {
+				return nil, err
+			}
+			out = append(out, cmpSource(x))
+		}
+		return out, rows.Err()
+	}
+	var err error
+	if s.Sources, err = group(`CASE WHEN h.source_provider != '' THEN h.source_provider
+		WHEN h.source_kind != '' THEN h.source_kind
+		WHEN COALESCE(l.source,'files') = 'files' THEN 'files' ELSE 'unknown' END`, `1`); err != nil {
+		return err
+	}
+	if s.Indexers, err = group(`h.source_addon`, `h.source_kind = 'usenet'`); err != nil {
+		return err
+	}
+	if s.Addons, err = group(`h.source_addon`, `h.source_kind = 'torrent'`); err != nil {
+		return err
+	}
+	day := time.Unix(since, 0).UTC().Format("2006-01-02")
+	rows, err := d.QueryContext(ctx, `SELECT server, SUM(articles), SUM(bytes) FROM news_usage WHERE day >= ?
+		GROUP BY server ORDER BY 3 DESC`, day)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	s.NewsServers = []NewsUsage{}
+	for rows.Next() {
+		var n NewsUsage
+		if err := rows.Scan(&n.Server, &n.Articles, &n.Bytes); err != nil {
+			return err
+		}
+		s.NewsServers = append(s.NewsServers, n)
+	}
+	return rows.Err()
+}
+
+func cmpSource(x SourceStat) SourceStat {
+	x.Name = cmpOr(x.Name, "Unknown")
+	return x
+}
+
+// AddNewsUsage adds to what a news server sent on a day (UTC, 2006-01-02).
+func (d *DB) AddNewsUsage(ctx context.Context, day, server string, articles, bytes int64) error {
+	_, err := d.ExecContext(ctx, `INSERT INTO news_usage (day, server, articles, bytes) VALUES (?,?,?,?)
+		ON CONFLICT(day, server) DO UPDATE SET articles=articles+excluded.articles, bytes=bytes+excluded.bytes`, day, server, articles, bytes)
+	return err
+}

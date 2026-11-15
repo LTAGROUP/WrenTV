@@ -1,4 +1,4 @@
-import { api, account, local, state, saveSession, isSupabase, usingAccount, img, ApiError } from './api.js';
+import { api, account, local, state, saveSession, isSupabase, usingAccount, img, ApiError, listenEvents } from './api.js';
 import { esc, $, $$, el, toast, icons, fmtRuntime, fmtDuration, fmtSize } from './ui.js';
 import { openPlayer } from './player.js';
 import * as manage from './manage.js';
@@ -987,17 +987,18 @@ async function viewItem(id) {
 
   // What will play: version, audio and subtitles, from the viewer's settings
   // unless they pick another version.
-  let tracks = '';
-  if (playable && d.files?.length) {
-    const best = d.files.reduce((a, f) => ((f.width || 0) > (a.width || 0) ? f : a), d.files[0]);
+  const tracksHtml = (files) => {
+    if (!playable || !files?.length) return '';
+    const best = files.reduce((a, f) => ((f.width || 0) > (a.width || 0) ? f : a), files[0]);
     const q = badgesFor(best)[0] || '';
-    const version = d.files.length > 1
-      ? `<select data-version data-caption="Version" class="version-pick"><option value="">${q ? `Auto · ${esc(q)}` : 'Auto'}</option>${d.files.map((f) => `<option value="${esc(f.id)}">${esc(versionName(f))}</option>`).join('')}</select>`
+    const version = files.length > 1
+      ? `<select data-version data-caption="Version" class="version-pick"><option value="">${q ? `Auto · ${esc(q)}` : 'Auto'}</option>${files.map((f) => `<option value="${esc(f.id)}">${esc(versionName(f))}</option>`).join('')}</select>`
       : `<span class="track"><b>Version</b>${esc(q || 'Original')}</span>`;
-    tracks = `<div class="tracks" title="Audio and subtitles follow your settings; change them while watching.">${version}
+    return `<div class="tracks" title="Audio and subtitles follow your settings; change them while watching.">${version}
       <span class="track"><b>Audio</b>${esc(langName(prefs.audioLanguage) || 'Default')}</span>
       <span class="track"><b>Subtitles</b>${esc(langName(prefs.subtitleLanguage) || 'Off')}</span></div>`;
-  }
+  };
+  const tracks = tracksHtml(d.files);
 
   const crumbs = it.kind === 'season' || it.kind === 'episode'
     ? `<div class="crumbs"><a href="/item/${it.showId}">${esc(show?.title || '')}</a>${it.kind === 'episode' && it.parentId ? ` › <a href="/item/${it.parentId}">Season ${it.seasonNumber}</a>` : ''}</div>`
@@ -1018,18 +1019,20 @@ async function viewItem(id) {
       '<div class="person"><div class="face sk"></div><div class="sk sk-line" style="width:70%;margin:0 auto"></div></div>').join('')}</div></section>`;
     below += skeletonShelf('More Like This', 8, 'more');
   }
-  if (d.files?.length) {
-    const chapters = d.files[0].info?.chapters?.length;
-    below += `<section class="files"><h2>Media</h2>${chapters ? `<div class="small muted">${chapters} chapters</div>` : ''}${d.files.map((f) => `<div class="file">
+  const filesHtml = (files) => {
+    if (!files?.length) return '';
+    const chapters = files[0].info?.chapters?.length;
+    return `<section class="files"><h2>Media</h2>${chapters ? `<div class="small muted">${chapters} chapters</div>` : ''}${files.map((f) => `<div class="file">
       <code>${esc(f.fileName)}</code><div class="small muted">${mediaLine(f).map(esc).join(' · ')}</div></div>`).join('')}</section>`;
-  }
+  };
+  below += `<div data-media>${filesHtml(d.files)}</div>`;
 
   const node = el(`<div><div class="hero"><div class="bg" ${backdrop ? `style="background-image:url('${img(backdrop, 'w1280')}')"` : ''}></div>
     <div class="content"><div>${crumbs}${logo ? `<img class="logo-img" src="${img(logo, 'w500')}" alt="${esc(heading)}">` : `<h1>${esc(heading)}</h1>`}
     <div class="meta">${meta.join('<span class="muted">·</span>')}${genreHtml}${badges(d.files?.[0])}</div>
     ${top ? `<div class="ratings" id="ratings">${ratingsHtml({ tmdb: it.rating })}</div>` : ''}
     ${it.tagline ? `<div class="tagline">${esc(it.tagline)}</div>` : ''}
-    <p class="overview">${esc(it.overview || '')}</p>${tracks}<div class="actions">${actions}</div></div></div></div>${below}</div>`);
+    <p class="overview">${esc(it.overview || '')}</p><div data-tracks>${tracks}</div><div class="actions">${actions}</div></div></div></div>${below}</div>`);
 
   const act = (name, fn) => $(`[data-act=${name}]`, node)?.addEventListener('click', fn);
   const version = () => $('[data-version]', node)?.value || undefined;
@@ -1083,7 +1086,43 @@ async function viewItem(id) {
   bindPlayLinks(node);
   bindShelves(node);
   if (top) loadExtras(it, node);
+  if (playable && d.streaming) liveVersions(it.id, node, tracksHtml, filesHtml);
   return node;
+}
+
+// liveVersions adds versions to an open title page as the server finds
+// them, as the apps do, instead of waiting for a reload. The version picked
+// stays picked.
+function liveVersions(itemId, node, tracksHtml, filesHtml) {
+  let timer = null;
+  const refresh = async () => {
+    timer = null;
+    if (!node.isConnected) return;
+    try {
+      const d = await api('/api/items/' + itemId);
+      if (!node.isConnected) return;
+      const box = $('[data-tracks]', node), media = $('[data-media]', node);
+      const picked = $('[data-version]', node)?.value || '';
+      if (box) {
+        // Mark the pick before it goes in, so the styled picker shows it.
+        const t = document.createElement('template');
+        t.innerHTML = tracksHtml(d.files);
+        const opt = picked && [...t.content.querySelectorAll('[data-version] option')].find((o) => o.value === picked);
+        if (opt) opt.setAttribute('selected', '');
+        box.replaceChildren(t.content);
+      }
+      if (media) media.innerHTML = filesHtml(d.files);
+    } catch {}
+  };
+  const stop = listenEvents((ev) => {
+    if (!node.isConnected) return stop();
+    if (ev.itemId !== itemId || !['item.updated', 'stream.updated'].includes(ev.type)) return;
+    clearTimeout(timer);
+    timer = setTimeout(refresh, 600); // several versions often land together
+  });
+  const watch = setInterval(() => {
+    if (!node.isConnected) { stop(); clearInterval(watch); clearTimeout(timer); }
+  }, 5000);
 }
 
 // Device downloads: the server hands out a short-lived link to the original

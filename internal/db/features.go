@@ -433,12 +433,14 @@ func (d *DB) GenreBackdrops(ctx context.Context, libraryIDs []string, kind strin
 type PlayStart struct {
 	SessionID, UserID, FileID, Method, Engine, Client string
 	IP, Quality, Reasons                              string
-	StreamHeight                                      int
-	Item                                              *Item
-	ShowTitle                                         string
-	VideoCopy                                         bool
-	Height                                            int
-	Position, Duration                                float64
+	// Source* say where a stored stream came from; empty for files.
+	SourceKind, SourceProvider, SourceAddon string
+	StreamHeight                            int
+	Item                                    *Item
+	ShowTitle                               string
+	VideoCopy                               bool
+	Height                                  int
+	Position, Duration                      float64
 }
 
 // StartPlay records a playback. Restarting the same title within ten minutes
@@ -451,18 +453,19 @@ func (d *DB) StartPlay(ctx context.Context, p PlayStart) error {
 		ORDER BY last_seen_at DESC LIMIT 1`, p.UserID, it.ID, now-600).Scan(&id)
 	if err == nil {
 		_, err = d.ExecContext(ctx, `UPDATE play_history SET session_id=?, file_id=?, method=?, engine=?, video_copy=?, height=?, client=?,
-			ip=?, quality=?, stream_height=?, reasons=?, last_seen_at=? WHERE id=?`, p.SessionID, p.FileID, p.Method, p.Engine, p.VideoCopy,
-			p.Height, p.Client, p.IP, p.Quality, p.StreamHeight, p.Reasons, now, id)
+			ip=?, quality=?, stream_height=?, reasons=?, source_kind=?, source_provider=?, source_addon=?, last_seen_at=? WHERE id=?`,
+			p.SessionID, p.FileID, p.Method, p.Engine, p.VideoCopy, p.Height, p.Client, p.IP, p.Quality, p.StreamHeight, p.Reasons,
+			p.SourceKind, p.SourceProvider, p.SourceAddon, now, id)
 		return err
 	}
 	poster := it.PosterPath
 	_, err = d.ExecContext(ctx, `INSERT INTO play_history (id, session_id, user_id, item_id, show_id, library_id, kind, title, show_title, year,
 		poster_path, file_id, method, engine, video_copy, height, client, started_at, last_seen_at, position_start, position_end, duration,
-		ip, quality, stream_height, reasons)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		ip, quality, stream_height, reasons, source_kind, source_provider, source_addon)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		NewID(), p.SessionID, p.UserID, it.ID, it.ShowID, it.LibraryID, it.Kind, it.Title, p.ShowTitle, it.Year, poster,
 		p.FileID, p.Method, p.Engine, p.VideoCopy, p.Height, p.Client, now, now, p.Position, p.Position, p.Duration,
-		p.IP, p.Quality, p.StreamHeight, p.Reasons)
+		p.IP, p.Quality, p.StreamHeight, p.Reasons, p.SourceKind, p.SourceProvider, p.SourceAddon)
 	return err
 }
 
@@ -612,6 +615,13 @@ type PlayStats struct {
 	ClientMethods []MethodSplit `json:"clientMethods"`
 	UserMethods   []MethodSplit `json:"userMethods"`
 	Monthly       []MonthStat   `json:"monthly"`
+	// Where streamed plays came from: the service that served them, the
+	// Usenet indexers and torrent addons that found them, and what each
+	// news server sent.
+	Sources     []SourceStat `json:"sources"`
+	Indexers    []SourceStat `json:"indexers"`
+	Addons      []SourceStat `json:"addons"`
+	NewsServers []NewsUsage  `json:"newsServers"`
 }
 
 // Stats aggregates play history since a time. tzOffset (seconds east of
@@ -774,6 +784,9 @@ func (d *DB) Stats(ctx context.Context, since int64, days int, tzOffset int) (*P
 		return nil, err
 	}
 	if s.Monthly, err = d.monthly(ctx, tzOffset); err != nil {
+		return nil, err
+	}
+	if err = d.sourceStats(ctx, s, since); err != nil {
 		return nil, err
 	}
 

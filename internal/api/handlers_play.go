@@ -728,6 +728,11 @@ func (s *Server) recordPlay(r *http.Request, it *db.Item, f *db.MediaFile, sess 
 	if ws, _ := s.DB.GetWatchState(ctx, p.User.ID, it.ID); ws != nil && !ws.Watched {
 		ps.Position = ws.Position
 	}
+	if f.StreamID != "" {
+		if st, err := s.DB.GetStream(ctx, f.StreamID); err == nil {
+			ps.SourceKind, ps.SourceProvider, ps.SourceAddon = st.Kind, st.Provider, st.Addon
+		}
+	}
 	if it.Kind == "episode" {
 		if sh, err := s.DB.GetItem(ctx, it.ShowID); err == nil {
 			ps.ShowTitle = sh.Title

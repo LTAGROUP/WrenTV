@@ -192,6 +192,7 @@ func (s *Service) newsPool() *usenet.Pool {
 			u.missing, u.missingKey = nil, key.String()
 		}
 		u.key, u.pool = key.String(), usenet.NewPool(servers).WithCache(u.cache)
+		u.pool.OnFetch = s.newsUsage.add
 	}
 	return u.pool
 }
@@ -922,4 +923,67 @@ func CheckUsenet(ctx context.Context, servers []config.NewsServerConfig, indexer
 		return errors.New("add an indexer, such as NZBGeek")
 	}
 	return nil
+}
+
+// newsTally adds up what each news server sends, for stats, and writes it
+// out about once a minute rather than on every article.
+type newsTally struct {
+	mu      sync.Mutex
+	db      *db.DB
+	pending map[[2]string]*[2]int64 // day, server → articles, bytes
+	flushed time.Time
+	writing bool
+}
+
+func (t *newsTally) add(server string, n int) {
+	if t == nil || t.db == nil {
+		return
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.pending == nil {
+		t.pending, t.flushed = map[[2]string]*[2]int64{}, time.Now()
+	}
+	k := [2]string{day, server}
+	c := t.pending[k]
+	if c == nil {
+		c = &[2]int64{}
+		t.pending[k] = c
+	}
+	c[0]++
+	c[1] += int64(n)
+	if !t.writing && time.Since(t.flushed) >= time.Minute {
+		batch := t.pending
+		t.pending, t.flushed, t.writing = map[[2]string]*[2]int64{}, time.Now(), true
+		go t.write(batch)
+	}
+}
+
+func (t *newsTally) write(batch map[[2]string]*[2]int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for k, c := range batch {
+		if err := t.db.AddNewsUsage(ctx, k[0], k[1], c[0], c[1]); err != nil {
+			slog.Warn("news server usage", "err", err)
+		}
+	}
+	t.mu.Lock()
+	t.writing = false
+	t.mu.Unlock()
+}
+
+// Flush writes what news servers sent that isn't saved yet, such as at
+// shutdown.
+func (t *newsTally) Flush() {
+	if t == nil || t.db == nil {
+		return
+	}
+	t.mu.Lock()
+	batch := t.pending
+	t.pending, t.flushed = map[[2]string]*[2]int64{}, time.Now()
+	t.mu.Unlock()
+	if len(batch) > 0 {
+		t.write(batch)
+	}
 }
