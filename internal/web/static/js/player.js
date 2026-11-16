@@ -663,10 +663,10 @@ class Player {
 
   // toggleStats shows what's playing and how, refreshed every second.
   toggleStats() {
-    const open = $('.stats', this.root);
+    const open = $('.play-stats', this.root);
     clearInterval(this.statsTimer);
     if (open) { open.remove(); return; }
-    const box = el('<div class="stats"><button class="x" title="Close (I)">×</button><dl></dl></div>');
+    const box = el('<div class="play-stats"><button class="x" title="Close (I)">×</button><dl></dl></div>');
     $('.x', box).onclick = () => this.toggleStats();
     this.root.append(box);
     const draw = () => { if (box.isConnected) $('dl', box).innerHTML = this.statsRows().map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join(''); };
