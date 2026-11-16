@@ -217,12 +217,12 @@ function systemHtml(s) {
   const memCap = info.memLimit && info.memLimit < info.memTotal ? info.memLimit : 0;
   const times = samples.map((x) => x.t);
   const cpu = lineChart({
-    times, height: 180, max: 100, fmt: (v) => `${v.toFixed(v < 10 ? 1 : 0)}%`, axis: (v) => `${Math.round(v)}%`,
+    times, height: 150, max: 100, fmt: (v) => `${v.toFixed(v < 10 ? 1 : 0)}%`, axis: (v) => `${Math.round(v)}%`,
     series: [{ name: info.host === false ? 'Machine' : 'Host', color: C.a, values: samples.map((x) => x.cpu) },
       ...(info.procCpuAvailable === false ? [] : [{ name: proc, color: C.b, values: samples.map((x) => x.procCpu) }])],
   });
   const mem = lineChart({
-    times, height: 180, max: info.memTotal || undefined, fmt: (v) => fmtSize(v) || '0 B', axis: (v) => fmtGB(v),
+    times, height: 150, max: info.memTotal || undefined, fmt: (v) => fmtSize(v) || '0 B', axis: (v) => fmtGB(v),
     series: [{ name: info.host === false ? 'Machine' : 'Host', color: C.a, values: samples.map((x) => x.mem) },
       { name: proc, color: C.b, values: samples.map((x) => x.procMem) }],
   });
@@ -269,13 +269,13 @@ async function viewOverview() {
       ${kpi(num(s.peakStreams), 'Most at once', s.peakAt ? new Date(s.peakAt * 1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '')}
       ${kpi(s.plays ? `${Math.round((transcodes / s.plays) * 100)}%` : '—', 'Transcoded', s.plays ? `${num(transcodes)} of ${num(s.plays)} plays` : '')}
     </div>
-    <div class="stat-grid three">
-      <div class="panel"><h2>Most watched movies</h2>${topList(s.topMovies)}</div>
-      <div class="panel"><h2>Most popular movies</h2>${topList(s.popularMovies, true)}</div>
-      <div class="panel"><h2>Most watched shows</h2>${topList(s.topShows)}</div>
-      <div class="panel"><h2>Most popular shows</h2>${topList(s.popularShows, true)}</div>
-      <div class="panel"><h2>Top viewers</h2>${topUsers(s.topUsers)}</div>
-      <div class="panel"><h2>Top players</h2>${hbars(s.byClient)}<h2 style="margin-top:22px">Libraries</h2>${hbars((s.byLibrary || []).filter((l) => l.plays).map((l) => ({ name: l.name, count: l.plays })))}</div>
+    <div class="stat-grid three six">
+      <div class="panel"><h2>Most watched movies</h2>${topList(s.topMovies, false, false, 5)}</div>
+      <div class="panel"><h2>Most popular movies</h2>${topList(s.popularMovies, true, false, 5)}</div>
+      <div class="panel"><h2>Most watched shows</h2>${topList(s.topShows, false, false, 5)}</div>
+      <div class="panel"><h2>Most popular shows</h2>${topList(s.popularShows, true, false, 5)}</div>
+      <div class="panel"><h2>Top viewers</h2>${topUsers(s.topUsers, 5)}</div>
+      <div class="panel"><h2>Top players</h2>${hbars((s.byClient || []).slice(0, 5))}<h2 style="margin-top:22px">Libraries</h2>${hbars((s.byLibrary || []).filter((l) => l.plays).map((l) => ({ name: l.name, count: l.plays })))}</div>
     </div>
     ${d.recentlyAdded?.length ? `<div class="panel"><h2>Recently added</h2><div class="added">${d.recentlyAdded.map((a) => {
       const t = a.kind === 'episode' && a.showTitle ? a.showTitle : a.title;
@@ -285,7 +285,7 @@ async function viewOverview() {
         <span class="small muted ell">${esc(String(sub))}${sub ? ' · ' : ''}${timeAgo(a.addedAt)}</span></a>`;
     }).join('')}</div></div>` : ''}
     <div class="panel"><div class="panel-head"><h2>Recent plays</h2><a class="small muted" href="/manage/stats?tab=history">Full history</a></div>
-      ${historyTable(d.recent.slice(0, 15))}</div>
+      ${historyTable(d.recent.slice(0, 8))}</div>
   </div>`);
   return node;
 }
@@ -305,31 +305,29 @@ async function viewGraphs() {
   const methods = [{ name: 'Direct play', color: C.direct }, { name: 'Direct stream', color: C.remux }, { name: 'Transcode', color: C.transcode }];
   const tipRows = (series, vals) => series.map((x, i) => `<span class="tr"><i style="background:${x.color}"></i>${esc(x.name)}<b>${num(vals[i])}</b></span>`).join('');
   const node = el(`<div>
+    <div class="stat-grid">
     <div class="panel"><h2>Plays per day by type</h2>${s.plays ? legend(typeSeries) + stacked(daily.map((x) => ({
       label: shortDate(x.date), values: hasOther ? [x.movies, x.episodes, other(x)] : [x.movies, x.episodes],
       tip: `<b>${esc(longDate(x.date))}</b>${tipRows(typeSeries, hasOther ? [x.movies, x.episodes, other(x)] : [x.movies, x.episodes])}<span class="tr">${fmtHours(x.hours)} h watched</span>` })),
-      typeSeries, { labelEvery: every, height: 190 }) : emptyChart()}</div>
+      typeSeries, { labelEvery: every, height: 170 }) : emptyChart()}</div>
     <div class="panel"><h2>Plays per day by stream type</h2>${s.plays ? legend(methods) + stacked(daily.map((x) => ({
       label: shortDate(x.date), values: [x.direct, x.remux, x.transcode],
-      tip: `<b>${esc(longDate(x.date))}</b>${tipRows(methods, [x.direct, x.remux, x.transcode])}` })), methods, { labelEvery: every, height: 190 }) : emptyChart()}</div>
-    <div class="stat-grid">
+      tip: `<b>${esc(longDate(x.date))}</b>${tipRows(methods, [x.direct, x.remux, x.transcode])}` })), methods, { labelEvery: every, height: 170 }) : emptyChart()}</div>
+    </div>
+    <div class="stat-grid four">
       <div class="panel"><h2>Most streams at once, per day</h2>${s.plays ? stacked(daily.map((x) => ({
-        label: shortDate(x.date), values: [x.peak], tip: `<b>${esc(longDate(x.date))}</b>${x.peak} at once` })), [{ name: 'Streams', color: C.a }], { labelEvery: every, height: 150 }) : emptyChart()}</div>
+        label: shortDate(x.date), values: [x.peak], tip: `<b>${esc(longDate(x.date))}</b>${x.peak} at once` })), [{ name: 'Streams', color: C.a }], { labelEvery: every, height: 130 }) : emptyChart()}</div>
       <div class="panel"><h2>Plays per month</h2>${(s.monthly || []).some((m) => m.plays) ? legend(typeSeries.slice(0, 2)) + stacked(s.monthly.map((m) => ({
         label: monthLabel(m.month), values: [m.movies, m.episodes],
-        tip: `<b>${esc(monthLabel(m.month, 'long'))}</b>${tipRows(typeSeries, [m.movies, m.episodes])}<span class="tr">${fmtHours(m.hours)} h watched</span>` })), typeSeries.slice(0, 2), { labelEvery: 2, height: 150 }) : emptyChart()}</div>
-    </div>
-    <div class="stat-grid">
+        tip: `<b>${esc(monthLabel(m.month, 'long'))}</b>${tipRows(typeSeries, [m.movies, m.episodes])}<span class="tr">${fmtHours(m.hours)} h watched</span>` })), typeSeries.slice(0, 2), { labelEvery: 2, height: 130 }) : emptyChart()}</div>
       <div class="panel"><h2>By time of day</h2>${s.plays ? stacked(s.byHour.map((v, h) => ({
-        label: hourLabel(h), values: [v], tip: `<b>${hourLabel(h)}–${hourLabel((h + 1) % 24)}</b>${v} play${v === 1 ? '' : 's'}` })), [{ name: 'Plays', color: C.a }], { labelEvery: 6, height: 140 }) : emptyChart()}</div>
+        label: hourLabel(h), values: [v], tip: `<b>${hourLabel(h)}–${hourLabel((h + 1) % 24)}</b>${v} play${v === 1 ? '' : 's'}` })), [{ name: 'Plays', color: C.a }], { labelEvery: 6, height: 130 }) : emptyChart()}</div>
       <div class="panel"><h2>By day of week</h2>${s.plays ? stacked(s.byWeekday.map((v, i) => ({
-        label: weekday(i), values: [v], tip: `<b>${weekday(i, 'long')}</b>${v} play${v === 1 ? '' : 's'}` })), [{ name: 'Plays', color: C.a }], { labelEvery: 1, height: 140 }) : emptyChart()}</div>
+        label: weekday(i), values: [v], tip: `<b>${weekday(i, 'long')}</b>${v} play${v === 1 ? '' : 's'}` })), [{ name: 'Plays', color: C.a }], { labelEvery: 1, height: 130 }) : emptyChart()}</div>
     </div>
-    <div class="stat-grid">
+    <div class="stat-grid four">
       <div class="panel"><h2>Source resolution</h2>${hbars(s.sourceResolutions)}</div>
       <div class="panel"><h2>Stream resolution</h2>${hbars(s.streamResolutions)}</div>
-    </div>
-    <div class="stat-grid">
       <div class="panel"><h2>Players by stream type</h2>${legend(methods)}${splitBars(s.clientMethods)}</div>
       <div class="panel"><h2>Viewers by stream type</h2>${legend(methods)}${splitBars(s.userMethods)}</div>
     </div>
@@ -373,11 +371,9 @@ async function viewSources() {
       ${kpi(topNews ? esc(topNews.server) : '—', 'Top news server', topNews && bytes ? `${Math.round((topNews.bytes / bytes) * 100)}% of data` : '')}
       ${kpi(bytes ? fmtSize(bytes) : '—', 'Read from news servers', news.length ? `${num(news.reduce((a, n) => a + n.articles, 0))} articles` : '')}
     </div>
-    <div class="stat-grid">
+    <div class="stat-grid four">
       <div class="panel"><h2>Indexers</h2>${sourceTable(indexers, (n) => n, 'No plays from Usenet posts in this period.')}</div>
       <div class="panel"><h2>News servers</h2>${newsHtml}</div>
-    </div>
-    <div class="stat-grid">
       <div class="panel"><h2>Played through</h2>${sourceTable(sources, (n) => sourceLabel[n] || n)}</div>
       <div class="panel"><h2>Torrent addons</h2>${sourceTable(addons, (n) => n, 'No plays from torrents in this period.')}</div>
     </div>
@@ -537,9 +533,9 @@ function splitBars(rows) {
   }).join('')}</div>`;
 }
 
-function topList(rows, byUsers = false, own = false) {
+function topList(rows, byUsers = false, own = false, n = 10) {
   if (!rows?.length) return emptyList();
-  return `<div class="toplist">${rows.slice(0, 10).map((t, i) => {
+  return `<div class="toplist">${rows.slice(0, n).map((t, i) => {
     const inner = `<span class="rk">${i + 1}</span>${t.posterPath ? `<img src="${img(t.posterPath, 'w92')}" alt="" loading="lazy">` : '<span class="ph"></span>'}
       <span style="min-width:0"><b class="ell" style="display:block">${esc(t.title)}</b>
       <span class="small muted">${t.year || ''}${t.year && !own ? ' · ' : ''}${own ? '' : `${t.users} viewer${t.users === 1 ? '' : 's'}`}</span></span>
@@ -549,9 +545,9 @@ function topList(rows, byUsers = false, own = false) {
   }).join('')}</div>`;
 }
 
-function topUsers(rows) {
+function topUsers(rows, n = 10) {
   if (!rows?.length) return emptyList();
-  return `<div class="toplist users">${rows.slice(0, 10).map((u, i) => `<a href="/manage/stats?tab=viewers&user=${encodeURIComponent(u.userId)}"><span class="rk">${i + 1}</span>
+  return `<div class="toplist users">${rows.slice(0, n).map((u, i) => `<a href="/manage/stats?tab=viewers&user=${encodeURIComponent(u.userId)}"><span class="rk">${i + 1}</span>
     <span class="avatar sm">${esc((u.name || '?')[0].toUpperCase())}</span><span style="min-width:0"><b class="ell" style="display:block">${esc(u.name)}</b>
     <span class="small muted ell" style="display:block">${esc(u.lastPlayed || '')}</span></span>
     <span class="m"><b style="color:var(--text)">${num(u.plays)}</b> play${u.plays === 1 ? '' : 's'}<br>${fmtHours(u.hours)} h</span></a>`).join('')}</div>`;
